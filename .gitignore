@@ -1,0 +1,5 @@
+node_modules/
+# بيانات دخول clasp — ممنوع ترفع
+.clasprc.json
+.clasp.json
+*.log

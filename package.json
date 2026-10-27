@@ -1,0 +1,16 @@
+{
+  "name": "chance-cosmetics",
+  "private": true,
+  "description": "Chance Cosmetics — Google Sheets + Apps Script ads sheet (live Meta/TikTok spend, Shopify orders and stock)",
+  "scripts": {
+    "check": "node tools/check.js",
+    "compare": "node tools/compare-baseline.js",
+    "build": "node tools/build.js",
+    "test": "node --test tests/*.test.js",
+    "verify": "npm run check && npm test && npm run build",
+    "push:sheet": "npm run verify && cd ads-sheet && clasp push"
+  },
+  "devDependencies": {
+    "acorn": "^8.14.0"
+  }
+}

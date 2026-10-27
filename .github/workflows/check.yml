@@ -1,0 +1,21 @@
+name: فحص الكود
+on: [push, pull_request]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - name: مفيش أخطاء كتابة ولا دوال متكررة
+        run: npm run check
+      - name: الاختبارات
+        run: npm test
+      - name: ملفات dist متحدثة
+        run: |
+          npm run build
+          git diff --exit-code dist/ || (echo "شغّل npm run build وارفع ملفات dist" && exit 1)
+      - name: الاختلافات عن النسخة المرجعية (للمراجعة)
+        run: npm run compare
