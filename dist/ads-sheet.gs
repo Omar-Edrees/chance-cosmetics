@@ -1604,7 +1604,7 @@ const TODAY = {
   GRAND: '#00ff00', LABEL: '#f3f4f6', METRIC: '#e8f0fe', AVG: '#e8eefc', SPECIAL: '#fde8e8', TOTAL: '#e8eefc',
   GREEN: '#d9ead3', RED: '#f4cccc',
   MONEY: '#,##0.00', COUNT: '0', RATIO: '0.00', PCT: '0.00%',
-  FUNNEL_KEY: 'TODAY_FUNNEL', AVG_KEY: 'TODAY_FUNNEL_AVG', AVG_DAYS: 30,
+  FUNNEL_KEY: 'TODAY_FUNNEL', AVG_KEY: 'TODAY_FUNNEL_AVG', AVG_DAYS: 60,
   FIELDS: 'spend,impressions,clicks,inline_link_clicks,actions',
   /* [Metric, numerator, denominator, times, percent?, lower is better?] — same as House of Beauty's benchmark */
   METRICS: [
@@ -1639,7 +1639,7 @@ function funnelRaw_(rows) {
 function funnelAdd_(a, b) { const out = Object.assign({}, a); Object.keys(b).forEach(k => { out[k] = (out[k] || 0) + b[k]; }); return out; }
 
 /*
- * Today's funnel per Meta account (every update), and the average of the last 30 days before today
+ * Today's funnel per Meta account (every update), and the average of the last 60 days before today
  * for all Meta accounts together (once a day). Stored in document properties for writeToday_.
  */
 function refreshTodayFunnel_() {
@@ -1649,7 +1649,8 @@ function refreshTodayFunnel_() {
   const range = (a, b) => JSON.stringify({ since: a, until: b });
   let avg = null;
   try { avg = JSON.parse(props.getProperty(TODAY.AVG_KEY) || 'null'); } catch (e) { avg = null; }
-  const needAvg = !avg || avg.day !== today, from = shiftKey_(today, -TODAY.AVG_DAYS), to = shiftKey_(today, -1);
+  const from = shiftKey_(today, -TODAY.AVG_DAYS), to = shiftKey_(today, -1);
+  const needAvg = !avg || avg.day !== today || avg.from !== from; // a new day, or AVG_DAYS changed
   const out = { day: today, accounts: [] };
   let total = {}, avgOk = true;
   accs.forEach(acc => {
@@ -1799,7 +1800,7 @@ function todaySlots_(g, r, today) {
   return r;
 }
 
-/* Meta benchmark: your last-30-days average vs each Meta account today. Worse = red, better = green. */
+/* Meta benchmark: your last-60-days average vs each Meta account today. Worse = red, better = green. */
 function todayBenchmark_(g, r, today, shown) {
   const S = TODAY, c = S.RIGHT_COL, f = todayFunnel_(), accs = (f.today && f.today.day === today ? f.today.accounts : [])
     .concat(accounts_('META').filter(a => !(f.today && f.today.day === today && f.today.accounts.some(x => x.id === a.id)))

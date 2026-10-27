@@ -158,14 +158,17 @@ test('Today: لقطات الـ 3 ساعات من تاب Intraday، مع CPP و R
   assert.deepEqual(todayRow(e, '6:00 PM', 8).slice(8, 16), ['', '', '', '', '', '', '', '']);
 });
 
-test('Today: بنشمارك Meta، متوسط آخر 30 يوم مقابل كل حساب النهارده', () => {
+test('Today: بنشمارك Meta، متوسط آخر 60 يوم مقابل كل حساب النهارده', () => {
   const e = scenario(), values = e.ss.getSheetByName('Today').getDataRange().getValues();
   const head = values.find(r => r[7] === 'METRIC');
-  assert.deepEqual(head.slice(7, 12), ['METRIC', 'AVERAGE (LAST 30 DAYS)', 'Meta 4660', 'Meta 4823', 'Meta 5243']);
+  assert.deepEqual(head.slice(7, 12), ['METRIC', 'AVERAGE (LAST 60 DAYS)', 'Meta 4660', 'Meta 4823', 'Meta 5243']);
   const cpm = values.find(r => r[7] === 'CPM'), cpp = values.find(r => r[7] === 'Cost per purchase');
-  // المتوسط من آخر 30 يوم قبل النهارده: إعلان واحد امبارح صرف 300 على 1000 ظهور
+  // المتوسط من آخر 60 يوم قبل النهارده: إعلان واحد امبارح صرف 300 على 1000 ظهور
   assert.deepEqual(cpm.slice(7, 12), ['CPM', 300, 500, 100, '—']);
   assert.equal(cpp[8], 150);
+  const ranges = e.requests.filter(u => /level=account/.test(u) && !/time_increment/.test(u))
+    .map(u => JSON.parse(decodeURIComponent(u.match(/time_range=([^&]+)/)[1])));
+  assert.ok(ranges.some(t => t.since === e.c.shiftKey_(e.today, -60) && t.until === e.yest), 'المتوسط من آخر 60 يوم لحد امبارح');
   const cell = c => e.ss.getSheetByName('Today').attr(values.indexOf(cpm) + 1, c).bg;
   assert.equal(cell(10), '#f4cccc');
   assert.equal(cell(11), '#d9ead3');
