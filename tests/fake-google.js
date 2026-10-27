@@ -77,7 +77,7 @@ class FakeRange {
 }
 /* تنسيقات مش بنتابعها */
 ['merge', 'setHorizontalAlignment', 'removeCheckboxes', 'setWrap', 'setFontSize', 'breakApart', 'setDataValidation', 'setBorder',
-  'setVerticalAlignment', 'activate', 'setTextDirection'].forEach(m => {
+  'setVerticalAlignment', 'activate', 'setTextDirection', 'setHorizontalAlignments'].forEach(m => {
   FakeRange.prototype[m] = function () { return this; };
 });
 

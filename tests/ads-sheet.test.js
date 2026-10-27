@@ -32,6 +32,14 @@ function env(options) {
     requests.push(url);
     const id = (url.match(/act_(\d+)/) || [])[1];
     if (/\/insights\?/.test(url) && /level=ad&/.test(url)) return { data: ads[id] || [] };
+    if (/\/insights\?/.test(url) && !/time_increment/.test(url)) { // تاب Today: الفانل لكل حساب في فترة
+      const t = JSON.parse(decodeURIComponent(url.match(/time_range=([^&]+)/)[1])), mine = (ads[id] || []).filter(r => r.date_start >= t.since && r.date_start <= t.until);
+      if (!mine.length) return { data: [] };
+      const n = mine.length, act = (k, v) => ({ action_type: k, value: String(v * n) });
+      return { data: [{ spend: String(mine.reduce((x, r) => x + Number(r.spend), 0)), impressions: String(1000 * n), clicks: String(50 * n),
+        inline_link_clicks: String(20 * n), actions: [act('landing_page_view', 15), act('offsite_conversion.fb_pixel_view_content', 10),
+          act('offsite_conversion.fb_pixel_purchase', 2)] }] };
+    }
     if (/\/insights\?/.test(url)) {
       const byDay = {};
       (ads[id] || []).forEach(r => { byDay[r.date_start] = (byDay[r.date_start] || 0) + Number(r.spend); });
@@ -112,25 +120,76 @@ test('الإعداد بيعمل التابات من البروفايل وماب�
   assert.equal(e.ss.getSheetByName('Accounts').getRange(2, 3).getValue(), 'اسم اتغير');
 });
 
-test('Today: صرف Meta بالظبط، والأوردرات من شيت شوبيفاي، والضريبة 14%', () => {
-  const e = scenario();
-  const plat = block(e.ss.getSheetByName('Today'), 'الصرف والأوردرات النهارده');
-  const meta = plat.find(r => r[0] === 'META'), tiktok = plat.find(r => r[0] === 'TIKTOK'), total = plat.find(r => r[0] === 'الإجمالي');
-  assert.equal(meta[1], 1100);
-  assert.equal(meta[2], 1254);
-  assert.equal(meta[3], 2);
-  assert.equal(meta[4], 627);
-  assert.equal(meta[5], 1050);
-  assert.equal(tiktok[3], 1);
-  assert.equal(total[1], 1100);
-  assert.equal(total[3], 3);
+/* صف في تاب Today بالعنوان اللي في عمود col */
+function todayRow(e, label, col) {
+  return e.ss.getSheetByName('Today').getDataRange().getValues().find(r => r[(col || 1) - 1] === label);
+}
+
+test('Today: صف لكل حساب بأرقام المنصة، والإجماليات من أوردرات الموقع، ومن غير 14%', () => {
+  const e = scenario(), tab = e.ss.getSheetByName('Today');
+  assert.match(String(tab.getRange(1, 1).getValue()), /CHANCE COSMETICS — DAILY AD CLOSING/);
+  assert.deepEqual(tab.getRange(8, 1, 1, 6).getValues()[0].map(h => String(h).split(' ')[0]),
+    ['PLATFORM', 'AD', 'AMOUNT', 'ORDERS', 'CPP', 'ROAS']);
+  const all = tab.getDataRange().getValues().map(r => r.slice(0, 6));
+  assert.ok(!all.flat().some(v => /14%|ضريبة/.test(String(v))), 'مفيش 14% في الجدول');
+  const acc1 = all.find(r => r[1] === 'Meta 4660'), acc2 = all.find(r => r[1] === 'Meta 4823'), acc3 = all.find(r => r[1] === 'Meta 5243');
+  assert.deepEqual(acc1.slice(2), [1000, 4, 250, 1.8]);
+  assert.deepEqual(acc2.slice(2), [100, 2, 50, 9]);
+  assert.deepEqual(acc3.slice(2), [0, 0, '', '']);
+  assert.equal(all[8][0], 'META');
+  const meta = all.find(r => r[0] === 'META TOTAL'), tt = all.find(r => r[0] === 'TIKTOK TOTAL'), grand = all.find(r => r[0] === 'GRAND TOTAL');
+  assert.deepEqual(meta.slice(2), [1100, 2, 550, 0.95]);
+  assert.deepEqual(tt.slice(2), [0, 1, 0, '']);
+  assert.deepEqual(grand.slice(2), [1100, 3, 366.67, 1.18]);
+  assert.ok(all.some(r => r[0] === 'TIKTOK' && r[1] === 'TikTok'));
   assert.match(String(e.c.getStatus_('LIVE')), /✓ OK/);
+});
+
+test('Today: لقطات الـ 3 ساعات من تاب Intraday، مع CPP و ROAS', () => {
+  const e = scenario();
+  e.ss.getSheetByName('Intraday').appendRow([e.today, '15:00', 'META', 500, 2, 250, 1000]);
+  e.ss.getSheetByName('Intraday').appendRow([e.today, '15:00', 'الإجمالي', 500, 3, 166.67, 1250]);
+  e.c.writeToday_();
+  const values = e.ss.getSheetByName('Today').getDataRange().getValues();
+  const head = values.find(r => r[7] === 'TIME');
+  assert.deepEqual(head.slice(7, 16), ['TIME', 'META SPEND', 'META ORDERS', 'META CPP', 'META ROAS', 'TIKTOK SPEND', 'TIKTOK ORDERS', 'TIKTOK CPP', 'TIKTOK ROAS']);
+  assert.deepEqual(values.filter(r => /^\d+:00 [AP]M$/.test(r[7])).map(r => r[7]), ['12:00 PM', '3:00 PM', '6:00 PM', '9:00 PM', '12:00 AM']);
+  assert.deepEqual(todayRow(e, '3:00 PM', 8).slice(7, 16), ['3:00 PM', 500, 2, 250, 2, 0, 0, '', '']);
+  assert.deepEqual(todayRow(e, '6:00 PM', 8).slice(8, 16), ['', '', '', '', '', '', '', '']);
+});
+
+test('Today: بنشمارك Meta، متوسط آخر 30 يوم مقابل كل حساب النهارده', () => {
+  const e = scenario(), values = e.ss.getSheetByName('Today').getDataRange().getValues();
+  const head = values.find(r => r[7] === 'METRIC');
+  assert.deepEqual(head.slice(7, 12), ['METRIC', 'AVERAGE (LAST 30 DAYS)', 'Meta 4660', 'Meta 4823', 'Meta 5243']);
+  const cpm = values.find(r => r[7] === 'CPM'), cpp = values.find(r => r[7] === 'Cost per purchase');
+  // المتوسط من آخر 30 يوم قبل النهارده: إعلان واحد امبارح صرف 300 على 1000 ظهور
+  assert.deepEqual(cpm.slice(7, 12), ['CPM', 300, 500, 100, '—']);
+  assert.equal(cpp[8], 150);
+  const cell = c => e.ss.getSheetByName('Today').attr(values.indexOf(cpm) + 1, c).bg;
+  assert.equal(cell(10), '#f4cccc');
+  assert.equal(cell(11), '#d9ead3');
+});
+
+test('Today: أداء المنتجات النهارده والشهر بالـ ROAS بدل 14%', () => {
+  const e = scenario(), values = e.ss.getSheetByName('Today').getDataRange().getValues();
+  const titles = values.map(r => String(r[7])).filter(t => /^PRODUCT PERFORMANCE/.test(t));
+  assert.equal(titles.length, 2);
+  const heads = values.filter(r => r[7] === 'PRODUCT');
+  heads.forEach(h => assert.deepEqual(h.slice(7, 12), ['PRODUCT', 'META ORDERS', 'META SPEND', 'META CPP', 'META ROAS']));
+  const lip = values.find(r => r[7] === 'Lip Oil'), blush = values.find(r => r[7] === 'Blush');
+  assert.deepEqual(lip.slice(7, 12), ['Lip Oil', 2, 600, 300, 1.75]);
+  assert.deepEqual(blush.slice(7, 12), ['Blush', 0, 100, '', 0]);
+  const unmapped = values.find(r => r[7] === '❌ صرف مش مربوط بمنتج');
+  assert.deepEqual(unmapped.slice(7, 10), ['❌ صرف مش مربوط بمنتج', 0, 400]);
+  const total = values.find(r => r[7] === 'TOTAL META PRODUCT PERFORMANCE');
+  assert.deepEqual(total.slice(7, 12), ['TOTAL META PRODUCT PERFORMANCE', 2, 1100, 550, 0.95]);
 });
 
 test('ربط الإعلانات بالمنتجات من لينك صفحة المنتج، والكوليكشن مش مربوط طول ما دومين المتجر فاضي', () => {
   const e = scenario();
-  const prods = block(e.ss.getSheetByName('Today'), 'المنتجات النهارده');
-  const spend = n => (prods.find(r => r[0] === n) || [])[1];
+  const prods = e.ss.getSheetByName('Today').getDataRange().getValues();
+  const spend = n => (prods.find(r => r[7] === n) || [])[9];
   assert.equal(spend('Lip Oil'), 600);
   assert.equal(spend('Blush'), 100);
   // business.store_domains فاضي في البروفايل، فلينك الكوليكشن مابيتعرفش MULTI

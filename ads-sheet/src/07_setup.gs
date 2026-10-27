@@ -111,7 +111,7 @@ function backfillStep() {
     setStatus_('FULL', '✓ ' + st.since + ' → ' + st.until);
   } catch (e) { setStatus_('BACKFILL', '✗ ' + errText_(e) + ' — هيحاول تاني بعد دقيقة'); }
 }
-/* Every N minutes: orders, today's ads, views, intraday snapshot. Skips quietly if another run is busy. */
+/* Every N minutes: orders, today's ads, views (Today takes the intraday snapshot). Skips quietly if another run is busy. */
 function liveTick() {
   DEADLINE_ = Date.now() + 5 * 60000;
   try {
@@ -120,7 +120,7 @@ function liveTick() {
     const today = todayKey_();
     syncAds_(today, today);
     runLiveExt_();
-    const r = tryLock_(() => { rebuildViews_(); takeIntraday_(); });
+    const r = tryLock_(() => rebuildViews_());
     setStatus_('LIVE', r.skipped ? 'اتأجل (تحديث تاني شغال)' : '✓ OK');
   } catch (e) { setStatus_('LIVE', '✗ ' + errText_(e)); console.error(errText_(e)); }
 }

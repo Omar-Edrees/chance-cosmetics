@@ -1,0 +1,279 @@
+/*
+ * Today tab = Daily Ad Closing, same shape as House of Beauty's Daily Closing, without the 14% add-on.
+ * Left (A:F): one row per ad account, platform totals, grand total. Account rows = platform numbers
+ * (Meta / TikTok purchases), total rows = store orders by UTM. ROAS = sales ÷ spend.
+ * Right (H:P): 3-hour snapshots, Meta benchmark vs today, product performance today and this month.
+ * The tab is redrawn from scratch on every update; nothing is typed in it by hand.
+ */
+const TODAY = {
+  GAP_COL: 7, RIGHT_COL: 8, WIDTH: 16,
+  DARK: '#1f2937', YELLOW: '#fff200', META: '#1d4ed8', TIKTOK: '#111111', META_TOTAL: '#dbe8fb', TT_TOTAL: '#e0e0e0',
+  GRAND: '#00ff00', LABEL: '#f3f4f6', METRIC: '#e8f0fe', AVG: '#e8eefc', SPECIAL: '#fde8e8', TOTAL: '#e8eefc',
+  GREEN: '#d9ead3', RED: '#f4cccc',
+  MONEY: '#,##0.00', COUNT: '0', RATIO: '0.00', PCT: '0.00%',
+  FUNNEL_KEY: 'TODAY_FUNNEL', AVG_KEY: 'TODAY_FUNNEL_AVG', AVG_DAYS: 30,
+  FIELDS: 'spend,impressions,clicks,inline_link_clicks,actions',
+  /* [Metric, numerator, denominator, times, percent?, lower is better?] — same as House of Beauty's benchmark */
+  METRICS: [
+    ['CPM', 'spend', 'impressions', 1000, false, true],
+    ['CPC (all)', 'spend', 'clicks', 1, false, true],
+    ['CTR (all)', 'clicks', 'impressions', 1, true, false],
+    ['CTR (link)', 'linkClicks', 'impressions', 1, true, false],
+    ['CPC (link)', 'spend', 'linkClicks', 1, false, true],
+    ['CVR', 'purchases', 'linkClicks', 1, true, false],
+    ['Cost per content view', 'spend', 'contentViews', 1, false, true],
+    ['Cost per LPV', 'spend', 'landingViews', 1, false, true],
+    ['Cost per purchase', 'spend', 'purchases', 1, false, true],
+    ['Link click → LPV', 'landingViews', 'linkClicks', 1, true, false],
+    ['LPV → Purchase', 'purchases', 'landingViews', 1, true, false]
+  ]
+};
+
+/* ---------- Meta funnel for the benchmark (live hook, outside the lock) ---------- */
+
+/* Insights rows → raw counts. Purchases = the same type as the ORDERS column (meta.purchase_actions). */
+function funnelRaw_(rows) {
+  const sum = k => rows.reduce((n, r) => n + num_(r[k]), 0);
+  const action = types => rows.reduce((n, r) => {
+    for (const t of types) { const a = (r.actions || []).find(x => x.action_type === t); if (a) return n + num_(a.value); }
+    return n;
+  }, 0);
+  return { spend: sum('spend'), impressions: sum('impressions'), clicks: sum('clicks'), linkClicks: sum('inline_link_clicks'),
+    landingViews: action(['landing_page_view', 'omni_landing_page_view']),
+    contentViews: action(['offsite_conversion.fb_pixel_view_content', 'view_content', 'omni_view_content']),
+    purchases: rows.reduce((n, r) => n + metaPick_(r.actions), 0) };
+}
+function funnelAdd_(a, b) { const out = Object.assign({}, a); Object.keys(b).forEach(k => { out[k] = (out[k] || 0) + b[k]; }); return out; }
+
+/*
+ * Today's funnel per Meta account (every update), and the average of the last 30 days before today
+ * for all Meta accounts together (once a day). Stored in document properties for writeToday_.
+ */
+function refreshTodayFunnel_() {
+  const accs = accounts_('META');
+  if (!accs.length) return;
+  const props = PropertiesService.getDocumentProperties(), today = todayKey_();
+  const range = (a, b) => JSON.stringify({ since: a, until: b });
+  let avg = null;
+  try { avg = JSON.parse(props.getProperty(TODAY.AVG_KEY) || 'null'); } catch (e) { avg = null; }
+  const needAvg = !avg || avg.day !== today, from = shiftKey_(today, -TODAY.AVG_DAYS), to = shiftKey_(today, -1);
+  const out = { day: today, accounts: [] };
+  let total = {}, avgOk = true;
+  accs.forEach(acc => {
+    const row = { id: acc.id, name: acc.name || acc.id };
+    try {
+      row.raw = funnelRaw_(metaAll_('act_' + acc.id + '/insights', { level: 'account', time_range: range(today, today), fields: TODAY.FIELDS }));
+      if (needAvg) total = funnelAdd_(total, funnelRaw_(metaAll_('act_' + acc.id + '/insights',
+        { level: 'account', time_range: range(from, to), fields: TODAY.FIELDS })));
+    } catch (e) { row.error = errText_(e); avgOk = false; }
+    out.accounts.push(row);
+  });
+  if (needAvg && avgOk) props.setProperty(TODAY.AVG_KEY, JSON.stringify({ day: today, from: from, to: to, raw: total }));
+  props.setProperty(TODAY.FUNNEL_KEY, JSON.stringify(out));
+}
+function todayFunnel_() {
+  const props = PropertiesService.getDocumentProperties(), read = k => { try { return JSON.parse(props.getProperty(k) || 'null'); } catch (e) { return null; } };
+  return { today: read(TODAY.FUNNEL_KEY), avg: read(TODAY.AVG_KEY) };
+}
+function funnelRatio_(raw, m) {
+  return raw && raw[m[2]] > 0 ? raw[m[1]] / raw[m[2]] * m[3] : '';
+}
+
+/* ---------- Drawing ---------- */
+
+/* An in-memory page: cells with value / background / font color / bold / number format, plus merges. */
+function todayGrid_() {
+  const g = { rows: [], merges: [] };
+  g.cell = (r, c) => {
+    while (g.rows.length < r) g.rows.push([]);
+    const line = g.rows[r - 1];
+    if (!line[c - 1]) line[c - 1] = { v: '', bg: null, fc: '#000000', b: 'normal', nf: 'General', al: 'left' };
+    return line[c - 1];
+  };
+  g.set = (r, c, v, style) => Object.assign(g.cell(r, c), { v: v === null || v === undefined ? '' : v }, style || {});
+  g.fill = (r, c, n, style) => { for (let i = 0; i < n; i++) Object.assign(g.cell(r, c + i), style); };
+  g.merge = (r, c, rows, cols) => { g.merges.push([r, c, rows, cols]); };
+  return g;
+}
+
+function writeGrid_(sh, g) {
+  const R = Math.max(g.rows.length, 1), W = TODAY.WIDTH;
+  const old = Math.max(sh.getLastRow(), R);
+  if (R > sh.getMaxRows()) sh.insertRowsAfter(sh.getMaxRows(), R - sh.getMaxRows());
+  if (sh.getMaxColumns() < W) sh.insertColumnsAfter(sh.getMaxColumns(), W - sh.getMaxColumns());
+  const all = sh.getRange(1, 1, old, Math.max(W, sh.getLastColumn()));
+  all.breakApart(); all.clear();
+  sh.setConditionalFormatRules([]);
+  const pick = k => { const out = []; for (let r = 0; r < R; r++) { const line = []; for (let c = 0; c < W; c++) { const x = (g.rows[r] || [])[c]; line.push(x ? x[k] : (k === 'v' ? '' : k === 'fc' ? '#000000' : k === 'b' ? 'normal' : k === 'nf' ? 'General' : k === 'al' ? 'left' : null)); } out.push(line); } return out; };
+  const rng = sh.getRange(1, 1, R, W);
+  rng.setNumberFormats(pick('nf')).setValues(pick('v')).setBackgrounds(pick('bg')).setFontColors(pick('fc'))
+    .setFontWeights(pick('b')).setHorizontalAlignments(pick('al'));
+  g.merges.forEach(m => sh.getRange(m[0], m[1], m[2], m[3]).merge());
+}
+
+/* Title bar + yellow header row. Returns the first data row. */
+function todayHead_(g, r, c, width, title, headers) {
+  g.set(r, c, title, { bg: TODAY.DARK, fc: '#ffffff', b: 'bold', al: 'center' });
+  g.fill(r, c + 1, width - 1, { bg: TODAY.DARK });
+  g.merge(r, c, 1, width);
+  headers.forEach((h, i) => g.set(r + 1, c + i, h, { bg: TODAY.YELLOW, b: 'bold', al: 'center' }));
+  return r + 2;
+}
+
+function ratioOrBlank_(a, b, digits) { return b > 0 ? Math.round(a / b * Math.pow(10, digits)) / Math.pow(10, digits) : ''; }
+
+/* Spend, platform purchases and purchase value per account today, from Ads Raw. */
+function todayAccounts_(today) {
+  const rows = { META: new Map(), TIKTOK: new Map() };
+  ['META', 'TIKTOK'].forEach(p => accounts_(p).forEach(a => rows[p].set(a.id, { id: a.id, name: a.name || a.id, spend: 0, orders: 0, value: 0 })));
+  readRows_(tab_(APP.T.ADS), ADS_HEADERS.length).forEach(a => {
+    if (asKey_(a[0]) !== today || !rows[a[1]]) return;
+    const id = String(a[2]), m = rows[a[1]];
+    if (!m.has(id)) m.set(id, { id: id, name: a[3] || id, spend: 0, orders: 0, value: 0 });
+    const x = m.get(id);
+    x.spend += num_(a[10]); x.orders += num_(a[13]); x.value += num_(a[14]);
+  });
+  return { META: Array.from(rows.META.values()), TIKTOK: Array.from(rows.TIKTOK.values()) };
+}
+
+/* Left side: the Daily Ad Closing table. */
+function todayClosing_(g, today, sum) {
+  const S = TODAY, pixel = cfgStr_('orders.method') === 'pixel';
+  g.set(1, 1, (cfgStr_('business.name') || 'ADS').toUpperCase() + ' — DAILY AD CLOSING', { bg: S.DARK, fc: '#ffffff', b: 'bold', al: 'center' });
+  g.fill(1, 2, 5, { bg: S.DARK });
+  g.merge(1, 1, 1, 6);
+  const p = today.split('-').map(Number), shown = Utilities.formatDate(new Date(Date.UTC(p[0], p[1] - 1, p[2], 12)), 'UTC', 'dd-MMM-yyyy');
+  [['Closing Date', shown], ['Status', 'LIVE — بيتحدث لوحده'], ['Last Update', nowText_()],
+    ['Orders Source', pixel ? '⚠️ مشتريات البيكسل (مش أوردرات حقيقية)' : 'Shopify (UTM)']].forEach((x, i) => {
+    g.set(3 + i, 1, x[0], { bg: S.LABEL, b: 'bold' });
+    g.set(3 + i, 2, x[1], { al: 'right' });
+  });
+  const totalNote = '(ACCOUNT: PLATFORM / TOTAL: UTMs)';
+  let r = 8;
+  ['PLATFORM', 'AD ACCOUNT NAME', 'AMOUNT SPENT', 'ORDERS ' + totalNote, 'CPP ' + totalNote, 'ROAS ' + totalNote]
+    .forEach((h, i) => g.set(r, 1 + i, h, { bg: S.YELLOW, b: 'bold', al: 'center' }));
+  r++;
+  const accs = todayAccounts_(today);
+  const line = (row, name, spend, orders, value, style, hasValue) => {
+    g.set(row, 2, name, style);
+    g.set(row, 3, Math.round(spend * 100) / 100, Object.assign({ nf: S.MONEY, al: 'right' }, style));
+    g.set(row, 4, orders, Object.assign({ nf: S.COUNT, al: 'right' }, style));
+    g.set(row, 5, ratioOrBlank_(spend, orders, 2), Object.assign({ nf: S.MONEY, al: 'right' }, style, style.bg ? {} : { bg: S.METRIC }));
+    g.set(row, 6, hasValue ? ratioOrBlank_(value, spend, 2) : '', Object.assign({ nf: S.RATIO, al: 'right' }, style, style.bg ? {} : { bg: S.METRIC }));
+  };
+  const platform = (label, color, list, totalLabel, totalStyle, key) => {
+    const first = r, items = list.length ? list : [{ name: '', spend: 0, orders: 0, value: 0 }];
+    items.forEach(a => { line(r, a.name, a.spend, a.orders, a.value, {}, key === 'META'); r++; });
+    g.set(first, 1, label, { bg: color, fc: '#ffffff', b: 'bold', al: 'center' });
+    for (let i = first + 1; i < r; i++) g.cell(i, 1).bg = color;
+    if (items.length > 1) g.merge(first, 1, items.length, 1);
+    const t = sum.byPlatform[key] || { spend: 0, orders: 0, revenue: 0 };
+    g.set(r, 1, totalLabel, totalStyle);
+    line(r, '', t.spend, t.orders, t.revenue, totalStyle, true);
+    r++;
+  };
+  platform('META', S.META, accs.META, 'META TOTAL', { bg: S.META_TOTAL, b: 'bold', fc: '#1d4ed8' }, 'META');
+  platform('TIKTOK', S.TIKTOK, accs.TIKTOK, 'TIKTOK TOTAL', { bg: S.TT_TOTAL, b: 'bold' }, 'TIKTOK');
+  const grand = { bg: S.GRAND, b: 'bold' }, unknown = (sum.byPlatform[APP.UNKNOWN_PLATFORM] || { orders: 0 }).orders;
+  g.set(r, 1, 'GRAND TOTAL', grand);
+  line(r, '', sum.total.spend, sum.total.orders, sum.total.revenue, grand, true);
+  if (unknown) g.cell(r, 2).v = 'منهم ' + unknown + ' أوردر مش معروف مصدره';
+  return r;
+}
+
+/* 3-hour snapshots: spend and orders of the day so far at each hour in intraday.hours. */
+function todaySlots_(g, r, today) {
+  const S = TODAY, c = S.RIGHT_COL;
+  r = todayHead_(g, r, c, 9, '3-HOUR PERFORMANCE CHECK — DAY TO DATE', ['TIME', 'META SPEND', 'META ORDERS', 'META CPP', 'META ROAS',
+    'TIKTOK SPEND', 'TIKTOK ORDERS', 'TIKTOK CPP', 'TIKTOK ROAS']);
+  const snaps = {}, intra = ss_().getSheetByName(APP.T.INTRA);
+  if (intra) readRows_(intra, INTRA_HEADERS.length).forEach(x => {
+    if (asKey_(x[0]) === today) snaps[String(x[1]) + '|' + x[2]] = { spend: num_(x[3]), orders: num_(x[4]), revenue: x[6] === '' ? null : num_(x[6]) };
+  });
+  cfgList_('intraday.hours').map(Number).forEach(h => {
+    const slot = (h === 0 ? 24 : h) + ':00', label = (h % 12 === 0 ? 12 : h % 12) + ':00 ' + (h > 0 && h < 12 ? 'AM' : h === 12 ? 'PM' : h === 0 ? 'AM' : 'PM');
+    g.set(r, c, label, { b: 'bold', al: 'center' });
+    ['META', 'TIKTOK'].forEach((p, i) => {
+      const s = snaps[slot + '|' + p] || (snaps[slot + '|الإجمالي'] ? { spend: 0, orders: 0, revenue: 0 } : null), at = c + 1 + i * 4;
+      if (!s) return;
+      g.set(r, at, Math.round(s.spend * 100) / 100, { nf: S.MONEY, al: 'right' });
+      g.set(r, at + 1, s.orders, { nf: S.COUNT, al: 'right' });
+      g.set(r, at + 2, ratioOrBlank_(s.spend, s.orders, 2), { nf: S.MONEY, al: 'right' });
+      g.set(r, at + 3, s.revenue === null ? '' : ratioOrBlank_(s.revenue, s.spend, 2), { nf: S.RATIO, al: 'right' });
+    });
+    r++;
+  });
+  return r;
+}
+
+/* Meta benchmark: your last-30-days average vs each Meta account today. Worse = red, better = green. */
+function todayBenchmark_(g, r, today, shown) {
+  const S = TODAY, c = S.RIGHT_COL, f = todayFunnel_(), accs = (f.today && f.today.day === today ? f.today.accounts : [])
+    .concat(accounts_('META').filter(a => !(f.today && f.today.day === today && f.today.accounts.some(x => x.id === a.id)))
+      .map(a => ({ id: a.id, name: a.name || a.id })));
+  const avg = f.avg && f.avg.raw ? f.avg.raw : null, width = Math.max(2 + accs.length, 2);
+  r = todayHead_(g, r, c, width, 'META BENCHMARK vs TODAY | ' + shown,
+    ['METRIC', 'AVERAGE (LAST ' + S.AVG_DAYS + ' DAYS)'].concat(accs.map(a => (a.error ? '⚠️ ' : '') + a.name)));
+  S.METRICS.forEach(m => {
+    const base = funnelRatio_(avg, m), nf = m[4] ? S.PCT : S.MONEY;
+    g.set(r, c, m[0], { b: 'bold' });
+    g.set(r, c + 1, base === '' ? '—' : base, { nf: nf, bg: S.AVG, al: 'center' });
+    accs.forEach((a, i) => {
+      const v = funnelRatio_(a.raw, m);
+      let bg = null;
+      if (v !== '' && base !== '' && v !== base) bg = (m[5] ? v < base : v > base) ? S.GREEN : S.RED;
+      g.set(r, c + 2 + i, v === '' ? '—' : v, { nf: nf, bg: bg, al: 'center' });
+    });
+    r++;
+  });
+  return r;
+}
+
+/* Product performance (Meta): spend from Ad Map, orders and sales = store orders from Meta UTMs for that product. */
+function todayProducts_(g, r, title, from, to, rows) {
+  const S = TODAY, c = S.RIGHT_COL, meta = {}, special = [APP.MULTI, APP.UNMAPPED, APP.UNKNOWN_PRODUCT];
+  rows.forEach(x => {
+    if (x[0] < from || x[0] > to || x[1] !== 'META') return;
+    const t = meta[x[2]] = meta[x[2]] || { spend: 0, orders: 0, revenue: 0 };
+    t.spend += num_(x[3]); t.orders += num_(x[8]); t.revenue += num_(x[10]);
+  });
+  r = todayHead_(g, r, c, 5, title, ['PRODUCT', 'META ORDERS', 'META SPEND', 'META CPP', 'META ROAS']);
+  const names = Object.keys(meta).filter(n => special.indexOf(n) < 0 && (meta[n].spend > 0 || meta[n].orders > 0))
+    .sort((a, b) => (meta[b].spend - meta[a].spend) || (meta[b].orders - meta[a].orders));
+  const tot = { spend: 0, orders: 0, revenue: 0 };
+  const put = (name, t, style) => {
+    g.set(r, c, name, style);
+    g.set(r, c + 1, t.orders, Object.assign({ nf: S.COUNT, al: 'right' }, style));
+    g.set(r, c + 2, Math.round(t.spend * 100) / 100, Object.assign({ nf: S.MONEY, al: 'right' }, style));
+    g.set(r, c + 3, ratioOrBlank_(t.spend, t.orders, 2), Object.assign({ nf: S.MONEY, al: 'right' }, style));
+    g.set(r, c + 4, ratioOrBlank_(t.revenue, t.spend, 2), Object.assign({ nf: S.RATIO, al: 'right' }, style));
+    r++;
+  };
+  names.forEach(n => { put(n, meta[n], {}); ['spend', 'orders', 'revenue'].forEach(k => { tot[k] += meta[n][k]; }); });
+  special.forEach(n => {
+    const t = meta[n];
+    if (!t || (t.spend <= 0 && t.orders <= 0)) return;
+    put(n, t, { bg: S.SPECIAL });
+    ['spend', 'orders', 'revenue'].forEach(k => { tot[k] += t[k]; });
+  });
+  if (!names.length && !special.some(n => meta[n])) { g.set(r, c, 'مفيش صرف Meta في الفترة دي', { fc: '#6b7280' }); r++; }
+  put('TOTAL META PRODUCT PERFORMANCE', tot, { bg: S.TOTAL, b: 'bold' });
+  return r;
+}
+
+function writeToday_() {
+  takeIntraday_();
+  const sh = ensureTab_(APP.T.TODAY), today = todayKey_(), rows = dailyRows_(), sum = summarize_(rows, today, today), g = todayGrid_();
+  const p = today.split('-').map(Number), noon = new Date(Date.UTC(p[0], p[1] - 1, p[2], 12));
+  const shown = Utilities.formatDate(noon, 'UTC', 'dd-MMM-yyyy'), month = Utilities.formatDate(noon, 'UTC', 'MMM-yyyy');
+  todayClosing_(g, today, sum);
+  let r = todaySlots_(g, 1, today) + 1;
+  r = todayBenchmark_(g, r, today, shown) + 1;
+  r = todayProducts_(g, r, 'PRODUCT PERFORMANCE — TODAY | ' + shown, today, today, rows) + 1;
+  todayProducts_(g, r, 'PRODUCT PERFORMANCE — THIS MONTH | ' + month, today.slice(0, 8) + '01', today, rows);
+  writeGrid_(sh, g);
+  sh.setFrozenRows(0);
+  [[1, 110], [2, 210], [3, 120], [4, 130], [5, 130], [6, 130], [7, 24], [8, 240]].forEach(w => sh.setColumnWidth(w[0], w[1]));
+  for (let col = 9; col <= TODAY.WIDTH; col++) sh.setColumnWidth(col, 115);
+  sh.getRange(8, 1, 1, 6).setWrap(true);
+}

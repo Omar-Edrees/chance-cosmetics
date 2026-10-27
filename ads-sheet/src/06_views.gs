@@ -8,7 +8,7 @@ const DAILY_HEADERS = ['Date', 'Platform', 'Product', 'Spend', 'Spend not exact'
 const BENCH_HEADERS = ['Metric', 'Platform', 'Low (weak)', 'Typical', 'Good (strong)', 'Better', 'Source', 'Source date', 'Confidence', 'Note'];
 const TESTS_HEADERS = ['Test ID', 'Product', 'Angle', 'Hook', 'Format', 'Creator', 'Landing page', 'Budget', 'Structure',
   'Kill rule', 'Scale rule', 'Status', 'Spend', 'Pixel purchases', 'Orders', 'CPA + tax', 'Signal', 'Notes'];
-const INTRA_HEADERS = ['Date', 'Slot', 'Platform', 'Spend', 'Orders', 'CPP + tax'];
+const INTRA_HEADERS = ['Date', 'Slot', 'Platform', 'Spend', 'Orders', 'CPP', 'Revenue'];
 
 function taxRate_() { return cfgNum_('costs.ad_tax_pct') || 0; }
 
@@ -107,34 +107,6 @@ function writeBlocks_(sh, start, blocks, width) {
   return r;
 }
 
-function kpiRows_(sum, sum30, platform) {
-  const t = platform ? sum.byPlatform[platform] : sum.total, b = platform ? sum30.byPlatform[platform] : sum30.total;
-  if (!t) return [];
-  const calc = x => x ? {
-    cpm: x.imp ? x.spend / x.imp * 1000 : '', ctr_link: x.imp ? x.clicks / x.imp : '', cpc_link: x.clicks ? x.spend / x.clicks : '',
-    lp_cvr: x.clicks ? x.pixel / x.clicks : '', cpa_orders: x.orders ? x.spend * (1 + taxRate_()) / x.orders : '',
-    aov: x.orders ? x.revenue / x.orders : '' } : {};
-  const now = calc(t), base = calc(b), bench = {};
-  const bsh = ss_().getSheetByName(APP.T.BENCH);
-  if (bsh) readRows_(bsh, BENCH_HEADERS.length).forEach(r => {
-    if (!r[1] || String(r[1]).toUpperCase() === (platform || 'ALL') || String(r[1]).toUpperCase() === 'ALL') bench[String(r[0]).trim()] = r;
-  });
-  const names = { cpm: 'CPM', ctr_link: 'Link CTR', cpc_link: 'CPC', lp_cvr: 'Conversion rate', cpa_orders: 'CPA + tax (orders)', aov: 'AOV' };
-  return Object.keys(names).map(k => {
-    const v = now[k], r = bench[k];
-    let status = '';
-    if (v !== '' && r && r[2] !== '' && r[4] !== '') {
-      const lower = String(r[5]).toLowerCase() === 'lower';
-      status = lower ? (v <= r[4] ? 'أقوى من السوق' : v <= r[2] ? 'في المعدل' : 'أضعف من السوق')
-        : (v >= r[4] ? 'أقوى من السوق' : v >= r[2] ? 'في المعدل' : 'أضعف من السوق');
-    }
-    const fmt = x => (x === '' ? '' : round2_(k === 'ctr_link' || k === 'lp_cvr' ? x * 100 : x));
-    return [names[k] + (k === 'ctr_link' || k === 'lp_cvr' ? ' %' : ''), fmt(v), fmt(base[k] === undefined ? '' : base[k]),
-      r ? [r[2], r[3], r[4]].map(x => (x === '' ? '' : (k === 'ctr_link' || k === 'lp_cvr') ? round2_(x * 100) : x)).join(' / ') : 'ناقص',
-      r ? r[8] : '', status];
-  });
-}
-
 function checksRows_(from, to) {
   const acc = ss_().getSheetByName(APP.T.ACC_RAW), ads = readRows_(tab_(APP.T.ADS), ADS_HEADERS.length);
   const adSum = {}, accSum = {};
@@ -151,29 +123,6 @@ function checksRows_(from, to) {
   const slugs = PropertiesService.getDocumentProperties().getProperty('UNASSIGNED_SLUGS');
   if (slugs) rows.push(['صفحات منتجات مش متسجلة في تاب Products', slugs, '', '❌ سجّلها عشان صرفها يتربط']);
   return rows;
-}
-
-function writeToday_() {
-  const sh = ensureTab_(APP.T.TODAY), today = todayKey_(), rows = dailyRows_();
-  const sum = summarize_(rows, today, today), sum30 = summarize_(rows, shiftKey_(today, -30), shiftKey_(today, -1));
-  const plat = Object.keys(sum.byPlatform).sort().map(p => {
-    const t = sum.byPlatform[p];
-    return [p, round2_(t.spend), round2_(t.spend * (1 + taxRate_())), t.orders, cpp_(t), round2_(t.revenue), aov_(t), roas_(t), t.pixel, t.cancelled];
-  });
-  plat.push(['الإجمالي', round2_(sum.total.spend), round2_(sum.total.spend * (1 + taxRate_())), sum.total.orders, cpp_(sum.total),
-    round2_(sum.total.revenue), aov_(sum.total), roas_(sum.total), sum.total.pixel, sum.total.cancelled]);
-  const intra = ss_().getSheetByName(APP.T.INTRA);
-  const intraRows = intra ? readRows_(intra, INTRA_HEADERS.length).filter(r => asKey_(r[0]) === today).map(r => r.slice(1)) : [];
-  sh.getRange(1, 1, 4, 2).setValues([['اليوم — ' + (cfgStr_('business.name') || ''), ''], ['التاريخ', today], ['آخر تحديث', nowText_()],
-    ['مصدر الأوردرات', cfgStr_('orders.method') === 'pixel' ? '⚠️ مشتريات البيكسل (مش أوردرات حقيقية)' : 'أوردرات المتجر']]);
-  sh.getRange(1, 1).setFontWeight('bold').setFontSize(13);
-  writeBlocks_(sh, 5, [
-    { title: 'الصرف والأوردرات النهارده', headers: ['المنصة', 'الصرف', 'الصرف + الضريبة', 'أوردرات الموقع', 'تكلفة الأوردر + الضريبة', 'المبيعات', 'متوسط الأوردر AOV', 'ROAS الفعلي', 'مشتريات البيكسل', 'ملغي'], rows: plat },
-    { title: 'المنتجات النهارده', headers: PRODUCT_TABLE_HEADERS, rows: productTable_(sum) },
-    { title: 'لقطات خلال اليوم', headers: INTRA_HEADERS.slice(1), rows: intraRows },
-    { title: 'المؤشرات مقابل السوق (المنصة كلها)', headers: ['المؤشر', 'النهارده', 'متوسطك آخر 30 يوم', 'السوق: ضعيف / متوسط / قوي', 'ثقة المصدر', 'الحالة'], rows: kpiRows_(sum, sum30, '') },
-    { title: 'فحص الأرقام', headers: ['البند', 'القيمة', 'من', 'الحالة'], rows: checksRows_(today, today) }
-  ], 10);
 }
 
 function periodFromCells_(sh) {
@@ -240,7 +189,7 @@ function writeHealth_() {
   writeRows_(ensureTab_(APP.T.HEALTH, ['البند', 'الحالة']), rows, 2, []);
 }
 
-/* Intraday snapshots at intraday.hours (first 20 minutes after each hour). */
+/* Intraday snapshots at intraday.hours (first 20 minutes after each hour). Taken by writeToday_ so the slot shows at once. */
 function takeIntraday_() {
   const now = new Date(), h = Number(Utilities.formatDate(now, tz_(), 'H')), m = Number(Utilities.formatDate(now, tz_(), 'm'));
   const hours = cfgList_('intraday.hours').map(Number);
@@ -249,8 +198,11 @@ function takeIntraday_() {
   const props = PropertiesService.getDocumentProperties();
   if (props.getProperty('INTRA_LAST') === key) return false;
   const sum = summarize_(dailyRows_(), day, day), sh = ensureTab_(APP.T.INTRA, INTRA_HEADERS);
-  const rows = Object.keys(sum.byPlatform).sort().map(p => [day, slot, p, round2_(sum.byPlatform[p].spend), sum.byPlatform[p].orders, cpp_(sum.byPlatform[p])]);
-  rows.push([day, slot, 'الإجمالي', round2_(sum.total.spend), sum.total.orders, cpp_(sum.total)]);
+  sh.getRange(1, 1, 1, INTRA_HEADERS.length).setValues([INTRA_HEADERS]); // old tabs had "CPP + tax" and no Revenue
+  const cpp = t => (t.orders > 0 ? round2_(t.spend / t.orders) : '');
+  const rows = Object.keys(sum.byPlatform).sort().map(p => [day, slot, p, round2_(sum.byPlatform[p].spend), sum.byPlatform[p].orders,
+    cpp(sum.byPlatform[p]), round2_(sum.byPlatform[p].revenue)]);
+  rows.push([day, slot, 'الإجمالي', round2_(sum.total.spend), sum.total.orders, cpp(sum.total), round2_(sum.total.revenue)]);
   const at = sh.getLastRow() + 1;
   sh.getRange(at, 1, rows.length, 1).setNumberFormat('@');
   sh.getRange(at, 1, rows.length, INTRA_HEADERS.length).setValues(rows);
