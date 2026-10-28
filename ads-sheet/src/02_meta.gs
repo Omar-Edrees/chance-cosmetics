@@ -100,3 +100,41 @@ function refreshAccountNames_() {
   props.setProperty('ACC_NAMES_AUTO', JSON.stringify(auto));
   if (!failed) props.setProperty('ACC_NAMES_DAY', today);
 }
+
+/*
+ * Meta orders whose UTM carries a campaign / ad ID that no tracked account has: ask Meta which account it belongs to
+ * and add that account to the Accounts tab (then pull its month). Needs the token to see that account.
+ * Each ID is asked once a day at most.
+ */
+function discoverAccounts_() {
+  const osh = ss_().getSheetByName(APP.T.ORDERS), ash = ss_().getSheetByName(APP.T.ADS);
+  if (!osh || !ash || !accounts_('META').length) return;
+  const props = PropertiesService.getDocumentProperties(), today = todayKey_(), weekAgo = shiftKey_(today, -7);
+  const known = new Set();
+  readRows_(ash, ADS_HEADERS.length).forEach(a => { [a[4], a[6], a[8]].forEach(x => { if (x) known.add(String(x)); }); });
+  const ids = new Set();
+  readRows_(osh, ORDERS_HEADERS.length).forEach(o => {
+    if (o[3] !== 'META' || o[14] || asKey_(o[2]) < weekAgo) return;
+    ([o[11], o[12], o[13]].join(' ').match(/\d{15,}/g) || []).forEach(x => { if (!known.has(x)) ids.add(x); });
+  });
+  let tried = {};
+  try { tried = JSON.parse(props.getProperty('ACC_DISCOVER_TRIED') || '{}'); } catch (e) { tried = {}; }
+  const have = new Set(accounts_().map(a => a.platform + '|' + a.id)), added = [], denied = [];
+  Array.from(ids).filter(id => tried[id] !== today).slice(0, 5).forEach(id => {
+    tried[id] = today;
+    try {
+      const acc = String(metaGet_(id, { fields: 'account_id' }).account_id || '');
+      if (!acc || have.has('META|' + acc)) return;
+      const info = metaGet_('act_' + acc, { fields: 'name' });
+      ensureTab_(APP.T.ACCOUNTS).appendRow(['META', acc, String(info.name || acc), 'اتضاف لوحده: أوردرات جاية منه', true, '']);
+      have.add('META|' + acc); added.push(acc);
+    } catch (e) { denied.push(id); }
+  });
+  props.setProperty('ACC_DISCOVER_TRIED', JSON.stringify(tried));
+  if (added.length) {
+    startBackfill_(today.slice(0, 8) + '01', today, added);
+    setStatus_('ACC_DISCOVER', '✓ اتضاف ' + added.join(', ') + ' — صرفه بيتسحب من أول الشهر');
+  } else if (denied.length) {
+    setStatus_('ACC_DISCOVER', '⚠️ أوردرات من كامبين/إعلان مش متاح بالتوكن: ' + denied.join(', ') + ' — ضيف حسابه للـ System User');
+  }
+}

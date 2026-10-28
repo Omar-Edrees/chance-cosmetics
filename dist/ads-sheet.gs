@@ -11,7 +11,7 @@
  * Ad accounts and stores are read-only from here: no writes to Meta, TikTok or order sources.
  */
 const APP = {
-  VERSION: '1.7.0',
+  VERSION: '1.8.0',
   T: {
     SETTINGS: 'Settings', ACCOUNTS: 'Accounts', PRODUCTS: 'Products', ADMAP: 'Ad Map',
     ADS: 'Ads Raw', ACC_RAW: 'Account Raw', ORDERS: 'Orders Raw', DAILY: 'Daily Log',
@@ -23,7 +23,8 @@ const APP = {
   UNKNOWN_PRODUCT: 'منتج مش معروف',
   UNKNOWN_PLATFORM: 'UNKNOWN',
   DIRECT: 'DIRECT', MANUAL: 'MANUAL',
-  CATALOG: 'CATALOG (كل إعلانات الكتالوج)'
+  CATALOG: 'CATALOG (كل إعلانات الكتالوج)',
+  META_NO_AD: 'أوردرات Meta من إعلان مش في الشيت'
 };
 
 /* Chance tabs (90_hooks.gs plugs them into the engine through EXT). */
@@ -436,6 +437,44 @@ function refreshAccountNames_() {
   });
   props.setProperty('ACC_NAMES_AUTO', JSON.stringify(auto));
   if (!failed) props.setProperty('ACC_NAMES_DAY', today);
+}
+
+/*
+ * Meta orders whose UTM carries a campaign / ad ID that no tracked account has: ask Meta which account it belongs to
+ * and add that account to the Accounts tab (then pull its month). Needs the token to see that account.
+ * Each ID is asked once a day at most.
+ */
+function discoverAccounts_() {
+  const osh = ss_().getSheetByName(APP.T.ORDERS), ash = ss_().getSheetByName(APP.T.ADS);
+  if (!osh || !ash || !accounts_('META').length) return;
+  const props = PropertiesService.getDocumentProperties(), today = todayKey_(), weekAgo = shiftKey_(today, -7);
+  const known = new Set();
+  readRows_(ash, ADS_HEADERS.length).forEach(a => { [a[4], a[6], a[8]].forEach(x => { if (x) known.add(String(x)); }); });
+  const ids = new Set();
+  readRows_(osh, ORDERS_HEADERS.length).forEach(o => {
+    if (o[3] !== 'META' || o[14] || asKey_(o[2]) < weekAgo) return;
+    ([o[11], o[12], o[13]].join(' ').match(/\d{15,}/g) || []).forEach(x => { if (!known.has(x)) ids.add(x); });
+  });
+  let tried = {};
+  try { tried = JSON.parse(props.getProperty('ACC_DISCOVER_TRIED') || '{}'); } catch (e) { tried = {}; }
+  const have = new Set(accounts_().map(a => a.platform + '|' + a.id)), added = [], denied = [];
+  Array.from(ids).filter(id => tried[id] !== today).slice(0, 5).forEach(id => {
+    tried[id] = today;
+    try {
+      const acc = String(metaGet_(id, { fields: 'account_id' }).account_id || '');
+      if (!acc || have.has('META|' + acc)) return;
+      const info = metaGet_('act_' + acc, { fields: 'name' });
+      ensureTab_(APP.T.ACCOUNTS).appendRow(['META', acc, String(info.name || acc), 'اتضاف لوحده: أوردرات جاية منه', true, '']);
+      have.add('META|' + acc); added.push(acc);
+    } catch (e) { denied.push(id); }
+  });
+  props.setProperty('ACC_DISCOVER_TRIED', JSON.stringify(tried));
+  if (added.length) {
+    startBackfill_(today.slice(0, 8) + '01', today, added);
+    setStatus_('ACC_DISCOVER', '✓ اتضاف ' + added.join(', ') + ' — صرفه بيتسحب من أول الشهر');
+  } else if (denied.length) {
+    setStatus_('ACC_DISCOVER', '⚠️ أوردرات من كامبين/إعلان مش متاح بالتوكن: ' + denied.join(', ') + ' — ضيف حسابه للـ System User');
+  }
 }
 
 /* ======== 03_ads_sync.gs ======== */
@@ -994,7 +1033,14 @@ function rebuildDaily_() {
   if (osh && !pixelOrders) readRows_(osh, ORDERS_HEADERS.length).forEach(o => {
     const d = asKey_(o[2]);
     if (!d) return;
-    const r = row(d, o[3], o[14] && catAds.has(o[3] + '|' + String(o[14])) ? APP.CATALOG : o[5]);
+    // An order counts on the product of the ad that brought it (the same place as that ad's spend), like Meta does.
+    // A Meta order whose ad isn't in the sheet (another account, a renamed ad) gets its own row instead of a product.
+    let product = o[5];
+    if (o[3] === 'META') {
+      const id = String(o[14] || ''), m = id ? idx.get(adKey_('META', id, '', '', '')) : null;
+      product = id && catAds.has('META|' + id) ? APP.CATALOG : m ? m.product : APP.META_NO_AD;
+    }
+    const r = row(d, o[3], product);
     r[8]++; if (o[15] === true || String(o[15]).toUpperCase() === 'TRUE') r[9]++; r[10] += num_(o[7]);
   });
   const rows = Array.from(agg.values()).map(r => r.map((v, i) => (i >= 3 && i !== 5 && i !== 6 ? round2_(v) : v)))
@@ -1147,7 +1193,8 @@ function writeHealth_() {
     ['الأوردرات', getStatus_('ORDERS')], ['أوردرات من غير تاريخ مفهوم', getStatus_('ORDERS_NODATE')], ['ربط الإعلانات', getStatus_('ADMAP')],
     ['إعلانات ❌ / ⚠️ / ✅', st['❌'] + ' / ' + st['⚠️'] + ' / ' + st['✅']],
     ['أوردرات الشهر مش معروف منصتها', unk.p], ['أوردرات الشهر مش معروف منتجها', unk.pr],
-    ['صفحات منتجات مش متسجلة', PropertiesService.getDocumentProperties().getProperty('UNASSIGNED_SLUGS') || 'مفيش ✅']];
+    ['صفحات منتجات مش متسجلة', PropertiesService.getDocumentProperties().getProperty('UNASSIGNED_SLUGS') || 'مفيش ✅'],
+    ['حسابات إعلانية لقيتها من الأوردرات', getStatus_('ACC_DISCOVER')], ['صرف الكتالوج', getStatus_('CATALOG')]];
   writeRows_(ensureTab_(APP.T.HEALTH, ['البند', 'الحالة']), rows, 2, []);
 }
 
@@ -1282,12 +1329,14 @@ function backfill() {
       'سيب الشيت وتابع التقدم في تاب ' + APP.T.HEALTH + '. لما يخلص هتلاقي "أول سحب: خلص".');
   } catch (e) { alert_('السحب ماكملش:\n' + errText_(e)); }
 }
-function startBackfill_(since, until) {
+function startBackfill_(since, until, onlyIds) {
   const units = [];
-  accounts_('META').forEach(a => {
+  accounts_('META').filter(a => !onlyIds || onlyIds.indexOf(a.id) >= 0).forEach(a => {
     for (let s = since; s <= until; s = shiftKey_(s, 3)) units.push([a.id, s, shiftKey_(s, 2) > until ? until : shiftKey_(s, 2)]);
   });
-  PropertiesService.getDocumentProperties().setProperty('BACKFILL', JSON.stringify({ units: units, done: 0, since: since, until: until }));
+  const props = PropertiesService.getDocumentProperties(), running = JSON.parse(props.getProperty('BACKFILL') || 'null');
+  if (running) { running.units = running.units.concat(units); props.setProperty('BACKFILL', JSON.stringify(running)); return units; }
+  props.setProperty('BACKFILL', JSON.stringify({ units: units, done: 0, since: since, until: until }));
   ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === 'backfillStep').forEach(t => ScriptApp.deleteTrigger(t));
   ScriptApp.newTrigger('backfillStep').timeBased().everyMinutes(1).create();
   setStatus_('BACKFILL', '0 / ' + units.length + ' جزء (' + since + ' → ' + until + ')');
@@ -2180,23 +2229,24 @@ function todayRunning_() {
   return name => { const n = active[name] || 0; return n ? '✅ ' + n + (n === 1 ? ' إعلان' : ' إعلانات') : ''; };
 }
 function todayProducts_(g, r, title, from, to, rows, running) {
-  const S = TODAY, c = S.RIGHT_COL, meta = {}, special = [APP.CATALOG, APP.MULTI, APP.UNMAPPED, APP.UNKNOWN_PRODUCT];
+  const S = TODAY, c = S.RIGHT_COL, meta = {}, special = [APP.CATALOG, APP.MULTI, APP.UNMAPPED, APP.META_NO_AD, APP.UNKNOWN_PRODUCT];
   rows.forEach(x => {
     if (x[0] < from || x[0] > to || x[1] !== 'META') return;
-    const t = meta[x[2]] = meta[x[2]] || { spend: 0, orders: 0, revenue: 0 };
-    t.spend += num_(x[3]); t.orders += num_(x[8]); t.revenue += num_(x[10]);
+    const t = meta[x[2]] = meta[x[2]] || { spend: 0, orders: 0, revenue: 0, pixel: 0 };
+    t.spend += num_(x[3]); t.orders += num_(x[8]); t.revenue += num_(x[10]); t.pixel += num_(x[7]);
   });
-  r = todayHead_(g, r, c, 6, title, ['PRODUCT', 'META ORDERS', 'META SPEND', 'META CPP', 'META ROAS', 'RUNNING NOW']);
+  r = todayHead_(g, r, c, 7, title, ['PRODUCT', 'META ORDERS', 'META SPEND', 'META CPP', 'META ROAS', 'PIXEL PURCHASES', 'RUNNING NOW']);
   const names = Object.keys(meta).filter(n => special.indexOf(n) < 0 && (meta[n].spend > 0 || meta[n].orders > 0))
     .sort((a, b) => (meta[b].spend - meta[a].spend) || (meta[b].orders - meta[a].orders));
-  const tot = { spend: 0, orders: 0, revenue: 0 };
+  const tot = { spend: 0, orders: 0, revenue: 0, pixel: 0 };
   const put = (name, t, style) => {
     g.set(r, c, name, style);
     g.set(r, c + 1, t.orders, Object.assign({ nf: S.COUNT, al: 'right' }, style));
     g.set(r, c + 2, Math.round(t.spend * 100) / 100, Object.assign({ nf: S.MONEY, al: 'right' }, style));
     g.set(r, c + 3, ratioOrBlank_(t.spend, t.orders, 2), Object.assign({ nf: S.MONEY, al: 'right' }, style));
     g.set(r, c + 4, ratioOrBlank_(t.revenue, t.spend, 2), Object.assign({ nf: S.RATIO, al: 'right' }, style));
-    g.set(r, c + 5, name === 'TOTAL META PRODUCT PERFORMANCE' ? '' : running(name), Object.assign({}, style, { fc: '#137333' }));
+    g.set(r, c + 5, t.pixel, Object.assign({ nf: S.COUNT, al: 'right' }, style));
+    g.set(r, c + 6, name === 'TOTAL META PRODUCT PERFORMANCE' ? '' : running(name), Object.assign({}, style, { fc: '#137333' }));
     r++;
   };
   // CATALOG first (all catalog / Advantage+ ads together; per product in the الكتالوج tab), then products, then the rest.
@@ -2204,7 +2254,7 @@ function todayProducts_(g, r, title, from, to, rows, running) {
     const t = meta[n];
     if (!t || (t.spend <= 0 && t.orders <= 0)) return;
     put(n, t, style);
-    ['spend', 'orders', 'revenue'].forEach(k => { tot[k] += t[k]; });
+    ['spend', 'orders', 'revenue', 'pixel'].forEach(k => { tot[k] += t[k]; });
   };
   add(APP.CATALOG, { bg: S.CATALOG, b: 'bold' });
   names.forEach(n => add(n, {}));
@@ -2275,6 +2325,6 @@ const EXT = {
   views: [() => chanceViews_()],
   edit: [(name, a1) => chanceEdit_(name, a1)],
   setup: [() => chanceSetup_()],
-  live: [() => refreshAccountNames_(), () => chanceLive_(), () => refreshTodayFunnel_()],
+  live: [() => refreshAccountNames_(), () => discoverAccounts_(), () => chanceLive_(), () => refreshTodayFunnel_()],
   menu: [['📦 تحديث المنتجات والستوك', 'refreshProductsNow']]
 };

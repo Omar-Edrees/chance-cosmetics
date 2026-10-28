@@ -5,7 +5,7 @@
  * Ad accounts and stores are read-only from here: no writes to Meta, TikTok or order sources.
  */
 const APP = {
-  VERSION: '1.7.0',
+  VERSION: '1.8.0',
   T: {
     SETTINGS: 'Settings', ACCOUNTS: 'Accounts', PRODUCTS: 'Products', ADMAP: 'Ad Map',
     ADS: 'Ads Raw', ACC_RAW: 'Account Raw', ORDERS: 'Orders Raw', DAILY: 'Daily Log',
@@ -17,7 +17,8 @@ const APP = {
   UNKNOWN_PRODUCT: 'منتج مش معروف',
   UNKNOWN_PLATFORM: 'UNKNOWN',
   DIRECT: 'DIRECT', MANUAL: 'MANUAL',
-  CATALOG: 'CATALOG (كل إعلانات الكتالوج)'
+  CATALOG: 'CATALOG (كل إعلانات الكتالوج)',
+  META_NO_AD: 'أوردرات Meta من إعلان مش في الشيت'
 };
 
 /* Chance tabs (90_hooks.gs plugs them into the engine through EXT). */

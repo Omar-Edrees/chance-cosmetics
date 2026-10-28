@@ -40,6 +40,6 @@ const EXT = {
   views: [() => chanceViews_()],
   edit: [(name, a1) => chanceEdit_(name, a1)],
   setup: [() => chanceSetup_()],
-  live: [() => refreshAccountNames_(), () => chanceLive_(), () => refreshTodayFunnel_()],
+  live: [() => refreshAccountNames_(), () => discoverAccounts_(), () => chanceLive_(), () => refreshTodayFunnel_()],
   menu: [['📦 تحديث المنتجات والستوك', 'refreshProductsNow']]
 };

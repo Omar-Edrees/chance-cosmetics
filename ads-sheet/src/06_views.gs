@@ -35,7 +35,14 @@ function rebuildDaily_() {
   if (osh && !pixelOrders) readRows_(osh, ORDERS_HEADERS.length).forEach(o => {
     const d = asKey_(o[2]);
     if (!d) return;
-    const r = row(d, o[3], o[14] && catAds.has(o[3] + '|' + String(o[14])) ? APP.CATALOG : o[5]);
+    // An order counts on the product of the ad that brought it (the same place as that ad's spend), like Meta does.
+    // A Meta order whose ad isn't in the sheet (another account, a renamed ad) gets its own row instead of a product.
+    let product = o[5];
+    if (o[3] === 'META') {
+      const id = String(o[14] || ''), m = id ? idx.get(adKey_('META', id, '', '', '')) : null;
+      product = id && catAds.has('META|' + id) ? APP.CATALOG : m ? m.product : APP.META_NO_AD;
+    }
+    const r = row(d, o[3], product);
     r[8]++; if (o[15] === true || String(o[15]).toUpperCase() === 'TRUE') r[9]++; r[10] += num_(o[7]);
   });
   const rows = Array.from(agg.values()).map(r => r.map((v, i) => (i >= 3 && i !== 5 && i !== 6 ? round2_(v) : v)))
@@ -188,7 +195,8 @@ function writeHealth_() {
     ['الأوردرات', getStatus_('ORDERS')], ['أوردرات من غير تاريخ مفهوم', getStatus_('ORDERS_NODATE')], ['ربط الإعلانات', getStatus_('ADMAP')],
     ['إعلانات ❌ / ⚠️ / ✅', st['❌'] + ' / ' + st['⚠️'] + ' / ' + st['✅']],
     ['أوردرات الشهر مش معروف منصتها', unk.p], ['أوردرات الشهر مش معروف منتجها', unk.pr],
-    ['صفحات منتجات مش متسجلة', PropertiesService.getDocumentProperties().getProperty('UNASSIGNED_SLUGS') || 'مفيش ✅']];
+    ['صفحات منتجات مش متسجلة', PropertiesService.getDocumentProperties().getProperty('UNASSIGNED_SLUGS') || 'مفيش ✅'],
+    ['حسابات إعلانية لقيتها من الأوردرات', getStatus_('ACC_DISCOVER')], ['صرف الكتالوج', getStatus_('CATALOG')]];
   writeRows_(ensureTab_(APP.T.HEALTH, ['البند', 'الحالة']), rows, 2, []);
 }
 

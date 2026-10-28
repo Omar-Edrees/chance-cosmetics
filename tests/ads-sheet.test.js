@@ -55,6 +55,9 @@ function env(options) {
     if (/\/ads\?/.test(url)) return { data: (activeAds[id] || []).map(x => ({ id: x })) };
     const adId = (url.match(/\/v[\d.]+\/(\d+)\?/) || [])[1];
     if (adId && creatives[adId]) return { creative: { object_story_spec: { link_data: { link: creatives[adId] } } } };
+    const obj = (url.match(/\/v[\d.]+\/(\d+)\?/) || [])[1];
+    if (obj && (opt.objects || {})[obj]) return opt.objects[obj];
+    if (obj && !id) throw new Error('Meta code 100: Unsupported get request');
     return { id: 'act_' + id, name: (opt.names || NAMES)[id] };
   };
   const shop = url => { // صفحة منتج في المتجر: /products/<handle>.js
@@ -199,15 +202,17 @@ test('Today: بنشمارك Meta، متوسط آخر 60 يوم مقابل كل �
   assert.equal(cell(11), '#d9ead3');
 });
 
-test('Today: أداء المنتجات النهارده والشهر بالـ ROAS بدل 14%', () => {
+test('Today: أداء المنتجات بالـ ROAS، والأوردر على منتج الإعلان اللي جابه مش على أول منتج فيه', () => {
   const e = scenario(), values = e.ss.getSheetByName('Today').getDataRange().getValues();
   const titles = values.map(r => String(r[7])).filter(t => /^PRODUCT PERFORMANCE/.test(t));
   assert.equal(titles.length, 2);
   const heads = values.filter(r => r[7] === 'PRODUCT');
-  heads.forEach(h => assert.deepEqual(h.slice(7, 12), ['PRODUCT', 'META ORDERS', 'META SPEND', 'META CPP', 'META ROAS']));
+  heads.forEach(h => assert.deepEqual(h.slice(7, 14), ['PRODUCT', 'META ORDERS', 'META SPEND', 'META CPP', 'META ROAS', 'PIXEL PURCHASES', 'RUNNING NOW']));
+  // الـ UTM هنا (fb / Camp) مش بيشاور على إعلان في الشيت: الأوردرات في صف لوحدها مش على Lip Oil
   const lip = values.find(r => r[7] === 'Lip Oil'), blush = values.find(r => r[7] === 'Blush');
-  assert.deepEqual(lip.slice(7, 12), ['Lip Oil', 2, 600, 300, 1.75]);
+  assert.deepEqual(lip.slice(7, 13), ['Lip Oil', 0, 600, '', 0, 2]);
   assert.deepEqual(blush.slice(7, 12), ['Blush', 0, 100, '', 0]);
+  assert.deepEqual(values.find(r => r[7] === 'أوردرات Meta من إعلان مش في الشيت').slice(7, 10), ['أوردرات Meta من إعلان مش في الشيت', 2, 0]);
   const unmapped = values.find(r => r[7] === '❌ صرف مش مربوط بمنتج');
   assert.deepEqual(unmapped.slice(7, 10), ['❌ صرف مش مربوط بمنتج', 0, 400]);
   const total = values.find(r => r[7] === 'TOTAL META PRODUCT PERFORMANCE');
@@ -348,10 +353,10 @@ test('الكتالوج: Today فيه صف CATALOG واحد بصرفه وأورد
 
   const between = (v, col, from, to) => { const i = v.findIndex(r => r[col] === from); return v.slice(i + 1, v.findIndex((r, j) => j > i && r[col] === to) + 1); };
   const v = e.ss.getSheetByName('Today').getDataRange().getValues();
-  assert.deepEqual(between(v, 7, 'PRODUCT', 'TOTAL META PRODUCT PERFORMANCE').map(r => r.slice(7, 13)), [
-    ['CATALOG (كل إعلانات الكتالوج)', 1, 400, 400, 0.63, '✅ 1 إعلان'],
-    ['Lip Oil', 1, 600, 600, 0.5, '✅ 1 إعلان'],
-    ['TOTAL META PRODUCT PERFORMANCE', 2, 1000, 500, 0.55, ''],
+  assert.deepEqual(between(v, 7, 'PRODUCT', 'TOTAL META PRODUCT PERFORMANCE').map(r => r.slice(7, 14)), [
+    ['CATALOG (كل إعلانات الكتالوج)', 1, 400, 400, 0.63, 2, '✅ 1 إعلان'],
+    ['Lip Oil', 1, 600, 600, 0.5, 2, '✅ 1 إعلان'],
+    ['TOTAL META PRODUCT PERFORMANCE', 2, 1000, 500, 0.55, 4, ''],
   ]);
   const t = e.ss.getSheetByName('الكتالوج').getDataRange().getValues();
   assert.deepEqual(between(t, 0, 'PRODUCT', 'TOTAL CATALOG').map(r => r.slice(0, 6)), [
@@ -403,4 +408,18 @@ test('أول سحب: الجزء اللي بيقع كل مرة بيتقسم أي�
   e.doc.BACKFILL = JSON.stringify({ units: [[A1, d(4), d(4)], [A1, d(3), d(3)]], done: 0, tries: 3, since: d(4), until: d(3) });
   e.c.backfillStep(); // يوم واحد بيقع للمرة الرابعة: بيتساب والباقي بيكمل
   assert.equal(e.doc.BACKFILL, undefined);
+});
+
+test('أوردرات من كامبين مش في أي حساب متسجل: الشيت بيسأل Meta عن الحساب ويضيفه ويسحب صرفه', () => {
+  const probe = env(), today = probe.c.todayKey_(), at = hm => ' ' + today + 'T' + hm + ':00+03:00', B = '(blank)';
+  const A4 = '555000111222333', CAMP = '120256366878570102';
+  const e = env({ orderHead: FLOW_HEAD, names: Object.assign({}, NAMES, { [A4]: 'Chance New' }),
+    objects: { [CAMP]: { id: CAMP, account_id: A4 } },
+    orders: [['gid://shopify/Order/9', ' #9', ' N', B, 434, at('10:00'), B, B, B, B, B, 'facebook', CAMP, '120256366885940102', 'Instagram', 'Lip Oil x1', '4655075']] });
+  e.c.setupAll();
+  e.c.liveTick();
+  const acc = e.ss.getSheetByName('Accounts').getDataRange().getValues().slice(1);
+  assert.ok(acc.some(r => r[0] === 'META' && r[1] === A4 && r[2] === 'Chance New' && r[4] === true));
+  assert.ok(JSON.parse(e.doc.BACKFILL).units.every(u => u[0] === A4), 'صرف الحساب الجديد بيتسحب من أول الشهر');
+  assert.match(e.c.getStatus_('ACC_DISCOVER'), /اتضاف 555000111222333/);
 });

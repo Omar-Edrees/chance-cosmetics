@@ -260,23 +260,24 @@ function todayRunning_() {
   return name => { const n = active[name] || 0; return n ? '✅ ' + n + (n === 1 ? ' إعلان' : ' إعلانات') : ''; };
 }
 function todayProducts_(g, r, title, from, to, rows, running) {
-  const S = TODAY, c = S.RIGHT_COL, meta = {}, special = [APP.CATALOG, APP.MULTI, APP.UNMAPPED, APP.UNKNOWN_PRODUCT];
+  const S = TODAY, c = S.RIGHT_COL, meta = {}, special = [APP.CATALOG, APP.MULTI, APP.UNMAPPED, APP.META_NO_AD, APP.UNKNOWN_PRODUCT];
   rows.forEach(x => {
     if (x[0] < from || x[0] > to || x[1] !== 'META') return;
-    const t = meta[x[2]] = meta[x[2]] || { spend: 0, orders: 0, revenue: 0 };
-    t.spend += num_(x[3]); t.orders += num_(x[8]); t.revenue += num_(x[10]);
+    const t = meta[x[2]] = meta[x[2]] || { spend: 0, orders: 0, revenue: 0, pixel: 0 };
+    t.spend += num_(x[3]); t.orders += num_(x[8]); t.revenue += num_(x[10]); t.pixel += num_(x[7]);
   });
-  r = todayHead_(g, r, c, 6, title, ['PRODUCT', 'META ORDERS', 'META SPEND', 'META CPP', 'META ROAS', 'RUNNING NOW']);
+  r = todayHead_(g, r, c, 7, title, ['PRODUCT', 'META ORDERS', 'META SPEND', 'META CPP', 'META ROAS', 'PIXEL PURCHASES', 'RUNNING NOW']);
   const names = Object.keys(meta).filter(n => special.indexOf(n) < 0 && (meta[n].spend > 0 || meta[n].orders > 0))
     .sort((a, b) => (meta[b].spend - meta[a].spend) || (meta[b].orders - meta[a].orders));
-  const tot = { spend: 0, orders: 0, revenue: 0 };
+  const tot = { spend: 0, orders: 0, revenue: 0, pixel: 0 };
   const put = (name, t, style) => {
     g.set(r, c, name, style);
     g.set(r, c + 1, t.orders, Object.assign({ nf: S.COUNT, al: 'right' }, style));
     g.set(r, c + 2, Math.round(t.spend * 100) / 100, Object.assign({ nf: S.MONEY, al: 'right' }, style));
     g.set(r, c + 3, ratioOrBlank_(t.spend, t.orders, 2), Object.assign({ nf: S.MONEY, al: 'right' }, style));
     g.set(r, c + 4, ratioOrBlank_(t.revenue, t.spend, 2), Object.assign({ nf: S.RATIO, al: 'right' }, style));
-    g.set(r, c + 5, name === 'TOTAL META PRODUCT PERFORMANCE' ? '' : running(name), Object.assign({}, style, { fc: '#137333' }));
+    g.set(r, c + 5, t.pixel, Object.assign({ nf: S.COUNT, al: 'right' }, style));
+    g.set(r, c + 6, name === 'TOTAL META PRODUCT PERFORMANCE' ? '' : running(name), Object.assign({}, style, { fc: '#137333' }));
     r++;
   };
   // CATALOG first (all catalog / Advantage+ ads together; per product in the الكتالوج tab), then products, then the rest.
@@ -284,7 +285,7 @@ function todayProducts_(g, r, title, from, to, rows, running) {
     const t = meta[n];
     if (!t || (t.spend <= 0 && t.orders <= 0)) return;
     put(n, t, style);
-    ['spend', 'orders', 'revenue'].forEach(k => { tot[k] += t[k]; });
+    ['spend', 'orders', 'revenue', 'pixel'].forEach(k => { tot[k] += t[k]; });
   };
   add(APP.CATALOG, { bg: S.CATALOG, b: 'bold' });
   names.forEach(n => add(n, {}));

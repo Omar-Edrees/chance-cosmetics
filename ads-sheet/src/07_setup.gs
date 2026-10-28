@@ -68,12 +68,14 @@ function backfill() {
       'سيب الشيت وتابع التقدم في تاب ' + APP.T.HEALTH + '. لما يخلص هتلاقي "أول سحب: خلص".');
   } catch (e) { alert_('السحب ماكملش:\n' + errText_(e)); }
 }
-function startBackfill_(since, until) {
+function startBackfill_(since, until, onlyIds) {
   const units = [];
-  accounts_('META').forEach(a => {
+  accounts_('META').filter(a => !onlyIds || onlyIds.indexOf(a.id) >= 0).forEach(a => {
     for (let s = since; s <= until; s = shiftKey_(s, 3)) units.push([a.id, s, shiftKey_(s, 2) > until ? until : shiftKey_(s, 2)]);
   });
-  PropertiesService.getDocumentProperties().setProperty('BACKFILL', JSON.stringify({ units: units, done: 0, since: since, until: until }));
+  const props = PropertiesService.getDocumentProperties(), running = JSON.parse(props.getProperty('BACKFILL') || 'null');
+  if (running) { running.units = running.units.concat(units); props.setProperty('BACKFILL', JSON.stringify(running)); return units; }
+  props.setProperty('BACKFILL', JSON.stringify({ units: units, done: 0, since: since, until: until }));
   ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === 'backfillStep').forEach(t => ScriptApp.deleteTrigger(t));
   ScriptApp.newTrigger('backfillStep').timeBased().everyMinutes(1).create();
   setStatus_('BACKFILL', '0 / ' + units.length + ' جزء (' + since + ' → ' + until + ')');
