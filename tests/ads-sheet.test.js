@@ -40,7 +40,8 @@ function env(options) {
       const n = mine.length, act = (k, v) => ({ action_type: k, value: String(v * n) });
       return { data: [{ spend: String(mine.reduce((x, r) => x + Number(r.spend), 0)), impressions: String(1000 * n), clicks: String(50 * n),
         inline_link_clicks: String(20 * n), actions: [act('landing_page_view', 15), act('offsite_conversion.fb_pixel_view_content', 10),
-          act('offsite_conversion.fb_pixel_purchase', 2)] }] };
+          act('offsite_conversion.fb_pixel_purchase', 2), act('offsite_conversion.fb_pixel_add_to_cart', 4),
+          act('offsite_conversion.fb_pixel_initiate_checkout', 3)], action_values: [act('offsite_conversion.fb_pixel_purchase', 900)] }] };
     }
     if (/\/insights\?/.test(url)) {
       const byDay = {};
@@ -168,6 +169,13 @@ test('Today: بنشمارك Meta، متوسط آخر 60 يوم مقابل كل �
   // المتوسط من آخر 60 يوم قبل النهارده: إعلان واحد امبارح صرف 300 على 1000 ظهور
   assert.deepEqual(cpm.slice(7, 12), ['CPM', 300, 500, 100, '—']);
   assert.equal(cpp[8], 150);
+  const metrics = values.map(r => r[7]), first = metrics.indexOf('METRIC') + 1;
+  assert.deepEqual(metrics.slice(first, first + 2), ['ROAS', 'AOV']);
+  const row = l => values.find(r => r[7] === l).slice(7, 12);
+  assert.deepEqual(row('ROAS'), ['ROAS', 3, 1.8, 9, '—']);
+  assert.deepEqual(row('AOV'), ['AOV', 450, 450, 450, '—']);
+  assert.deepEqual(row('Content view → ATC'), ['Content view → ATC', 0.4, 0.4, 0.4, '—']);
+  assert.deepEqual(row('ATC → Checkout'), ['ATC → Checkout', 0.75, 0.75, 0.75, '—']);
   const ranges = e.requests.filter(u => /level=account/.test(u) && !/time_increment/.test(u))
     .map(u => JSON.parse(decodeURIComponent(u.match(/time_range=([^&]+)/)[1])));
   assert.ok(ranges.some(t => t.since === e.c.shiftKey_(e.today, -60) && t.until === e.yest), 'المتوسط من آخر 60 يوم لحد امبارح');

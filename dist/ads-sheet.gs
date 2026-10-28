@@ -1664,21 +1664,26 @@ const TODAY = {
   GRAND: '#00ff00', LABEL: '#f3f4f6', METRIC: '#e8f0fe', AVG: '#e8eefc', SPECIAL: '#fde8e8', TOTAL: '#e8eefc',
   GREEN: '#d9ead3', RED: '#f4cccc', OTHER: '#f3f4f6',
   MONEY: '#,##0.00', COUNT: '0', RATIO: '0.00', PCT: '0.00%',
-  FUNNEL_KEY: 'TODAY_FUNNEL', AVG_KEY: 'TODAY_FUNNEL_AVG', AVG_DAYS: 60,
-  FIELDS: 'spend,impressions,clicks,inline_link_clicks,actions',
-  /* [Metric, numerator, denominator, times, percent?, lower is better?] — same as House of Beauty's benchmark */
+  FUNNEL_KEY: 'TODAY_FUNNEL', AVG_KEY: 'TODAY_FUNNEL_AVG', AVG_DAYS: 60, AVG_VERSION: 2,
+  FIELDS: 'spend,impressions,clicks,inline_link_clicks,actions,action_values',
+  /* [Metric, numerator, denominator, times, format (money | pct | ratio), lower is better?].
+   * House of Beauty's benchmark + ROAS and AOV on top + add to cart and checkout rates. */
   METRICS: [
-    ['CPM', 'spend', 'impressions', 1000, false, true],
-    ['CPC (all)', 'spend', 'clicks', 1, false, true],
-    ['CTR (all)', 'clicks', 'impressions', 1, true, false],
-    ['CTR (link)', 'linkClicks', 'impressions', 1, true, false],
-    ['CPC (link)', 'spend', 'linkClicks', 1, false, true],
-    ['CVR', 'purchases', 'linkClicks', 1, true, false],
-    ['Cost per content view', 'spend', 'contentViews', 1, false, true],
-    ['Cost per LPV', 'spend', 'landingViews', 1, false, true],
-    ['Cost per purchase', 'spend', 'purchases', 1, false, true],
-    ['Link click → LPV', 'landingViews', 'linkClicks', 1, true, false],
-    ['LPV → Purchase', 'purchases', 'landingViews', 1, true, false]
+    ['ROAS', 'purchaseValue', 'spend', 1, 'ratio', false],
+    ['AOV', 'purchaseValue', 'purchases', 1, 'money', false],
+    ['CPM', 'spend', 'impressions', 1000, 'money', true],
+    ['CPC (all)', 'spend', 'clicks', 1, 'money', true],
+    ['CTR (all)', 'clicks', 'impressions', 1, 'pct', false],
+    ['CTR (link)', 'linkClicks', 'impressions', 1, 'pct', false],
+    ['CPC (link)', 'spend', 'linkClicks', 1, 'money', true],
+    ['CVR', 'purchases', 'linkClicks', 1, 'pct', false],
+    ['Cost per content view', 'spend', 'contentViews', 1, 'money', true],
+    ['Cost per LPV', 'spend', 'landingViews', 1, 'money', true],
+    ['Cost per purchase', 'spend', 'purchases', 1, 'money', true],
+    ['Link click → LPV', 'landingViews', 'linkClicks', 1, 'pct', false],
+    ['LPV → Purchase', 'purchases', 'landingViews', 1, 'pct', false],
+    ['Content view → ATC', 'addsToCart', 'contentViews', 1, 'pct', false],
+    ['ATC → Checkout', 'checkouts', 'addsToCart', 1, 'pct', false]
   ]
 };
 
@@ -1694,7 +1699,10 @@ function funnelRaw_(rows) {
   return { spend: sum('spend'), impressions: sum('impressions'), clicks: sum('clicks'), linkClicks: sum('inline_link_clicks'),
     landingViews: action(['landing_page_view', 'omni_landing_page_view']),
     contentViews: action(['offsite_conversion.fb_pixel_view_content', 'view_content', 'omni_view_content']),
-    purchases: rows.reduce((n, r) => n + metaPick_(r.actions), 0) };
+    addsToCart: action(['offsite_conversion.fb_pixel_add_to_cart', 'add_to_cart', 'omni_add_to_cart']),
+    checkouts: action(['offsite_conversion.fb_pixel_initiate_checkout', 'initiate_checkout', 'omni_initiated_checkout']),
+    purchases: rows.reduce((n, r) => n + metaPick_(r.actions), 0),
+    purchaseValue: rows.reduce((n, r) => n + metaPick_(r.action_values), 0) };
 }
 function funnelAdd_(a, b) { const out = Object.assign({}, a); Object.keys(b).forEach(k => { out[k] = (out[k] || 0) + b[k]; }); return out; }
 
@@ -1710,7 +1718,7 @@ function refreshTodayFunnel_() {
   let avg = null;
   try { avg = JSON.parse(props.getProperty(TODAY.AVG_KEY) || 'null'); } catch (e) { avg = null; }
   const from = shiftKey_(today, -TODAY.AVG_DAYS), to = shiftKey_(today, -1);
-  const needAvg = !avg || avg.day !== today || avg.from !== from; // a new day, or AVG_DAYS changed
+  const needAvg = !avg || avg.day !== today || avg.from !== from || avg.v !== TODAY.AVG_VERSION; // new day, days or metrics changed
   const out = { day: today, accounts: [] };
   let total = {}, avgOk = true;
   accs.forEach(acc => {
@@ -1722,7 +1730,7 @@ function refreshTodayFunnel_() {
     } catch (e) { row.error = errText_(e); avgOk = false; }
     out.accounts.push(row);
   });
-  if (needAvg && avgOk) props.setProperty(TODAY.AVG_KEY, JSON.stringify({ day: today, from: from, to: to, raw: total }));
+  if (needAvg && avgOk) props.setProperty(TODAY.AVG_KEY, JSON.stringify({ day: today, from: from, to: to, v: TODAY.AVG_VERSION, raw: total }));
   props.setProperty(TODAY.FUNNEL_KEY, JSON.stringify(out));
 }
 function todayFunnel_() {
@@ -1829,8 +1837,8 @@ function todayClosing_(g, today, sum) {
   platform('META', S.META, accs.META, 'META TOTAL', { bg: S.META_TOTAL, b: 'bold', fc: '#1d4ed8' }, 'META');
   platform('TIKTOK', S.TIKTOK, accs.TIKTOK, 'TIKTOK TOTAL', { bg: S.TT_TOTAL, b: 'bold' }, 'TIKTOK');
   // Store orders with no ad source: no spend, so orders only. NO SOURCE shows only when some orders carry no data at all.
-  [[APP.DIRECT, 'DIRECT', 'دخول مباشر على الموقع'], [APP.MANUAL, 'MANUAL (DRAFT)', 'أوردرات اتعملت بالإيد في شوبيفاي'],
-    [APP.UNKNOWN_PLATFORM, 'NO SOURCE', 'أوردرات مالهاش بيانات مصدر في شيت الأوردرات']].forEach(x => {
+  [[APP.DIRECT, 'DIRECT', 'دخول مباشر للموقع'], [APP.MANUAL, 'MANUAL (DRAFT)', 'أوردرات يدوي'],
+    [APP.UNKNOWN_PLATFORM, 'NO SOURCE', 'من غير بيانات مصدر']].forEach(x => {
     const t = sum.byPlatform[x[0]] || { orders: 0 };
     if (x[0] === APP.UNKNOWN_PLATFORM && !t.orders) return;
     const style = { bg: S.OTHER };
@@ -1881,7 +1889,7 @@ function todayBenchmark_(g, r, today, shown) {
   r = todayHead_(g, r, c, width, 'META BENCHMARK vs TODAY | ' + shown,
     ['METRIC', 'AVERAGE (LAST ' + S.AVG_DAYS + ' DAYS)'].concat(accs.map(a => (a.error ? '⚠️ ' : '') + a.name)));
   S.METRICS.forEach(m => {
-    const base = funnelRatio_(avg, m), nf = m[4] ? S.PCT : S.MONEY;
+    const base = funnelRatio_(avg, m), nf = { money: S.MONEY, pct: S.PCT, ratio: S.RATIO }[m[4]];
     g.set(r, c, m[0], { b: 'bold' });
     g.set(r, c + 1, base === '' ? '—' : base, { nf: nf, bg: S.AVG, al: 'center' });
     accs.forEach((a, i) => {
@@ -1939,7 +1947,7 @@ function writeToday_() {
   todayProducts_(g, r, 'PRODUCT PERFORMANCE — THIS MONTH | ' + month, today.slice(0, 8) + '01', today, rows);
   writeGrid_(sh, g);
   sh.setFrozenRows(0);
-  [[1, 110], [2, 210], [3, 120], [4, 130], [5, 130], [6, 130], [7, 24], [8, 240]].forEach(w => sh.setColumnWidth(w[0], w[1]));
+  [[1, 150], [2, 210], [3, 120], [4, 130], [5, 130], [6, 130], [7, 24], [8, 240]].forEach(w => sh.setColumnWidth(w[0], w[1]));
   for (let col = 9; col <= TODAY.WIDTH; col++) sh.setColumnWidth(col, 115);
   sh.getRange(8, 1, 1, 6).setWrap(true);
 }
