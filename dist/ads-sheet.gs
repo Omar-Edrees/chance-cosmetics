@@ -11,7 +11,7 @@
  * Ad accounts and stores are read-only from here: no writes to Meta, TikTok or order sources.
  */
 const APP = {
-  VERSION: '1.11.0',
+  VERSION: '1.12.0',
   T: {
     SETTINGS: 'Settings', ACCOUNTS: 'Accounts', PRODUCTS: 'Products', ADMAP: 'Ad Map',
     ADS: 'Ads Raw', ACC_RAW: 'Account Raw', ORDERS: 'Orders Raw', DAILY: 'Daily Log',
@@ -1396,9 +1396,11 @@ function backfillStep() {
   if (!st) { stopTrigger(); return; }
   const start = Date.now();
   DEADLINE_ = start + 4.5 * 60000;
-  const r = tryLock_(() => {
-    resetCaches_();
-    const save = () => props.setProperty('BACKFILL', JSON.stringify(st));
+  // Meta is read outside the lock; the lock is held only while one piece is written, so a refresh never waits long.
+  resetCaches_();
+  const save = () => props.setProperty('BACKFILL', JSON.stringify(st));
+  let busy = false;
+  {
     while (st.done < st.units.length && Date.now() - start < 90000) {
       const u = st.units[st.done];
       // A piece that keeps dying (6-minute limit, Meta error) is split into single days, then skipped, never repeated forever.
@@ -1414,22 +1416,25 @@ function backfillStep() {
         continue;
       }
       try {
-        const meta = fetchMetaAds_(u[1], u[2], u[0]);
-        mergeRaw_(APP.T.ADS, ADS_HEADERS, meta.ads, u[1], u[2], meta.accounts, [0, 1, 2, 8], [2, 4, 6, 8]);
-        mergeRaw_(APP.T.ACC_RAW, ACC_HEADERS, meta.acc, u[1], u[2], meta.accounts, [0, 1, 2], [2]);
-        const cat = syncCatalog_(u[1], u[2], u[0]);
-        if (cat) mergeCatalog_(cat.rows, u[1], u[2], cat.keys);
-        st.done++; st.tries = 0; save();
-        setStatus_('BACKFILL', st.done + ' / ' + st.units.length + ' جزء' + (st.skipped ? ' (اتساب ' + st.skipped.length + ')' : ''));
-        refreshAdMap_(meta.ads, {}, false);
+        const meta = fetchMetaAds_(u[1], u[2], u[0]), cat = syncCatalog_(u[1], u[2], u[0]);
+        const w = tryLock_(() => {
+          mergeRaw_(APP.T.ADS, ADS_HEADERS, meta.ads, u[1], u[2], meta.accounts, [0, 1, 2, 8], [2, 4, 6, 8]);
+          mergeRaw_(APP.T.ACC_RAW, ACC_HEADERS, meta.acc, u[1], u[2], meta.accounts, [0, 1, 2], [2]);
+          if (cat) mergeCatalog_(cat.rows, u[1], u[2], cat.keys);
+          st.done++; st.tries = 0; save();
+          setStatus_('BACKFILL', st.done + ' / ' + st.units.length + ' جزء' + (st.skipped ? ' (اتساب ' + st.skipped.length + ')' : ''));
+          refreshAdMap_(meta.ads, {}, false);
+        });
+        if (w.skipped) { st.tries = Math.max((st.tries || 1) - 1, 0); save(); busy = true; break; } // busy: same piece next minute
       } catch (e) {
         setStatus_('BACKFILL', st.done + ' / ' + st.units.length + ' جزء — ✗ ' + u[1] + ' → ' + u[2] + ': ' + errText_(e));
         break;
       }
     }
-    try { writeHealth_(); } catch (e) {}
-    if (st.done < st.units.length || Date.now() - start > 3.5 * 60000) return;
-    // Finish: TikTok tab, orders, links still missing, extensions, views.
+  }
+  if (busy || st.done < st.units.length || Date.now() - start > 3 * 60000) { tryLock_(() => writeHealth_()); return; }
+  // Finish: TikTok tab, orders, links still missing, extensions, views.
+  const r = tryLock_(() => {
     const tt = fetchTikTokTab_(st.since, st.until);
     mergeRaw_(APP.T.ADS, ADS_HEADERS, tt.ads, st.since, st.until, tt.accounts, [0, 1, 2, 8], [2, 4, 6, 8]);
     mergeRaw_(APP.T.ACC_RAW, ACC_HEADERS, tt.acc, st.since, st.until, tt.accounts, [0, 1, 2], [2]);
@@ -1466,8 +1471,13 @@ function liveTick() {
 }
 function runLiveExt_() { EXT.live.forEach(f => { try { f(); } catch (e) { console.error('ext live: ' + errText_(e)); } }); }
 function refreshNow() {
-  try { liveTick(); alert_('اتحدثت أرقام النهارده ✅\n' + getStatus_('LIVE')); ss_().setActiveSheet(tab_(APP.T.TODAY)); }
-  catch (e) { alert_('التحديث ماكملش:\n' + errText_(e)); }
+  try {
+    liveTick();
+    const live = getStatus_('LIVE'), bf = PropertiesService.getDocumentProperties().getProperty('BACKFILL');
+    alert_((/اتأجل|✗/.test(live) ? 'التحديث ماكملش دلوقتي:\n' : 'اتحدثت أرقام النهارده ✅\n') + live +
+      (bf ? '\n\nسحب الشهر شغال في الخلفية (' + getStatus_('BACKFILL') + '). Today بيتحدث لوحده كل 15 دقيقة، مش لازم تدوس تاني.' : ''));
+    ss_().setActiveSheet(tab_(APP.T.TODAY));
+  } catch (e) { alert_('التحديث ماكملش:\n' + errText_(e)); }
 }
 
 function installTriggers() {
