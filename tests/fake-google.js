@@ -87,7 +87,24 @@ class FakeSheet {
   getMaxRows() { return this.maxRows; }
   getMaxColumns() { return this.maxCols || 26; }
   insertColumnsAfter(after, n) { this.maxCols = this.getMaxColumns() + n; }
-  insertRowsAfter(after, n) { this.maxRows += n; }
+  /* زي جوجل: الصفوف اللي بعد `after` بتنزل n صف (القيم والمعادلات والتنسيق). */
+  insertRowsAfter(after, n) {
+    [this.values, this.formulas].forEach(grid => { if (grid.length > after) grid.splice(after, 0, ...Array.from({ length: n }, () => [])); });
+    this.shiftAttrs(after + 1, n);
+    this.maxRows += n;
+  }
+  deleteRows(start, n) {
+    if (this.maxRows - n < 1) throw new Error('مينفعش تمسح كل الصفوف');
+    [this.values, this.formulas].forEach(grid => { if (grid.length >= start) grid.splice(start - 1, n); });
+    Object.keys(this.attrs).forEach(k => { const r = Number(k.split(',')[0]); if (r >= start && r < start + n) delete this.attrs[k]; });
+    this.shiftAttrs(start + n, -n);
+    this.maxRows -= n;
+  }
+  shiftAttrs(from, by) {
+    const attrs = {};
+    Object.keys(this.attrs).forEach(k => { const [r, c] = k.split(',').map(Number); attrs[(r >= from ? r + by : r) + ',' + c] = this.attrs[k]; });
+    this.attrs = attrs;
+  }
   /* زي جوجل: عمود فاضي، وكل اللي بعده بيزح (القيم والمعادلات والتنسيق). المعادلات نفسها مابتتعدلش هنا. */
   insertColumnBefore(col) {
     [this.values, this.formulas].forEach(rows => rows.forEach(row => { if (row && row.length > col - 1) row.splice(col - 1, 0, ''); }));

@@ -105,19 +105,34 @@ function todayGrid_() {
   return g;
 }
 
+/*
+ * Draws the page in place: values and formats overwrite the old ones (the tab is never cleared first, so it never
+ * shows empty), merges are redone only when they moved, and rows left from a longer old page are cleared.
+ * Nothing is written when the page is the same as last time, except the cells in g.live ("Last Update").
+ * Returns true when the page was redrawn.
+ */
 function writeGrid_(sh, g) {
-  const R = Math.max(g.rows.length, 1), W = TODAY.WIDTH;
-  const old = Math.max(sh.getLastRow(), R);
+  const R = Math.max(g.rows.length, 1), W = TODAY.WIDTH, props = PropertiesService.getDocumentProperties(), name = sh.getName();
+  const pick = k => { const out = []; for (let r = 0; r < R; r++) { const line = []; for (let c = 0; c < W; c++) { const x = (g.rows[r] || [])[c]; line.push(x ? x[k] : (k === 'v' ? '' : k === 'fc' ? '#000000' : k === 'b' ? 'normal' : k === 'nf' ? 'General' : k === 'al' ? 'left' : null)); } out.push(line); } return out; };
+  const v = pick('v'), live = (g.live || []).filter(x => x[0] <= R), still = v.map(r => r.slice());
+  live.forEach(x => { still[x[0] - 1][x[1] - 1] = ''; });
+  const look = [pick('nf'), pick('bg'), pick('fc'), pick('b'), pick('al')], hash = sha_(JSON.stringify([still, look]));
+  const mergeSig = sha_(JSON.stringify(g.merges)), old = sh.getLastRow();
+  if (props.getProperty('GH_' + name) === hash && old <= R && String(sh.getRange(1, 1).getValue()) === String(v[0][0])) { // still there
+    live.forEach(x => sh.getRange(x[0], x[1]).setValue(v[x[0] - 1][x[1] - 1]));
+    return false;
+  }
   if (R > sh.getMaxRows()) sh.insertRowsAfter(sh.getMaxRows(), R - sh.getMaxRows());
   if (sh.getMaxColumns() < W) sh.insertColumnsAfter(sh.getMaxColumns(), W - sh.getMaxColumns());
-  const all = sh.getRange(1, 1, old, Math.max(W, sh.getLastColumn()));
-  all.breakApart(); all.clear();
-  sh.setConditionalFormatRules([]);
-  const pick = k => { const out = []; for (let r = 0; r < R; r++) { const line = []; for (let c = 0; c < W; c++) { const x = (g.rows[r] || [])[c]; line.push(x ? x[k] : (k === 'v' ? '' : k === 'fc' ? '#000000' : k === 'b' ? 'normal' : k === 'nf' ? 'General' : k === 'al' ? 'left' : null)); } out.push(line); } return out; };
-  const rng = sh.getRange(1, 1, R, W);
-  rng.setNumberFormats(pick('nf')).setValues(pick('v')).setBackgrounds(pick('bg')).setFontColors(pick('fc'))
-    .setFontWeights(pick('b')).setHorizontalAlignments(pick('al'));
-  g.merges.forEach(m => sh.getRange(m[0], m[1], m[2], m[3]).merge());
+  const newMerges = props.getProperty('GM_' + name) !== mergeSig;
+  if (newMerges) { sh.getRange(1, 1, Math.max(old, R), Math.max(W, sh.getLastColumn())).breakApart(); sh.setConditionalFormatRules([]); }
+  sh.getRange(1, 1, R, W).setNumberFormats(look[0]).setValues(v).setBackgrounds(look[1]).setFontColors(look[2])
+    .setFontWeights(look[3]).setHorizontalAlignments(look[4]);
+  if (old > R) sh.getRange(R + 1, 1, old - R, Math.max(W, sh.getLastColumn())).clear();
+  if (newMerges) g.merges.forEach(m => sh.getRange(m[0], m[1], m[2], m[3]).merge());
+  props.setProperty('GH_' + name, hash);
+  props.setProperty('GM_' + name, mergeSig);
+  return true;
 }
 
 /* Title bar + yellow header row. Returns the first data row. */
@@ -135,7 +150,7 @@ function ratioOrBlank_(a, b, digits) { return b > 0 ? Math.round(a / b * Math.po
 function todayAccounts_(today) {
   const rows = { META: new Map(), TIKTOK: new Map() };
   ['META', 'TIKTOK'].forEach(p => accounts_(p).forEach(a => rows[p].set(a.id, { id: a.id, name: a.name || a.id, spend: 0, orders: 0, value: 0 })));
-  readRows_(tab_(APP.T.ADS), ADS_HEADERS.length).forEach(a => {
+  recentRows_(APP.T.ADS, ADS_HEADERS.length, 1, asKey_, today).forEach(a => {
     if (asKey_(a[0]) !== today || !rows[a[1]]) return;
     const id = String(a[2]), m = rows[a[1]];
     if (!m.has(id)) m.set(id, { id: id, name: a[3] || id, spend: 0, orders: 0, value: 0 });
@@ -157,6 +172,7 @@ function todayClosing_(g, today, sum, rows) {
     g.set(3 + i, 1, x[0], { bg: S.LABEL, b: 'bold' });
     g.set(3 + i, 2, x[1], { al: 'right' });
   });
+  g.live = [[5, 2]]; // Last Update: written every time, even when nothing else changed
   const totalNote = '(ACCOUNT: PLATFORM / TOTAL: UTMs)';
   let r = 8;
   ['PLATFORM', 'AD ACCOUNT NAME', 'AMOUNT SPENT', 'ORDERS ' + totalNote, 'CPP ' + totalNote, 'ROAS ' + totalNote]
@@ -268,7 +284,7 @@ function todayOrders_(from) {
   const osh = ss_().getSheetByName(APP.T.ORDERS), out = [];
   if (!osh) return out;
   const idx = adMapIndex_(), catAds = catalogAdIds_(), known = metaIdsOf_();
-  readRows_(osh, ORDERS_HEADERS.length).forEach(o => {
+  recentRows_(APP.T.ORDERS, ORDERS_HEADERS.length, 2, sortKey_, from).forEach(o => {
     const d = asKey_(o[2]);
     if (!d || d < from || o[3] !== 'META' || outsideMeta_(o, known)) return;
     const items = [];
@@ -360,7 +376,7 @@ function writeToday_() {
   const running = todayRunning_(), orders = todayOrders_(today.slice(0, 8) + '01');
   r = todayProducts_(g, r, 'PRODUCT PERFORMANCE — TODAY | ' + shown, today, today, rows, running, orders) + 1;
   todayProducts_(g, r, 'PRODUCT PERFORMANCE — THIS MONTH | ' + month, today.slice(0, 8) + '01', today, rows, running, orders);
-  writeGrid_(sh, g);
+  if (!writeGrid_(sh, g)) return;
   sh.setFrozenRows(0);
   [[1, 150], [2, 210], [3, 120], [4, 130], [5, 130], [6, 130], [7, 24], [8, 240]].forEach(w => sh.setColumnWidth(w[0], w[1]));
   for (let col = 9; col <= TODAY.WIDTH; col++) sh.setColumnWidth(col, col === TODAY.RIGHT_COL + 7 ? 320 : 115);

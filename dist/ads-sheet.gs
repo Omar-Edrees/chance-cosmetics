@@ -11,7 +11,7 @@
  * Ad accounts and stores are read-only from here: no writes to Meta, TikTok or order sources.
  */
 const APP = {
-  VERSION: '1.14.1',
+  VERSION: '1.15.0',
   T: {
     SETTINGS: 'Settings', ACCOUNTS: 'Accounts', PRODUCTS: 'Products', ADMAP: 'Ad Map',
     ADS: 'Ads Raw', ACC_RAW: 'Account Raw', ORDERS: 'Orders Raw', DAILY: 'Daily Log',
@@ -319,13 +319,103 @@ function readRows_(sh, cols) {
   if (last < 2) return [];
   return sh.getRange(2, 1, last - 1, cols).getValues().filter(r => r.some(v => v !== '' && v !== null));
 }
-/* Replace all data rows. textCols: 1-based columns forced to text before writing (IDs, dates). */
-function writeRows_(sh, rows, cols, textCols) {
+/*
+ * Rows of a tab, read once per run: Ads Raw, Orders Raw, Ad Map... are read by many views, and each read of a big tab
+ * costs seconds. Every write through writeRows_ / writeSortedBlock_ drops the copy. Don't change the rows you get.
+ */
+let RAW_ = {};
+function rawRows_(name, cols) {
+  const k = name + '|' + cols;
+  if (!RAW_[k]) { const sh = ss_().getSheetByName(name); RAW_[k] = sh ? readRows_(sh, cols) : []; }
+  return RAW_[k];
+}
+function dropRaw_(name) { Object.keys(RAW_).forEach(k => { if (k.split('|')[0] === name) delete RAW_[k]; }); }
+/*
+ * Rows of a newest-first tab (Ads Raw, Orders Raw, Catalog Raw, Daily Log) down to key `since`: read from the top in
+ * chunks and stop at the first older row, so "this month" never reads the whole history.
+ */
+function recentRows_(name, cols, keyCol, keyFn, since) {
+  const all = RAW_[name + '|' + cols];
+  if (all) return all.filter(r => keyFn(r[keyCol - 1]) >= since);
+  const k = name + '|' + cols + '|' + keyCol + '|' + since;
+  if (RAW_[k]) return RAW_[k];
+  const sh = ss_().getSheetByName(name), out = [];
+  RAW_[k] = out;
+  if (!sh) return out;
   const last = sh.getLastRow();
+  for (let r = 2; r <= last; r += 1000) {
+    const part = sh.getRange(r, 1, Math.min(1000, last - r + 1), cols).getValues();
+    for (const x of part) {
+      const key = keyFn(x[keyCol - 1]);
+      if (!key) continue;
+      if (key < since) return out;
+      out.push(x);
+    }
+  }
+  return out;
+}
+
+/*
+ * Replace all data rows. textCols: 1-based columns forced to text before writing (IDs, dates).
+ * Nothing is written when the rows are the same as last time, and old rows are overwritten in place (never cleared
+ * first), so a tab never shows empty while it updates. Returns true if it wrote.
+ */
+function writeRows_(sh, rows, cols, textCols) {
+  dropRaw_(sh.getName());
+  const last = sh.getLastRow(), props = PropertiesService.getDocumentProperties(), key = 'WH_' + sh.getName();
+  const hash = sha_(cols + '|' + JSON.stringify(rows));
+  if (props.getProperty(key) === hash && last === (rows.length ? rows.length + 1 : Math.min(last, 1))) return false;
   if (rows.length + 1 > sh.getMaxRows()) sh.insertRowsAfter(sh.getMaxRows(), rows.length + 1 - sh.getMaxRows());
   (textCols || []).forEach(c => sh.getRange(2, c, Math.max(rows.length, 1), 1).setNumberFormat('@'));
   if (rows.length) sh.getRange(2, 1, rows.length, cols).setValues(rows);
   if (last > rows.length + 1) sh.getRange(rows.length + 2, 1, last - rows.length - 1, cols).clearContent();
+  props.setProperty(key, hash);
+  return true;
+}
+
+/* Sortable text of a key cell: yyyy-MM-dd, or yyyy-MM-dd HH:mm for a date-time. */
+function sortKey_(v) {
+  if (v instanceof Date) return isNaN(v) ? '' : Utilities.formatDate(v, tz_(), 'yyyy-MM-dd HH:mm');
+  return String(v === null || v === undefined ? '' : v).trim();
+}
+/*
+ * A tab sorted newest first by column keyCol (1-based, its text from keyFn): replace only the rows whose key is in [lo..hi].
+ * block(oldRows) gets the rows now in that range and returns the new ones (sorted the same way). Rows are inserted
+ * or deleted around the block, so an update of today reads and writes today only, not months of history.
+ * A tab that isn't sorted yet (old versions) is rewritten whole once, through block(all rows in range) + the rest.
+ */
+function writeSortedBlock_(sh, cols, keyCol, keyFn, lo, hi, block, textCols, sortFn) {
+  dropRaw_(sh.getName());
+  PropertiesService.getDocumentProperties().deleteProperty('WH_' + sh.getName());
+  const last = sh.getLastRow();
+  const keys = last >= 2 ? sh.getRange(2, keyCol, last - 1, 1).getValues().map(r => keyFn(r[0])) : [];
+  const inRange = k => k >= lo && k <= hi;
+  if (!keys.every((k, i) => k && (i === 0 || keys[i - 1] >= k))) {
+    const all = readRows_(sh, cols).filter(r => keyFn(r[keyCol - 1])), k = r => keyFn(r[keyCol - 1]);
+    const out = block(all.filter(r => inRange(k(r)))).concat(all.filter(r => !inRange(k(r))));
+    if (sortFn) out.sort(sortFn);
+    writeRows_(sh, out, cols, textCols);
+    return out.length;
+  }
+  let a = 0;
+  while (a < keys.length && keys[a] > hi) a++;
+  let e = a;
+  while (e < keys.length && keys[e] >= lo) e++;
+  const start = 2 + a, L = e - a, old = L ? sh.getRange(start, 1, L, cols).getValues() : [];
+  const out = block(old), N = out.length;
+  if (N > L) {
+    sh.insertRowsAfter(start + L - 1, N - L);
+    sh.getRange(start, 1, N, cols).setFontWeight('normal').setBackground(null).setFontColor('#000000'); // not the header's look
+  }
+  if (N < L) {
+    if (sh.getMaxRows() - (L - N) >= 2) sh.deleteRows(start + N, L - N);
+    else sh.getRange(start + N, 1, L - N, cols).clearContent();
+  }
+  if (N) {
+    (textCols || []).forEach(c => sh.getRange(start, c, N, 1).setNumberFormat('@'));
+    sh.getRange(start, 1, N, cols).setValues(out);
+  }
+  return keys.length - L + N;
 }
 function setStatus_(key, msg) { PropertiesService.getDocumentProperties().setProperty('STATUS_' + key, nowText_() + '  ' + msg); }
 function getStatus_(key) { return PropertiesService.getDocumentProperties().getProperty('STATUS_' + key) || 'لسه ما اشتغلش'; }
@@ -334,7 +424,7 @@ function errText_(e) {
   const t = String(e && e.message ? e.message : e), tok = PropertiesService.getUserProperties().getProperty('META_TOKEN');
   return tok ? t.split(tok).join('[مخفي]') : t;
 }
-function resetCaches_() { CFG_ = null; PRODUCTS_ = null; KNOWN_PRODUCTS_ = null; }
+function resetCaches_() { CFG_ = null; PRODUCTS_ = null; KNOWN_PRODUCTS_ = null; RAW_ = {}; }
 
 /* ======== 02_meta.gs ======== */
 /* Meta Graph API, read-only. Token is pasted once from the menu and kept in User Properties. */
@@ -452,9 +542,9 @@ function discoverAccounts_() {
   if (props.getProperty('ACC_DISCOVER_DAY') === today) return; // once a day
   props.setProperty('ACC_DISCOVER_DAY', today);
   const known = new Set();
-  readRows_(ash, ADS_HEADERS.length).forEach(a => { [a[4], a[6], a[8]].forEach(x => { if (x) known.add(String(x)); }); });
+  metaIdsOf_().forEach(x => known.add(x));
   const ids = new Set();
-  readRows_(osh, ORDERS_HEADERS.length).forEach(o => {
+  recentRows_(APP.T.ORDERS, ORDERS_HEADERS.length, 2, sortKey_, weekAgo).forEach(o => {
     if (o[3] !== 'META' || o[14] || asKey_(o[2]) < weekAgo) return;
     ([o[11], o[12], o[13]].join(' ').match(/\d{15,}/g) || []).forEach(x => { if (!known.has(x)) ids.add(x); });
   });
@@ -543,41 +633,49 @@ function fetchTikTokTab_(since, until) {
   return { ads: ads, acc: Object.keys(accSum).map(k => accSum[k]), accounts: accs, links: links };
 }
 
-/* Replace [since..until] for the synced accounts; keep everything else. */
+/*
+ * Replace [since..until] for the synced accounts; keep everything else. The tab stays sorted newest day first, so
+ * only the rows of those days are read and written (writeSortedBlock_), never the whole history.
+ */
 function mergeRaw_(sheetName, headers, fresh, since, until, accountKeys, keyCols, idIdx) {
-  const sh = ensureTab_(sheetName, headers), cols = headers.length, synced = new Set(accountKeys);
-  const out = [], seen = new Set();
-  const add = r => {
-    const k = keyCols.map(i => String(r[i])).join('|');
-    if (seen.has(k)) return;
-    seen.add(k); out.push(r);
-  };
-  fresh.forEach(add);
-  readRows_(sh, cols).forEach(r => {
-    r[0] = asKey_(r[0]);
-    if (!r[0]) return;
-    idIdx.forEach(i => { r[i] = String(r[i]); });
-    if (r[0] >= since && r[0] <= until && synced.has(r[1] + '|' + r[2])) return;
-    add(r);
-  });
-  out.sort((a, b) => (a[0] < b[0] ? 1 : a[0] > b[0] ? -1 : num_(b[headers.indexOf('Spend')]) - num_(a[headers.indexOf('Spend')])));
-  writeRows_(sh, out, cols, [1].concat(idIdx.map(i => i + 1)));
-  return out.length;
+  const sh = ensureTab_(sheetName, headers), cols = headers.length, synced = new Set(accountKeys), spend = headers.indexOf('Spend');
+  const sortFn = (a, b) => (a[0] < b[0] ? 1 : a[0] > b[0] ? -1 : num_(b[spend]) - num_(a[spend]));
+  fresh.forEach(r => { if (r[0] < since) since = r[0]; if (r[0] > until) until = r[0]; }); // never outside, but stay safe
+  return writeSortedBlock_(sh, cols, 1, asKey_, since, until, old => {
+    const out = [], seen = new Set();
+    const add = r => {
+      const k = keyCols.map(i => String(r[i])).join('|');
+      if (seen.has(k)) return;
+      seen.add(k); out.push(r);
+    };
+    fresh.forEach(add);
+    old.forEach(r => {
+      r[0] = asKey_(r[0]);
+      if (!r[0]) return;
+      idIdx.forEach(i => { r[i] = String(r[i]); });
+      if (synced.has(r[1] + '|' + r[2])) return;
+      add(r);
+    });
+    return out.sort(sortFn);
+  }, [1].concat(idIdx.map(i => i + 1)), sortFn);
 }
 
-/* Read everything first (no lock), then write inside the lock. */
-function syncAds_(since, until) {
+/*
+ * Read everything first (no lock), then write inside the lock: only the pulled days change (mergeRaw_).
+ * quick = spend only (the ⚡ button): no catalog split, which the 15-minute update brings.
+ */
+function syncAds_(since, until, quick) {
   const meta = time_('Meta — قراءة', () => fetchMetaAds_(since, until));
   const tt = time_('TikTok — قراءة', () => fetchTikTokTab_(since, until));
-  const cat = time_('Meta كتالوج — قراءة', () => syncCatalog_(since, until));
+  const cat = quick ? null : time_('Meta كتالوج — قراءة', () => syncCatalog_(since, until));
   const ads = meta.ads.concat(tt.ads), acc = meta.acc.concat(tt.acc), keys = meta.accounts.concat(tt.accounts);
-  return withLock_(() => {
+  withLock_(() => {
     mergeRaw_(APP.T.ADS, ADS_HEADERS, ads, since, until, keys, [0, 1, 2, 8], [2, 4, 6, 8]);
     mergeRaw_(APP.T.ACC_RAW, ACC_HEADERS, acc, since, until, keys, [0, 1, 2], [2]);
     if (cat) mergeCatalog_(cat.rows, since, until, cat.keys);
-    time_('Ad Map', () => refreshAdMap_(ads, tt.links, false));
-    return { ads: ads.length, since: since, until: until };
   });
+  time_('Ad Map', () => updateAdMap_(ads, tt.links, false));
+  return { ads: ads.length, since: since, until: until };
 }
 
 /* ======== 04_admap.gs ======== */
@@ -685,10 +783,46 @@ function fetchMetaLinks_(adIds) {
 }
 
 /*
+ * What an update needs from the Ad Map: {needed, ids}. needed = an ad that spent isn't in the map (or was renamed),
+ * an Override was typed or removed, a TikTok link changed, or links are still unread; recheckAll (daily) always.
+ * ids = Meta ads whose links to read.
+ */
+function adMapPlan_(freshAds, tiktokLinks, recheckAll) {
+  const rows = rawRows_(APP.T.ADMAP, ADMAP_HEADERS.length), byKey = new Map(), ids = new Set(), weekAgo = shiftKey_(todayKey_(), -7);
+  let needed = !!recheckAll;
+  rows.forEach(r => byKey.set(adKey_(r[AM.PLAT], String(r[AM.ID]), r[AM.CAMP], r[AM.SET], r[AM.AD]), r));
+  freshAds.forEach(a => {
+    if (num_(a[10]) <= 0 && num_(a[11]) <= 0) return;
+    const r = byKey.get(adKey_(a[1], String(a[8] || ''), a[5], a[7], a[9]));
+    if (!r) { needed = true; if (a[1] === 'META' && a[8]) ids.add(String(a[8])); return; }
+    if (String(r[AM.CAMP]) !== String(a[5]) || String(r[AM.SET]) !== String(a[7]) || String(r[AM.AD]) !== String(a[9]) ||
+      !r[AM.LAST] || asKey_(r[AM.LAST]) < a[0]) needed = true;
+  });
+  rows.forEach(r => {
+    if (String(r[AM.OVR] || '').trim() !== String(r[AM.CONF_VAL] || '')) needed = true;
+    if (r[AM.PLAT] === 'META' && r[AM.ID] && (!r[AM.LINKS] || (recheckAll && asKey_(r[AM.LAST]) >= weekAgo))) { needed = true; ids.add(String(r[AM.ID])); }
+    if (r[AM.PLAT] === 'TIKTOK' && tiktokLinks && tiktokLinks[r[AM.ID]] && tiktokLinks[r[AM.ID]] !== r[AM.LINKS]) needed = true;
+  });
+  return { needed: needed, ids: Array.from(ids) };
+}
+/*
+ * Updates the Ad Map only when something changed for it, and reads the Meta links before taking the lock,
+ * so a slow link read never makes the other updates wait. Returns the number of ads, or false if nothing to do.
+ */
+function updateAdMap_(freshAds, tiktokLinks, recheckAll) {
+  const plan = adMapPlan_(freshAds, tiktokLinks, recheckAll);
+  if (!plan.needed) return false;
+  const links = plan.ids.length && accounts_('META').length ? time_('لينكات الإعلانات', () => fetchMetaLinks_(plan.ids)) : {};
+  return withLock_(() => refreshAdMap_(freshAds, tiktokLinks, recheckAll, links));
+}
+
+/*
  * freshAds: Ads Raw rows just pulled. tiktokLinks: {adId: url}. recheckAll: re-read links of every
  * ad that spent in the last 7 days (daily run), otherwise only ads not in the map yet.
+ * links: Meta links already read ({adId: {links, error}}); without it they are read here.
  */
-function refreshAdMap_(freshAds, tiktokLinks, recheckAll) {
+let ADMAP_CHANGED_ = false;
+function refreshAdMap_(freshAds, tiktokLinks, recheckAll, links) {
   const sh = ensureTab_(APP.T.ADMAP, ADMAP_HEADERS), W = ADMAP_HEADERS.length;
   const rows = readRows_(sh, W), byKey = new Map();
   rows.forEach(r => { r[AM.ID] = String(r[AM.ID]); r[AM.ACC] = String(r[AM.ACC]); byKey.set(adKey_(r[AM.PLAT], r[AM.ID], r[AM.CAMP], r[AM.SET], r[AM.AD]), r); });
@@ -709,7 +843,7 @@ function refreshAdMap_(freshAds, tiktokLinks, recheckAll) {
     if (r[AM.PLAT] === 'TIKTOK' && tiktokLinks && tiktokLinks[r[AM.ID]]) r[AM.LINKS] = tiktokLinks[r[AM.ID]];
   });
   if (needMeta.length && accounts_('META').length) {
-    const got = fetchMetaLinks_(needMeta);
+    const got = links || fetchMetaLinks_(needMeta);
     byKey.forEach(r => {
       const g = got[r[AM.ID]];
       if (!g) return;
@@ -720,7 +854,7 @@ function refreshAdMap_(freshAds, tiktokLinks, recheckAll) {
 
   // Spend this month per ad, from Ads Raw (after merge).
   const monthStart = todayKey_().slice(0, 8) + '01', spend = {};
-  readRows_(tab_(APP.T.ADS), ADS_HEADERS.length).forEach(a => {
+  recentRows_(APP.T.ADS, ADS_HEADERS.length, 1, asKey_, monthStart).forEach(a => {
     const d = asKey_(a[0]);
     if (d < monthStart) return;
     const k = adKey_(a[1], String(a[8] || ''), a[5], a[7], a[9]);
@@ -763,7 +897,8 @@ function refreshAdMap_(freshAds, tiktokLinks, recheckAll) {
   const order = { '❌': 0, '⚠️': 1, '✅': 2 }, out = Array.from(byKey.values())
     .sort((a, b) => (order[a[AM.STATUS]] - order[b[AM.STATUS]]) || (num_(b[AM.SPEND]) - num_(a[AM.SPEND])))
     .map(r => r.slice(0, W));
-  writeRows_(sh, out, W, [1, 3, 15, 17]);
+  if (!writeRows_(sh, out, W, [1, 3, 4, 5, 6, 7, 15, 17, 19])) return out.length; // same as before: nothing to redraw
+  ADMAP_CHANGED_ = true;
   const n = Math.max(out.length, 1);
   sh.getRange(2, AM.OVR + 1, n, 1).setDataValidation(SpreadsheetApp.newDataValidation()
     .requireValueInList(products_().map(p => p.name).concat(['MULTI']), true).setAllowInvalid(true).build()).setBackground('#fff2cc');
@@ -781,7 +916,7 @@ function refreshAdMap_(freshAds, tiktokLinks, recheckAll) {
 function adMapIndex_() {
   const sh = ss_().getSheetByName(APP.T.ADMAP), idx = new Map();
   if (!sh) return idx;
-  readRows_(sh, ADMAP_HEADERS.length).forEach(r => {
+  rawRows_(APP.T.ADMAP, ADMAP_HEADERS.length).forEach(r => {
     const final = String(r[AM.FINAL] || APP.UNMAPPED);
     idx.set(adKey_(r[AM.PLAT], String(r[AM.ID]), r[AM.CAMP], r[AM.SET], r[AM.AD]),
       { product: final, exact: r[AM.STATUS] === '✅' && final !== APP.MULTI && final !== APP.UNMAPPED });
@@ -792,7 +927,7 @@ function adMapIndex_() {
 function refreshAdMapNow() {
   try {
     resetCaches_();
-    const n = withLock_(() => refreshAdMap_([], {}, true));
+    const n = updateAdMap_(recentRows_(APP.T.ADS, ADS_HEADERS.length, 1, asKey_, shiftKey_(todayKey_(), -7)), {}, true);
     alert_('اتحدث ربط الإعلانات ✅ (' + n + ' إعلان)\nراجع الأحمر والأصفر في تاب ' + APP.T.ADMAP + '.');
     ss_().setActiveSheet(tab_(APP.T.ADMAP));
   } catch (e) { alert_('ربط الإعلانات ماكملش:\n' + errText_(e)); }
@@ -873,7 +1008,7 @@ function openOrderSheet_() {
   }
   const sh = book.getSheetByName(tabName);
   if (!sh) throw new Error('تاب الأوردرات مش موجود: ' + tabName);
-  return { sheet: sh, tz: book.getSpreadsheetTimeZone() };
+  return { sheet: sh, tz: book.getSpreadsheetTimeZone(), id: book.getId() + '|' + tabName };
 }
 
 /* Decide d/m order once for the whole column; never guess per row. */
@@ -936,19 +1071,30 @@ function productOfOrder_(raw) {
   return part.length === 1 ? part[0].name : t.trim();
 }
 
-function readOrderSource_() {
+/*
+ * The store sheet only grows at the bottom (Flow appends a row per order). So a normal update reads the new rows plus
+ * the last ORDERS.OVERLAP rows (their ads may have been linked since), not the whole sheet. full = read everything
+ * (once a day, or when the sheet / its columns changed). Returns {rows (newest first), full, state} or null.
+ */
+const ORDERS = { OVERLAP: 600 };
+function readOrderSource_(full) {
   const src = openOrderSheet_();
-  if (!src) return [];
-  const values = src.sheet.getDataRange().getValues();
-  if (values.length < 2) return [];
-  const head = ensureFlowHeaders_(src.sheet, values[0].map(v => String(v).trim())), c = orderColumns_(head);
+  if (!src) return null;
+  const L = src.sheet.getLastRow(), W = Math.max(src.sheet.getLastColumn(), 1);
+  if (L < 2) return { rows: [], full: true, state: null };
+  const head = ensureFlowHeaders_(src.sheet, src.sheet.getRange(1, 1, 1, W).getValues()[0].map(v => String(v).trim())), c = orderColumns_(head);
   if (c.order_id < 0 || c.date < 0) throw new Error('شيت الأوردرات ناقص فيه عمود رقم الأوردر أو التاريخ. راجع orders.col.* في Settings.');
-  const rows = values.slice(1), fmt = detectDateFormat_(rows, c.date), get = (r, k) => (c[k] >= 0 ? orderCell_(r[c[k]]) : '');
-  const adIds = new Set(); const am = ss_().getSheetByName(APP.T.ADMAP);
-  if (am) readRows_(am, 1).forEach(r => adIds.add(String(r[0])));
+  let st = null;
+  try { st = JSON.parse(PropertiesService.getDocumentProperties().getProperty('ORDERS_SRC') || 'null'); } catch (e) { st = null; }
+  if (!st || st.id !== src.id || st.head !== head.join('|') || !st.fmt || L < st.rows) full = true;
+  const from = full ? 2 : Math.max(2, Math.min(st.rows + 1, L - ORDERS.OVERLAP + 1));
+  const rows = src.sheet.getRange(from, 1, L - from + 1, W).getValues(), fmt = full ? detectDateFormat_(rows, c.date) : st.fmt;
+  const get = (r, k) => (c[k] >= 0 ? orderCell_(r[c[k]]) : '');
+  const adIds = new Set();
+  rawRows_(APP.T.ADMAP, ADMAP_HEADERS.length).forEach(r => adIds.add(String(r[0])));
   // UTMs with names instead of IDs (utm_source = campaign name, utm_campaign = ad name): the ad from Ads Raw.
-  const byName = new Map(), ash = ss_().getSheetByName(APP.T.ADS);
-  if (ash) readRows_(ash, ADS_HEADERS.length).forEach(a => {
+  const byName = new Map();
+  (full ? rawRows_(APP.T.ADS, ADS_HEADERS.length) : recentRows_(APP.T.ADS, ADS_HEADERS.length, 1, asKey_, shiftKey_(todayKey_(), -60))).forEach(a => {
     const k = norm_(a[5]) + '|' + norm_(a[9]);
     if (a[8] && !byName.has(k)) byName.set(k, String(a[8]));
   });
@@ -975,27 +1121,48 @@ function readOrderSource_() {
       city: String(get(r, 'city') || '').trim(), phone: phone10_(get(r, 'phone')), alt: phone10_(get(r, 'alt_phone')),
       cancelled: cancelWords.some(w => w && hasToken_(norm_(get(r, 'status')), w)) });
   });
-  if (noDate) setStatus_('ORDERS_NODATE', noDate + ' صف من غير تاريخ مفهوم');
-  return Array.from(byId.values()).map(o => {
+  if (noDate && full) setStatus_('ORDERS_NODATE', noDate + ' صف من غير تاريخ مفهوم');
+  const out = Array.from(byId.values()).map(o => {
     const pl = platformOf_(o.utms.filter(Boolean), o.referrer, o.source);
     const adId = (o.utms.join(' ').match(/\d{10,}/g) || []).find(x => adIds.has(x)) || byName.get(norm_(o.utms[0]) + '|' + norm_(o.utms[1])) || '';
     return [o.id, Utilities.formatDate(o.dt, tz_(), 'yyyy-MM-dd HH:mm'), dayKey_(o.dt), pl.p, pl.s, productOfOrder_(o.raw),
       o.raw.replace(/\s+/g, ' ').slice(0, 1000), o.total, o.city, o.phone ? '0' + o.phone : '', o.alt ? '0' + o.alt : '',
       o.utms[0], o.utms[1], o.utms[2], adId, o.cancelled];
   }).sort((a, b) => (a[1] < b[1] ? 1 : -1));
+  return { rows: out, full: full, state: { id: src.id, head: head.join('|'), fmt: fmt, rows: L } };
 }
 
-function syncOrders_() {
-  const rows = time_('الأوردرات — قراءة', () => readOrderSource_());
-  const hash = sha_(JSON.stringify(rows));
-  const props = PropertiesService.getDocumentProperties();
-  if (props.getProperty('ORDERS_HASH') === hash) return { orders: rows.length, changed: false };
+/*
+ * Orders Raw stays sorted newest first. A normal update replaces only the orders it just read (the newest block);
+ * a full read (full = true, daily) rewrites the tab, and nothing is written when nothing changed.
+ */
+function syncOrders_(full) {
+  const res = time_('الأوردرات — قراءة', () => readOrderSource_(full));
+  if (!res) return { orders: 0, changed: false };
+  const props = PropertiesService.getDocumentProperties(), key = res.full ? 'ORDERS_HASH' : 'ORDERS_TAIL_HASH';
+  const hash = sha_(JSON.stringify(res.rows)), save = () => { if (res.state) props.setProperty('ORDERS_SRC', JSON.stringify(res.state)); };
+  if (props.getProperty(key) === hash && ss_().getSheetByName(APP.T.ORDERS)) { save(); return { orders: res.rows.length, changed: false }; }
+  let total = res.rows.length;
   withLock_(() => {
-    writeRows_(ensureTab_(APP.T.ORDERS, ORDERS_HEADERS), rows, ORDERS_HEADERS.length, [1, 2, 3, 10, 11, 15]);
-    props.setProperty('ORDERS_HASH', hash);
+    const sh = ensureTab_(APP.T.ORDERS, ORDERS_HEADERS), text = [1, 2, 3, 10, 11, 15], byCreated = (a, b) => (sortKey_(a[1]) < sortKey_(b[1]) ? 1 : -1);
+    if (res.full) writeRows_(sh, res.rows, ORDERS_HEADERS.length, text);
+    else if (res.rows.length) {
+      const fresh = new Map(res.rows.map(r => [String(r[0]), r]));
+      total = writeSortedBlock_(sh, ORDERS_HEADERS.length, 2, sortKey_, sortKey_(res.rows[res.rows.length - 1][1]), '9999', old => {
+        const out = res.rows.slice();
+        old.forEach(r => {
+          const f = fresh.get(String(r[0]));
+          if (!f) out.push(r); else f[7] = Math.max(num_(f[7]), num_(r[7])); // an order split over rows: highest total
+        });
+        return out.sort(byCreated);
+      }, text, byCreated);
+    }
+    props.setProperty(key, hash);
+    if (res.full) props.deleteProperty('ORDERS_TAIL_HASH');
+    save();
   });
-  setStatus_('ORDERS', '✓ ' + rows.length + ' أوردر');
-  return { orders: rows.length, changed: true };
+  setStatus_('ORDERS', '✓ ' + total + ' أوردر' + (res.full ? '' : ' (اتقرا الجديد بس)'));
+  return { orders: total, changed: true };
 }
 
 /* ======== 06_views.gs ======== */
@@ -1013,14 +1180,19 @@ const INTRA_HEADERS = ['Date', 'Slot', 'Platform', 'Spend', 'Orders', 'CPP', 'Re
 
 function taxRate_() { return cfgNum_('costs.ad_tax_pct') || 0; }
 
-function rebuildDaily_() {
+/*
+ * since = rebuild only the days from `since` to today (a normal update: today's spend and the orders it just read).
+ * No since = the whole log again (daily run, or after Ad Map changed, so a fixed ad fixes every past day).
+ */
+function rebuildDaily_(since) {
   const idx = adMapIndex_(), catAds = catalogAdIds_(), agg = new Map(), pixelOrders = cfgStr_('orders.method') === 'pixel';
   const row = (d, pl, pr) => {
     const k = d + '|' + pl + '|' + pr;
     if (!agg.has(k)) agg.set(k, [d, pl, pr, 0, 0, 0, 0, 0, 0, 0, 0]);
     return agg.get(k);
   };
-  const ads = readRows_(tab_(APP.T.ADS), ADS_HEADERS.length), known = metaIdsOf_(ads);
+  const ads = since ? recentRows_(APP.T.ADS, ADS_HEADERS.length, 1, asKey_, since) : rawRows_(APP.T.ADS, ADS_HEADERS.length);
+  const known = since ? metaIdsOf_() : metaIdsOf_(ads);
   ads.forEach(a => {
     const d = asKey_(a[0]);
     if (!d) return;
@@ -1033,16 +1205,17 @@ function rebuildDaily_() {
     // No real orders source yet: pixel purchases stand in as orders (labelled in Today and Health).
     if (pixelOrders) { r[8] += num_(a[13]); r[10] += num_(a[14]); }
   });
-  const osh = ss_().getSheetByName(APP.T.ORDERS);
-  if (osh && !pixelOrders) readRows_(osh, ORDERS_HEADERS.length).forEach(o => {
+  if (!pixelOrders) (since ? recentRows_(APP.T.ORDERS, ORDERS_HEADERS.length, 2, sortKey_, since) : rawRows_(APP.T.ORDERS, ORDERS_HEADERS.length)).forEach(o => {
     const d = asKey_(o[2]);
-    if (!d) return;
+    if (!d || (since && d < since)) return;
     const r = outsideMeta_(o, known) ? row(d, APP.META_OUT, o[5]) : row(d, o[3], orderAdProduct_(o, idx, catAds));
     r[8]++; if (o[15] === true || String(o[15]).toUpperCase() === 'TRUE') r[9]++; r[10] += num_(o[7]);
   });
-  const rows = Array.from(agg.values()).map(r => r.map((v, i) => (i >= 3 && i !== 5 && i !== 6 ? round2_(v) : v)))
-    .sort((a, b) => (a[0] < b[0] ? 1 : a[0] > b[0] ? -1 : b[3] - a[3]));
-  writeRows_(ensureTab_(APP.T.DAILY, DAILY_HEADERS), rows, DAILY_HEADERS.length, [1]);
+  const byDay = (a, b) => (a[0] < b[0] ? 1 : a[0] > b[0] ? -1 : b[3] - a[3]);
+  const rows = Array.from(agg.values()).map(r => r.map((v, i) => (i >= 3 && i !== 5 && i !== 6 ? round2_(v) : v))).sort(byDay);
+  const sh = ensureTab_(APP.T.DAILY, DAILY_HEADERS);
+  if (since) writeSortedBlock_(sh, DAILY_HEADERS.length, 1, asKey_, since, '9999-12-31', () => rows, [1], byDay);
+  else writeRows_(sh, rows, DAILY_HEADERS.length, [1]);
   return rows;
 }
 
@@ -1057,10 +1230,10 @@ function orderAdProduct_(o, idx, catAds) {
   return id && catAds.has('META|' + id) ? APP.CATALOG : m ? m.product : APP.META_NO_AD;
 }
 
-/* Every campaign / ad set / ad ID in Ads Raw (rows given, or read). */
+/* Every campaign / ad set / ad ID in Ads Raw (rows given, or the last 60 days). */
 function metaIdsOf_(ads) {
   const ids = new Set();
-  (ads || readRows_(tab_(APP.T.ADS), ADS_HEADERS.length)).forEach(a => { [a[4], a[6], a[8]].forEach(x => { if (x) ids.add(String(x)); }); });
+  (ads || recentRows_(APP.T.ADS, ADS_HEADERS.length, 1, asKey_, shiftKey_(todayKey_(), -60))).forEach(a => { [a[4], a[6], a[8]].forEach(x => { if (x) ids.add(String(x)); }); });
   return ids;
 }
 /* A Meta order whose UTMs carry only IDs that no account in the sheet has: another ad account (no spend here). */
@@ -1070,7 +1243,7 @@ function outsideMeta_(o, known) {
   return ids.length > 0 && !ids.some(x => known.has(x));
 }
 
-function dailyRows_() { return readRows_(tab_(APP.T.DAILY), DAILY_HEADERS.length).map(r => { r[0] = asKey_(r[0]); return r; }); }
+function dailyRows_() { return rawRows_(APP.T.DAILY, DAILY_HEADERS.length).map(r => { r[0] = asKey_(r[0]); return r; }); }
 
 /* Totals for a date range: by platform, by product, overall. */
 function summarize_(rows, from, to) {
@@ -1119,28 +1292,36 @@ function productTable_(sum) {
 const PRODUCT_TABLE_HEADERS = ['المنتج', 'الصرف', 'منه مش متأكد', 'الأوردرات', 'ملغي', 'تكلفة الأوردر + الضريبة',
   'نقطة التعادل', 'الإشارة', 'ملاحظة'];
 
-/* Writes blocks [{title, headers, rows}] starting at row `start`, clearing old content below. */
+/*
+ * Writes blocks [{title, headers, rows}] starting at row `start`, in place (never cleared first, so the tab never
+ * shows empty), then clears what's left below. Nothing is written when the blocks are the same as last time.
+ */
 function writeBlocks_(sh, start, blocks, width) {
-  const last = sh.getLastRow();
-  if (last >= start) sh.getRange(start, 1, last - start + 1, Math.max(width, sh.getLastColumn())).clearContent().setBackground(null).setFontWeight('normal').setFontColor('#000000');
-  let r = start;
+  const vals = [], bg = [], fw = [], fc = [], heads = [];
+  const pad = x => { const a = x.slice(0, width); while (a.length < width) a.push(''); return a; };
+  const line = (v, b, w, c) => { vals.push(pad(v)); bg.push(new Array(width).fill(b)); fw.push(new Array(width).fill(w)); fc.push(new Array(width).fill(c)); };
   blocks.forEach(b => {
-    const pad = x => { const a = x.slice(0, width); while (a.length < width) a.push(''); return a; };
-    if (r + b.rows.length + 3 > sh.getMaxRows()) sh.insertRowsAfter(sh.getMaxRows(), b.rows.length + 5);
-    sh.getRange(r, 1, 1, width).setValues([pad([b.title])]).setBackground('#1f2937').setFontColor('#ffffff').setFontWeight('bold');
-    r++;
-    if (b.headers) { sh.getRange(r, 1, 1, width).setValues([pad(b.headers)]).setBackground('#fff200').setFontWeight('bold').setWrap(true); r++; }
-    if (b.rows.length) { sh.getRange(r, 1, b.rows.length, width).setValues(b.rows.map(pad)); r += b.rows.length; }
-    r++;
+    line([b.title], '#1f2937', 'bold', '#ffffff');
+    if (b.headers) { heads.push(vals.length); line(b.headers, '#fff200', 'bold', '#000000'); }
+    b.rows.forEach(r => line(r, null, 'normal', '#000000'));
+    line([], null, 'normal', '#000000');
   });
-  return r;
+  const end = start + vals.length, last = sh.getLastRow(), props = PropertiesService.getDocumentProperties();
+  const key = 'BH_' + sh.getName() + '|' + start, hash = sha_(width + '|' + JSON.stringify(vals));
+  if (props.getProperty(key) === hash && last < end && vals.length && String(sh.getRange(start, 1).getValue()) === String(vals[0][0])) return end;
+  if (end > sh.getMaxRows()) sh.insertRowsAfter(sh.getMaxRows(), end - sh.getMaxRows());
+  if (vals.length) sh.getRange(start, 1, vals.length, width).setValues(vals).setBackgrounds(bg).setFontWeights(fw).setFontColors(fc);
+  heads.forEach(h => sh.getRange(start + h, 1, 1, width).setWrap(true));
+  if (last >= end) sh.getRange(end, 1, last - end + 1, Math.max(width, sh.getLastColumn())).clearContent().setBackground(null).setFontWeight('normal').setFontColor('#000000');
+  props.setProperty(key, hash);
+  return end;
 }
 
 function checksRows_(from, to) {
-  const acc = ss_().getSheetByName(APP.T.ACC_RAW), ads = readRows_(tab_(APP.T.ADS), ADS_HEADERS.length);
+  const acc = ss_().getSheetByName(APP.T.ACC_RAW), ads = rawRows_(APP.T.ADS, ADS_HEADERS.length);
   const adSum = {}, accSum = {};
   ads.forEach(a => { const d = asKey_(a[0]); if (d >= from && d <= to) adSum[a[1]] = (adSum[a[1]] || 0) + num_(a[10]); });
-  if (acc) readRows_(acc, ACC_HEADERS.length).forEach(a => { const d = asKey_(a[0]); if (d >= from && d <= to) accSum[a[1]] = (accSum[a[1]] || 0) + num_(a[4]); });
+  if (acc) rawRows_(APP.T.ACC_RAW, ACC_HEADERS.length).forEach(a => { const d = asKey_(a[0]); if (d >= from && d <= to) accSum[a[1]] = (accSum[a[1]] || 0) + num_(a[4]); });
   const rows = Object.keys(Object.assign({}, adSum, accSum)).map(p => {
     const diff = round2_((accSum[p] || 0) - (adSum[p] || 0));
     return [p + ': صرف الإعلانات / صرف الحساب', round2_(adSum[p] || 0), round2_(accSum[p] || 0),
@@ -1206,11 +1387,11 @@ function writeClosing_() {
 function writeHealth_() {
   const sh = ensureTab_(APP.T.HEALTH);
   const am = ss_().getSheetByName(APP.T.ADMAP), st = { '❌': 0, '⚠️': 0, '✅': 0 };
-  if (am) readRows_(am, ADMAP_HEADERS.length).forEach(r => { st[r[AM.STATUS]] = (st[r[AM.STATUS]] || 0) + 1; });
+  if (am) rawRows_(APP.T.ADMAP, ADMAP_HEADERS.length).forEach(r => { st[r[AM.STATUS]] = (st[r[AM.STATUS]] || 0) + 1; });
   const o = ss_().getSheetByName(APP.T.ORDERS), unk = { p: 0, pr: 0 };
-  if (o) readRows_(o, ORDERS_HEADERS.length).filter(r => asKey_(r[2]) >= todayKey_().slice(0, 8) + '01')
+  if (o) recentRows_(APP.T.ORDERS, ORDERS_HEADERS.length, 2, sortKey_, todayKey_().slice(0, 8) + '01').filter(r => asKey_(r[2]) >= todayKey_().slice(0, 8) + '01')
     .forEach(r => { if (r[3] === APP.UNKNOWN_PLATFORM) unk.p++; if (r[5] === APP.UNKNOWN_PRODUCT) unk.pr++; });
-  const rows = [['نسخة الكود', APP.VERSION], ['مصدر الأوردرات', cfgStr_('orders.method') === 'pixel' ? '⚠️ مشتريات البيكسل' : cfgStr_('orders.method')], ['أول سحب', getStatus_('BACKFILL')], ['آخر مزامنة كاملة', getStatus_('FULL')], ['آخر تحديث خلال اليوم', getStatus_('LIVE')],
+  const rows = [['نسخة الكود', APP.VERSION], ['مصدر الأوردرات', cfgStr_('orders.method') === 'pixel' ? '⚠️ مشتريات البيكسل' : cfgStr_('orders.method')], ['أول سحب', getStatus_('BACKFILL')], ['آخر مزامنة كاملة', getStatus_('FULL')], ['آخر تحديث خلال اليوم', getStatus_('LIVE')], ['آخر تحديث سريع ⚡', getStatus_('QUICK')],
     ['الأوردرات', getStatus_('ORDERS')], ['أوردرات من غير تاريخ مفهوم', getStatus_('ORDERS_NODATE')], ['ربط الإعلانات', getStatus_('ADMAP')],
     ['إعلانات ❌ / ⚠️ / ✅', st['❌'] + ' / ' + st['⚠️'] + ' / ' + st['✅']],
     ['أوردرات الشهر مش معروف منصتها', unk.p], ['أوردرات الشهر مش معروف منتجها', unk.pr],
@@ -1245,8 +1426,8 @@ function writeTests_() {
   const sh = ensureTab_(APP.T.TESTS, TESTS_HEADERS);
   if (sh.getLastRow() < 2) return;
   const tests = sh.getRange(2, 1, sh.getLastRow() - 1, TESTS_HEADERS.length).getValues();
-  const ads = readRows_(tab_(APP.T.ADS), ADS_HEADERS.length).map(a => ({ text: norm_([a[5], a[7], a[9]].join(' ')), id: String(a[8]), spend: num_(a[10]), pixel: num_(a[13]) }));
-  const orders = ss_().getSheetByName(APP.T.ORDERS) ? readRows_(tab_(APP.T.ORDERS), ORDERS_HEADERS.length) : [];
+  const ads = rawRows_(APP.T.ADS, ADS_HEADERS.length).map(a => ({ text: norm_([a[5], a[7], a[9]].join(' ')), id: String(a[8]), spend: num_(a[10]), pixel: num_(a[13]) }));
+  const orders = ss_().getSheetByName(APP.T.ORDERS) ? rawRows_(APP.T.ORDERS, ORDERS_HEADERS.length) : [];
   const prods = products_();
   tests.forEach(t => {
     const id = norm_(t[0]);
@@ -1263,16 +1444,23 @@ function writeTests_() {
 }
 
 /*
- * slow = also the heavy period tabs (Product Performance, Tests, المنتجات, تعادل الحسابات): every 2 days, and from
- * the 📦 menu button. The 15-minute run keeps only what is read during the day light and fresh.
+ * opt.quick (the ⚡ button): Daily Log of the last 3 days + Today, nothing else.
+ * Default (every 15 minutes): + Closing, Health and the catalog tab.
+ * opt.full: the whole Daily Log again (daily run, after a backfill, or when the Ad Map changed in this run),
+ * otherwise only its last 3 days. opt.slow: + the heavy period tabs (Product Performance, Tests, المنتجات,
+ * تعادل الحسابات), every 2 days and from the 📦 menu button.
  */
-function rebuildViews_(slow) {
-  resetCaches_();
-  time_('Daily Log', () => rebuildDaily_());
+function rebuildViews_(opt) {
+  if (!opt || typeof opt !== 'object') opt = { slow: !!opt };
+  CFG_ = null; PRODUCTS_ = null; KNOWN_PRODUCTS_ = null; // settings / products may have changed; the raw tabs' copies stay valid
+  const full = opt.full || opt.slow || ADMAP_CHANGED_;
+  time_('Daily Log', () => rebuildDaily_(full ? '' : shiftKey_(todayKey_(), -2)));
+  ADMAP_CHANGED_ = false;
   time_('Today', () => writeToday_());
+  if (opt.quick) return;
   writeClosing_(); writeHealth_();
-  if (slow) { writePerf_(); writeTests_(); PropertiesService.getDocumentProperties().setProperty('SLOW_VIEWS_AT', String(Date.now())); }
-  EXT.views.forEach(f => { try { f(!!slow); } catch (e) { console.error('ext view: ' + errText_(e)); } });
+  if (opt.slow) { writePerf_(); writeTests_(); PropertiesService.getDocumentProperties().setProperty('SLOW_VIEWS_AT', String(Date.now())); }
+  EXT.views.forEach(f => { try { f(!!opt.slow); } catch (e) { console.error('ext view: ' + errText_(e)); } });
 }
 function slowViewsDue_() {
   const at = Number(PropertiesService.getDocumentProperties().getProperty('SLOW_VIEWS_AT') || 0);
@@ -1331,10 +1519,10 @@ function seedTab_(sh, rows, width) {
 function fullSync_(days) {
   resetCaches_();
   const today = todayKey_(), since = shiftKey_(today, -days);
-  syncOrders_();
+  syncOrders_(true); // once a day: the whole orders sheet again
   const r = syncAds_(since, today);
   runLiveExt_();
-  withLock_(() => time_('Views', () => rebuildViews_(slowViewsDue_())));
+  withLock_(() => time_('Views', () => rebuildViews_({ full: true, slow: slowViewsDue_() })));
   setStatus_('FULL', '✓ ' + since + ' → ' + today + ' (' + r.ads + ' صف إعلانات)');
   return r;
 }
@@ -1343,7 +1531,7 @@ function dailySync() {
   try {
     fullSync_(cfgNum_('sync.refresh_days') || 3);
     PropertiesService.getDocumentProperties().setProperty('SYNCED_THROUGH', shiftKey_(todayKey_(), -1));
-    withLock_(() => refreshAdMap_([], {}, true));
+    updateAdMap_(recentRows_(APP.T.ADS, ADS_HEADERS.length, 1, asKey_, shiftKey_(todayKey_(), -7)), {}, true);
   } catch (e) { setStatus_('FULL', '✗ ' + errText_(e)); console.error(errText_(e)); }
 }
 /*
@@ -1384,7 +1572,7 @@ function catchUpGap_() {
   let through = asKey_(props.getProperty('SYNCED_THROUGH') || '');
   if (!through) {
     const acc = ss_().getSheetByName(APP.T.ACC_RAW);
-    const days = acc ? readRows_(acc, ACC_HEADERS.length).map(r => asKey_(r[0])).filter(d => d && d < today).sort() : [];
+    const days = acc ? rawRows_(APP.T.ACC_RAW, ACC_HEADERS.length).map(r => asKey_(r[0])).filter(d => d && d < today).sort() : [];
     through = days.length ? shiftKey_(days.pop(), -1) : yest;
   }
   let since = through < yest ? shiftKey_(through, 1) : '';
@@ -1434,13 +1622,14 @@ function backfillStep() {
       }
       try {
         const meta = fetchMetaAds_(u[1], u[2], u[0]), cat = syncCatalog_(u[1], u[2], u[0]);
+        const plan = adMapPlan_(meta.ads, {}, false), links = plan.ids.length ? fetchMetaLinks_(plan.ids) : {}; // links before the lock
         const w = tryLock_(() => {
           mergeRaw_(APP.T.ADS, ADS_HEADERS, meta.ads, u[1], u[2], meta.accounts, [0, 1, 2, 8], [2, 4, 6, 8]);
           mergeRaw_(APP.T.ACC_RAW, ACC_HEADERS, meta.acc, u[1], u[2], meta.accounts, [0, 1, 2], [2]);
           if (cat) mergeCatalog_(cat.rows, u[1], u[2], cat.keys);
           st.done++; st.tries = 0; save();
           setStatus_('BACKFILL', st.done + ' / ' + st.units.length + ' جزء' + (st.skipped ? ' (اتساب ' + st.skipped.length + ')' : ''));
-          refreshAdMap_(meta.ads, {}, false);
+          if (plan.needed) refreshAdMap_(meta.ads, {}, false, links);
         });
         if (w.skipped) { st.tries = Math.max((st.tries || 1) - 1, 0); save(); busy = true; break; } // busy: same piece next minute
       } catch (e) {
@@ -1451,18 +1640,18 @@ function backfillStep() {
   }
   if (busy || st.done < st.units.length || Date.now() - start > 3 * 60000) { tryLock_(() => writeHealth_()); return; }
   // Finish: TikTok tab, orders, links still missing, extensions, views.
+  const tt = fetchTikTokTab_(st.since, st.until), ttPlan = adMapPlan_(tt.ads, tt.links, false);
   const r = tryLock_(() => {
-    const tt = fetchTikTokTab_(st.since, st.until);
     mergeRaw_(APP.T.ADS, ADS_HEADERS, tt.ads, st.since, st.until, tt.accounts, [0, 1, 2, 8], [2, 4, 6, 8]);
     mergeRaw_(APP.T.ACC_RAW, ACC_HEADERS, tt.acc, st.since, st.until, tt.accounts, [0, 1, 2], [2]);
-    refreshAdMap_(tt.ads, tt.links, false);
+    if (ttPlan.needed) refreshAdMap_(tt.ads, tt.links, false, {});
     st.finishing = true;
   });
   if (r.skipped || !st.finishing) return;
   try {
     syncOrders_();
     runLiveExt_();
-    withLock_(() => rebuildViews_(slowViewsDue_()));
+    withLock_(() => rebuildViews_({ full: true, slow: slowViewsDue_() }));
     props.deleteProperty('BACKFILL');
     const through = asKey_(props.getProperty('SYNCED_THROUGH') || ''), done = st.until < todayKey_() ? st.until : shiftKey_(todayKey_(), -1);
     if (!through || through < done) props.setProperty('SYNCED_THROUGH', done);
@@ -1471,42 +1660,76 @@ function backfillStep() {
     setStatus_('FULL', '✓ ' + st.since + ' → ' + st.until);
   } catch (e) { setStatus_('BACKFILL', '✗ ' + errText_(e) + ' — هيحاول تاني بعد دقيقة'); }
 }
-/* Every N minutes: orders, today's ads, views (Today takes the intraday snapshot). Skips quietly if another run is busy. */
 /*
- * Every 15 minutes, and from the 🔄 button (manual = true; a trigger passes an event object instead).
+ * Every 15 minutes, and from the 🔄 button (manual = true; a trigger passes an event object instead):
+ * new orders, today's Meta spend and catalog split, the light extras, then the tabs read during the day.
  * A trigger run skips itself while another run is still going (LIVE_AT). The button waits for the tabs instead of giving up.
  */
 function liveTick(manual) {
   manual = manual === true;
-  const start = Date.now(), took = [], step = (label, fn) => { const t = Date.now(); const v = fn(); took.push(label + ' ' + Math.round((Date.now() - t) / 1000) + 'ث'); return v; };
-  const props = PropertiesService.getDocumentProperties(), busySince = Number(props.getProperty('LIVE_AT') || 0);
-  if (!manual && busySince && start - busySince < 6 * 60000) return;
+  const run = startRun_(manual);
+  if (!run) return;
+  try {
+    step_(run, 'أوردرات', () => syncOrders_());
+    const today = todayKey_();
+    step_(run, 'Meta', () => syncAds_(today, today));
+    if (timeLeft_()) step_(run, 'إضافات', () => runLiveExt_());
+    const r = step_(run, 'تابات', () => tryLock_(() => rebuildViews_({ slow: slowViewsDue_() }), manual ? 120000 : 5000));
+    setStatus_('LIVE', (r.skipped ? 'اتأجل (تحديث تاني شغال)' : '✓ OK') + ' — ' + run.took.join('، '));
+    try { ensureTriggers_(); catchUpGap_(); } catch (e) { console.error('catch-up: ' + errText_(e)); }
+  } catch (e) { setStatus_('LIVE', '✗ ' + errText_(e) + ' — ' + run.took.join('، ')); console.error(errText_(e)); }
+  finally { endRun_(run); }
+}
+/* One update run: marks LIVE_AT so the 15-minute trigger doesn't start on top of it; timings per step. */
+function startRun_(manual) {
+  const props = PropertiesService.getDocumentProperties(), start = Date.now(), busySince = Number(props.getProperty('LIVE_AT') || 0);
+  if (!manual && busySince && start - busySince < 6 * 60000) return null;
   props.setProperty('LIVE_AT', String(start));
   DEADLINE_ = start + 4.5 * 60000;
-  try {
-    resetCaches_();
-    step('أوردرات', () => syncOrders_());
-    const today = todayKey_();
-    step('Meta', () => syncAds_(today, today));
-    if (timeLeft_()) step('إضافات', () => runLiveExt_());
-    const r = step('تابات', () => tryLock_(() => rebuildViews_(slowViewsDue_()), manual ? 120000 : 5000));
-    setStatus_('LIVE', (r.skipped ? 'اتأجل (تحديث تاني شغال)' : '✓ OK') + ' — ' + took.join('، '));
-    try { ensureTriggers_(); catchUpGap_(); } catch (e) { console.error('catch-up: ' + errText_(e)); }
-  } catch (e) { setStatus_('LIVE', '✗ ' + errText_(e) + ' — ' + took.join('، ')); console.error(errText_(e)); }
-  finally { if (props.getProperty('LIVE_AT') === String(start)) props.deleteProperty('LIVE_AT'); }
+  resetCaches_();
+  return { start: start, took: [], props: props };
 }
+function step_(run, label, fn) {
+  const t = Date.now(), v = fn();
+  run.took.push(label + ' ' + Math.round((Date.now() - t) / 1000) + 'ث');
+  return v;
+}
+function endRun_(run) { if (run.props.getProperty('LIVE_AT') === String(run.start)) run.props.deleteProperty('LIVE_AT'); }
 function runLiveExt_() { EXT.live.forEach(f => { try { f(); } catch (e) { console.error('ext live: ' + errText_(e)); } }); }
+
+/* 🔄 Full update now: everything the 15-minute update does. */
 function refreshNow() {
   try {
     liveTick(true);
     const live = getStatus_('LIVE'), bf = PropertiesService.getDocumentProperties().getProperty('BACKFILL');
-    const head = /^✗/.test(live) ? 'التحديث ماكملش:\n'
+    const head = /✗/.test(live) ? 'التحديث ماكملش:\n'
       : /اتأجل/.test(live) ? 'الأرقام اتسحبت، بس في تحديث تلقائي شغال في نفس اللحظة وهو اللي بيكتب التابات. Today هيتحدث خلال دقيقة أو اتنين.\n'
-      : 'اتحدثت أرقام النهارده ✅\n';
+      : 'اتحدث كل حاجة ✅\n';
     alert_(head + live +
       (bf ? '\n\nسحب الشهر شغال في الخلفية (' + getStatus_('BACKFILL') + '). Today بيتحدث لوحده كل 15 دقيقة، مش لازم تدوس تاني.' : ''));
     ss_().setActiveSheet(tab_(APP.T.TODAY));
   } catch (e) { alert_('التحديث ماكملش:\n' + errText_(e)); }
+}
+
+/*
+ * ⚡ Fast update: only today's new orders and today's spend, into Daily Log and Today. No catalog split, benchmark,
+ * running ads or other tabs (the 15-minute update brings those), so it finishes in seconds.
+ */
+function quickRefresh() {
+  const run = startRun_(true);
+  try {
+    step_(run, 'أوردرات', () => syncOrders_());
+    step_(run, 'صرف', () => syncAds_(todayKey_(), todayKey_(), true));
+    step_(run, 'Today', () => withLock_(() => rebuildViews_({ quick: true }), 120000));
+    const secs = Math.round((Date.now() - run.start) / 1000);
+    setStatus_('QUICK', '✓ ' + secs + 'ث — ' + run.took.join('، '));
+    alert_('اتحدث الصرف والأوردرات ✅ في ' + secs + ' ثانية\n' + run.took.join('، ') +
+      '\n\nتقسيم الكتالوج والبنشمارك والإعلانات الشغالة بيتحدثوا لوحدهم كل 15 دقيقة.');
+    ss_().setActiveSheet(tab_(APP.T.TODAY));
+  } catch (e) {
+    setStatus_('QUICK', '✗ ' + errText_(e));
+    alert_('التحديث السريع ماكملش:\n' + errText_(e));
+  } finally { endRun_(run); }
 }
 
 function installTriggers() {
@@ -1529,7 +1752,8 @@ function onOpen() {
   const ui = SpreadsheetApp.getUi();
   const menu = ui.createMenu('Ads Sheet');
   menu
-    .addItem('🔄 تحديث أرقام النهارده', 'refreshNow')
+    .addItem('⚡ تحديث سريع (الصرف والأوردرات)', 'quickRefresh')
+    .addItem('🔄 تحديث كامل', 'refreshNow')
     .addItem('🔗 تحديث ربط الإعلانات بالمنتجات', 'refreshAdMapNow');
   EXT.menu.forEach(m => menu.addItem(m[0], m[1]));
   menu.addSeparator()
@@ -1676,7 +1900,7 @@ function writeProductsTab_() {
   // Units and orders per product from Orders Raw.
   const units = {}, ordersWith = {}, units7 = {};
   const osh = ss_().getSheetByName(APP.T.ORDERS);
-  if (osh) readRows_(osh, ORDERS_HEADERS.length).forEach(o => {
+  if (osh) rawRows_(APP.T.ORDERS, ORDERS_HEADERS.length).forEach(o => {
     const d = asKey_(o[2]);
     if (!d) return;
     const seen = new Set();
@@ -1757,7 +1981,7 @@ function writeAccountsBE_() {
   const accs = new Map();
   accounts_().forEach(a => accs.set(a.platform + '|' + a.id, { key: a.platform + '|' + a.id, platform: a.platform, name: a.name || a.id, purpose: a.purpose }));
   const cell = {}, add = (k, d, f, v) => { const c = cell[k + '|' + d] = cell[k + '|' + d] || { spend: 0, pixel: 0, pval: 0, orders: 0, revenue: 0 }; c[f] += v; };
-  readRows_(tab_(APP.T.ADS), ADS_HEADERS.length).forEach(a => {
+  rawRows_(APP.T.ADS, ADS_HEADERS.length).forEach(a => {
     const d = asKey_(a[0]);
     if (d < from || d > to) return;
     const k = a[1] + '|' + String(a[2]);
@@ -1766,12 +1990,12 @@ function writeAccountsBE_() {
   });
   // Orders → account: Ad ID in UTM (exact) → Ad Map account; else the only account of that platform; else "مش معروف الحساب".
   const adAcc = {}, am = ss_().getSheetByName(APP.T.ADMAP);
-  if (am) readRows_(am, ADMAP_HEADERS.length).forEach(r => { if (r[AM.ID]) adAcc[String(r[AM.ID])] = r[AM.PLAT] + '|' + String(r[AM.ACC]); });
+  if (am) rawRows_(APP.T.ADMAP, ADMAP_HEADERS.length).forEach(r => { if (r[AM.ID]) adAcc[String(r[AM.ID])] = r[AM.PLAT] + '|' + String(r[AM.ACC]); });
   const byPlat = {};
   accs.forEach(a => { (byPlat[a.platform] = byPlat[a.platform] || []).push(a.key); });
   let storeOrders = 0, storeRev = 0, attributed = 0;
   const osh = ss_().getSheetByName(APP.T.ORDERS);
-  if (osh) readRows_(osh, ORDERS_HEADERS.length).forEach(o => {
+  if (osh) rawRows_(APP.T.ORDERS, ORDERS_HEADERS.length).forEach(o => {
     const d = asKey_(o[2]);
     if (d < from || d > to) return;
     storeOrders++; storeRev += num_(o[7]);
@@ -1889,7 +2113,7 @@ function knownProducts_() {
   const known = new Map();
   products_().forEach(p => { known.set(norm_(p.name), p.name); p.aliases.forEach(a => { if (!known.has(a)) known.set(a, p.name); }); });
   const osh = ss_().getSheetByName(APP.T.ORDERS);
-  if (osh) readRows_(osh, ORDERS_HEADERS.length).forEach(o => {
+  if (osh) recentRows_(APP.T.ORDERS, ORDERS_HEADERS.length, 2, sortKey_, shiftKey_(todayKey_(), -90)).forEach(o => {
     lineItems_(o[6]).forEach(li => { const n = norm_(li.title); if (n && !known.has(n)) known.set(n, li.title.trim()); });
   });
   KNOWN_PRODUCTS_ = known;
@@ -1917,7 +2141,7 @@ function catalogProduct_(name) {
 /* "META|adId" of every catalog / Advantage+ ad (any ad Meta ever split by product). */
 function catalogAdIds_() {
   const sh = ss_().getSheetByName(APP.T.CATALOG), ids = new Set();
-  if (sh) readRows_(sh, 4).forEach(r => { if (r[3]) ids.add(r[1] + '|' + String(r[3])); });
+  if (sh) rawRows_(APP.T.CATALOG, CATALOG_HEADERS.length).forEach(r => { if (r[3]) ids.add(r[1] + '|' + String(r[3])); });
   return ids;
 }
 
@@ -1927,13 +2151,13 @@ function catalogAdIds_() {
  * TOTAL = all spend of catalog ads, the same number as the CATALOG row in Today.
  */
 function writeCatalogTab_() {
-  const sh = ensureTab_(X.CATALOG), g = todayGrid_(), today = todayKey_(), catAds = catalogAdIds_();
+  const sh = ensureTab_(X.CATALOG), g = todayGrid_(), today = todayKey_(), catAds = catalogAdIds_(), month0 = today.slice(0, 8) + '01';
   const split = [], csh = ss_().getSheetByName(APP.T.CATALOG);
-  if (csh) readRows_(csh, CATALOG_HEADERS.length).forEach(r => split.push([asKey_(r[0]), catalogProduct_(r[4]), num_(r[5]), num_(r[6])]));
+  if (csh) recentRows_(APP.T.CATALOG, CATALOG_HEADERS.length, 1, asKey_, month0).forEach(r => split.push([asKey_(r[0]), catalogProduct_(r[4]), num_(r[5]), num_(r[6])]));
   const adSpend = [];
-  readRows_(tab_(APP.T.ADS), ADS_HEADERS.length).forEach(a => { if (catAds.has(a[1] + '|' + String(a[8]))) adSpend.push([asKey_(a[0]), num_(a[10])]); });
+  recentRows_(APP.T.ADS, ADS_HEADERS.length, 1, asKey_, month0).forEach(a => { if (catAds.has(a[1] + '|' + String(a[8]))) adSpend.push([asKey_(a[0]), num_(a[10])]); });
   const orders = [], osh = ss_().getSheetByName(APP.T.ORDERS);
-  if (osh) readRows_(osh, ORDERS_HEADERS.length).forEach(o => {
+  if (osh) recentRows_(APP.T.ORDERS, ORDERS_HEADERS.length, 2, sortKey_, month0).forEach(o => {
     if (o[14] && catAds.has(o[3] + '|' + String(o[14]))) orders.push([asKey_(o[2]), o[5], num_(o[7])]);
   });
   const p = today.split('-').map(Number), noon = new Date(Date.UTC(p[0], p[1] - 1, p[2], 12));
@@ -1964,7 +2188,7 @@ function writeCatalogTab_() {
   };
   let r = table(1, 'CATALOG — TODAY | ' + Utilities.formatDate(noon, 'UTC', 'dd-MMM-yyyy'), today, today) + 1;
   table(r, 'CATALOG — THIS MONTH | ' + Utilities.formatDate(noon, 'UTC', 'MMM-yyyy'), today.slice(0, 8) + '01', today);
-  writeGrid_(sh, g);
+  if (!writeGrid_(sh, g)) return;
   [[1, 360], [2, 90], [3, 120], [4, 100], [5, 90], [6, 160]].forEach(w => sh.setColumnWidth(w[0], w[1]));
 }
 
@@ -2128,19 +2352,34 @@ function todayGrid_() {
   return g;
 }
 
+/*
+ * Draws the page in place: values and formats overwrite the old ones (the tab is never cleared first, so it never
+ * shows empty), merges are redone only when they moved, and rows left from a longer old page are cleared.
+ * Nothing is written when the page is the same as last time, except the cells in g.live ("Last Update").
+ * Returns true when the page was redrawn.
+ */
 function writeGrid_(sh, g) {
-  const R = Math.max(g.rows.length, 1), W = TODAY.WIDTH;
-  const old = Math.max(sh.getLastRow(), R);
+  const R = Math.max(g.rows.length, 1), W = TODAY.WIDTH, props = PropertiesService.getDocumentProperties(), name = sh.getName();
+  const pick = k => { const out = []; for (let r = 0; r < R; r++) { const line = []; for (let c = 0; c < W; c++) { const x = (g.rows[r] || [])[c]; line.push(x ? x[k] : (k === 'v' ? '' : k === 'fc' ? '#000000' : k === 'b' ? 'normal' : k === 'nf' ? 'General' : k === 'al' ? 'left' : null)); } out.push(line); } return out; };
+  const v = pick('v'), live = (g.live || []).filter(x => x[0] <= R), still = v.map(r => r.slice());
+  live.forEach(x => { still[x[0] - 1][x[1] - 1] = ''; });
+  const look = [pick('nf'), pick('bg'), pick('fc'), pick('b'), pick('al')], hash = sha_(JSON.stringify([still, look]));
+  const mergeSig = sha_(JSON.stringify(g.merges)), old = sh.getLastRow();
+  if (props.getProperty('GH_' + name) === hash && old <= R && String(sh.getRange(1, 1).getValue()) === String(v[0][0])) { // still there
+    live.forEach(x => sh.getRange(x[0], x[1]).setValue(v[x[0] - 1][x[1] - 1]));
+    return false;
+  }
   if (R > sh.getMaxRows()) sh.insertRowsAfter(sh.getMaxRows(), R - sh.getMaxRows());
   if (sh.getMaxColumns() < W) sh.insertColumnsAfter(sh.getMaxColumns(), W - sh.getMaxColumns());
-  const all = sh.getRange(1, 1, old, Math.max(W, sh.getLastColumn()));
-  all.breakApart(); all.clear();
-  sh.setConditionalFormatRules([]);
-  const pick = k => { const out = []; for (let r = 0; r < R; r++) { const line = []; for (let c = 0; c < W; c++) { const x = (g.rows[r] || [])[c]; line.push(x ? x[k] : (k === 'v' ? '' : k === 'fc' ? '#000000' : k === 'b' ? 'normal' : k === 'nf' ? 'General' : k === 'al' ? 'left' : null)); } out.push(line); } return out; };
-  const rng = sh.getRange(1, 1, R, W);
-  rng.setNumberFormats(pick('nf')).setValues(pick('v')).setBackgrounds(pick('bg')).setFontColors(pick('fc'))
-    .setFontWeights(pick('b')).setHorizontalAlignments(pick('al'));
-  g.merges.forEach(m => sh.getRange(m[0], m[1], m[2], m[3]).merge());
+  const newMerges = props.getProperty('GM_' + name) !== mergeSig;
+  if (newMerges) { sh.getRange(1, 1, Math.max(old, R), Math.max(W, sh.getLastColumn())).breakApart(); sh.setConditionalFormatRules([]); }
+  sh.getRange(1, 1, R, W).setNumberFormats(look[0]).setValues(v).setBackgrounds(look[1]).setFontColors(look[2])
+    .setFontWeights(look[3]).setHorizontalAlignments(look[4]);
+  if (old > R) sh.getRange(R + 1, 1, old - R, Math.max(W, sh.getLastColumn())).clear();
+  if (newMerges) g.merges.forEach(m => sh.getRange(m[0], m[1], m[2], m[3]).merge());
+  props.setProperty('GH_' + name, hash);
+  props.setProperty('GM_' + name, mergeSig);
+  return true;
 }
 
 /* Title bar + yellow header row. Returns the first data row. */
@@ -2158,7 +2397,7 @@ function ratioOrBlank_(a, b, digits) { return b > 0 ? Math.round(a / b * Math.po
 function todayAccounts_(today) {
   const rows = { META: new Map(), TIKTOK: new Map() };
   ['META', 'TIKTOK'].forEach(p => accounts_(p).forEach(a => rows[p].set(a.id, { id: a.id, name: a.name || a.id, spend: 0, orders: 0, value: 0 })));
-  readRows_(tab_(APP.T.ADS), ADS_HEADERS.length).forEach(a => {
+  recentRows_(APP.T.ADS, ADS_HEADERS.length, 1, asKey_, today).forEach(a => {
     if (asKey_(a[0]) !== today || !rows[a[1]]) return;
     const id = String(a[2]), m = rows[a[1]];
     if (!m.has(id)) m.set(id, { id: id, name: a[3] || id, spend: 0, orders: 0, value: 0 });
@@ -2180,6 +2419,7 @@ function todayClosing_(g, today, sum, rows) {
     g.set(3 + i, 1, x[0], { bg: S.LABEL, b: 'bold' });
     g.set(3 + i, 2, x[1], { al: 'right' });
   });
+  g.live = [[5, 2]]; // Last Update: written every time, even when nothing else changed
   const totalNote = '(ACCOUNT: PLATFORM / TOTAL: UTMs)';
   let r = 8;
   ['PLATFORM', 'AD ACCOUNT NAME', 'AMOUNT SPENT', 'ORDERS ' + totalNote, 'CPP ' + totalNote, 'ROAS ' + totalNote]
@@ -2291,7 +2531,7 @@ function todayOrders_(from) {
   const osh = ss_().getSheetByName(APP.T.ORDERS), out = [];
   if (!osh) return out;
   const idx = adMapIndex_(), catAds = catalogAdIds_(), known = metaIdsOf_();
-  readRows_(osh, ORDERS_HEADERS.length).forEach(o => {
+  recentRows_(APP.T.ORDERS, ORDERS_HEADERS.length, 2, sortKey_, from).forEach(o => {
     const d = asKey_(o[2]);
     if (!d || d < from || o[3] !== 'META' || outsideMeta_(o, known)) return;
     const items = [];
@@ -2383,7 +2623,7 @@ function writeToday_() {
   const running = todayRunning_(), orders = todayOrders_(today.slice(0, 8) + '01');
   r = todayProducts_(g, r, 'PRODUCT PERFORMANCE — TODAY | ' + shown, today, today, rows, running, orders) + 1;
   todayProducts_(g, r, 'PRODUCT PERFORMANCE — THIS MONTH | ' + month, today.slice(0, 8) + '01', today, rows, running, orders);
-  writeGrid_(sh, g);
+  if (!writeGrid_(sh, g)) return;
   sh.setFrozenRows(0);
   [[1, 150], [2, 210], [3, 120], [4, 130], [5, 130], [6, 130], [7, 24], [8, 240]].forEach(w => sh.setColumnWidth(w[0], w[1]));
   for (let col = 9; col <= TODAY.WIDTH; col++) sh.setColumnWidth(col, col === TODAY.RIGHT_COL + 7 ? 320 : 115);
@@ -2424,7 +2664,7 @@ function chanceEdit_(name, a1) {
 function refreshProductsNow() {
   try {
     resetCaches_(); chanceLive_();
-    withLock_(() => { rebuildViews_(true); });
+    withLock_(() => { rebuildViews_({ full: true, slow: true }); });
     alert_('اتحدثت المنتجات والستوك ✅\nالستوك: ' + getStatus_('STOCK') + '\nالإعلانات الشغالة: ' + getStatus_('ACTIVE'));
     ss_().setActiveSheet(tab_(X.PRODUCTS));
   } catch (e) { alert_('التحديث ماكملش:\n' + errText_(e)); }

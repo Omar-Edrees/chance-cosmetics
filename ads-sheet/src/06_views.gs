@@ -12,14 +12,19 @@ const INTRA_HEADERS = ['Date', 'Slot', 'Platform', 'Spend', 'Orders', 'CPP', 'Re
 
 function taxRate_() { return cfgNum_('costs.ad_tax_pct') || 0; }
 
-function rebuildDaily_() {
+/*
+ * since = rebuild only the days from `since` to today (a normal update: today's spend and the orders it just read).
+ * No since = the whole log again (daily run, or after Ad Map changed, so a fixed ad fixes every past day).
+ */
+function rebuildDaily_(since) {
   const idx = adMapIndex_(), catAds = catalogAdIds_(), agg = new Map(), pixelOrders = cfgStr_('orders.method') === 'pixel';
   const row = (d, pl, pr) => {
     const k = d + '|' + pl + '|' + pr;
     if (!agg.has(k)) agg.set(k, [d, pl, pr, 0, 0, 0, 0, 0, 0, 0, 0]);
     return agg.get(k);
   };
-  const ads = readRows_(tab_(APP.T.ADS), ADS_HEADERS.length), known = metaIdsOf_(ads);
+  const ads = since ? recentRows_(APP.T.ADS, ADS_HEADERS.length, 1, asKey_, since) : rawRows_(APP.T.ADS, ADS_HEADERS.length);
+  const known = since ? metaIdsOf_() : metaIdsOf_(ads);
   ads.forEach(a => {
     const d = asKey_(a[0]);
     if (!d) return;
@@ -32,16 +37,17 @@ function rebuildDaily_() {
     // No real orders source yet: pixel purchases stand in as orders (labelled in Today and Health).
     if (pixelOrders) { r[8] += num_(a[13]); r[10] += num_(a[14]); }
   });
-  const osh = ss_().getSheetByName(APP.T.ORDERS);
-  if (osh && !pixelOrders) readRows_(osh, ORDERS_HEADERS.length).forEach(o => {
+  if (!pixelOrders) (since ? recentRows_(APP.T.ORDERS, ORDERS_HEADERS.length, 2, sortKey_, since) : rawRows_(APP.T.ORDERS, ORDERS_HEADERS.length)).forEach(o => {
     const d = asKey_(o[2]);
-    if (!d) return;
+    if (!d || (since && d < since)) return;
     const r = outsideMeta_(o, known) ? row(d, APP.META_OUT, o[5]) : row(d, o[3], orderAdProduct_(o, idx, catAds));
     r[8]++; if (o[15] === true || String(o[15]).toUpperCase() === 'TRUE') r[9]++; r[10] += num_(o[7]);
   });
-  const rows = Array.from(agg.values()).map(r => r.map((v, i) => (i >= 3 && i !== 5 && i !== 6 ? round2_(v) : v)))
-    .sort((a, b) => (a[0] < b[0] ? 1 : a[0] > b[0] ? -1 : b[3] - a[3]));
-  writeRows_(ensureTab_(APP.T.DAILY, DAILY_HEADERS), rows, DAILY_HEADERS.length, [1]);
+  const byDay = (a, b) => (a[0] < b[0] ? 1 : a[0] > b[0] ? -1 : b[3] - a[3]);
+  const rows = Array.from(agg.values()).map(r => r.map((v, i) => (i >= 3 && i !== 5 && i !== 6 ? round2_(v) : v))).sort(byDay);
+  const sh = ensureTab_(APP.T.DAILY, DAILY_HEADERS);
+  if (since) writeSortedBlock_(sh, DAILY_HEADERS.length, 1, asKey_, since, '9999-12-31', () => rows, [1], byDay);
+  else writeRows_(sh, rows, DAILY_HEADERS.length, [1]);
   return rows;
 }
 
@@ -56,10 +62,10 @@ function orderAdProduct_(o, idx, catAds) {
   return id && catAds.has('META|' + id) ? APP.CATALOG : m ? m.product : APP.META_NO_AD;
 }
 
-/* Every campaign / ad set / ad ID in Ads Raw (rows given, or read). */
+/* Every campaign / ad set / ad ID in Ads Raw (rows given, or the last 60 days). */
 function metaIdsOf_(ads) {
   const ids = new Set();
-  (ads || readRows_(tab_(APP.T.ADS), ADS_HEADERS.length)).forEach(a => { [a[4], a[6], a[8]].forEach(x => { if (x) ids.add(String(x)); }); });
+  (ads || recentRows_(APP.T.ADS, ADS_HEADERS.length, 1, asKey_, shiftKey_(todayKey_(), -60))).forEach(a => { [a[4], a[6], a[8]].forEach(x => { if (x) ids.add(String(x)); }); });
   return ids;
 }
 /* A Meta order whose UTMs carry only IDs that no account in the sheet has: another ad account (no spend here). */
@@ -69,7 +75,7 @@ function outsideMeta_(o, known) {
   return ids.length > 0 && !ids.some(x => known.has(x));
 }
 
-function dailyRows_() { return readRows_(tab_(APP.T.DAILY), DAILY_HEADERS.length).map(r => { r[0] = asKey_(r[0]); return r; }); }
+function dailyRows_() { return rawRows_(APP.T.DAILY, DAILY_HEADERS.length).map(r => { r[0] = asKey_(r[0]); return r; }); }
 
 /* Totals for a date range: by platform, by product, overall. */
 function summarize_(rows, from, to) {
@@ -118,28 +124,36 @@ function productTable_(sum) {
 const PRODUCT_TABLE_HEADERS = ['المنتج', 'الصرف', 'منه مش متأكد', 'الأوردرات', 'ملغي', 'تكلفة الأوردر + الضريبة',
   'نقطة التعادل', 'الإشارة', 'ملاحظة'];
 
-/* Writes blocks [{title, headers, rows}] starting at row `start`, clearing old content below. */
+/*
+ * Writes blocks [{title, headers, rows}] starting at row `start`, in place (never cleared first, so the tab never
+ * shows empty), then clears what's left below. Nothing is written when the blocks are the same as last time.
+ */
 function writeBlocks_(sh, start, blocks, width) {
-  const last = sh.getLastRow();
-  if (last >= start) sh.getRange(start, 1, last - start + 1, Math.max(width, sh.getLastColumn())).clearContent().setBackground(null).setFontWeight('normal').setFontColor('#000000');
-  let r = start;
+  const vals = [], bg = [], fw = [], fc = [], heads = [];
+  const pad = x => { const a = x.slice(0, width); while (a.length < width) a.push(''); return a; };
+  const line = (v, b, w, c) => { vals.push(pad(v)); bg.push(new Array(width).fill(b)); fw.push(new Array(width).fill(w)); fc.push(new Array(width).fill(c)); };
   blocks.forEach(b => {
-    const pad = x => { const a = x.slice(0, width); while (a.length < width) a.push(''); return a; };
-    if (r + b.rows.length + 3 > sh.getMaxRows()) sh.insertRowsAfter(sh.getMaxRows(), b.rows.length + 5);
-    sh.getRange(r, 1, 1, width).setValues([pad([b.title])]).setBackground('#1f2937').setFontColor('#ffffff').setFontWeight('bold');
-    r++;
-    if (b.headers) { sh.getRange(r, 1, 1, width).setValues([pad(b.headers)]).setBackground('#fff200').setFontWeight('bold').setWrap(true); r++; }
-    if (b.rows.length) { sh.getRange(r, 1, b.rows.length, width).setValues(b.rows.map(pad)); r += b.rows.length; }
-    r++;
+    line([b.title], '#1f2937', 'bold', '#ffffff');
+    if (b.headers) { heads.push(vals.length); line(b.headers, '#fff200', 'bold', '#000000'); }
+    b.rows.forEach(r => line(r, null, 'normal', '#000000'));
+    line([], null, 'normal', '#000000');
   });
-  return r;
+  const end = start + vals.length, last = sh.getLastRow(), props = PropertiesService.getDocumentProperties();
+  const key = 'BH_' + sh.getName() + '|' + start, hash = sha_(width + '|' + JSON.stringify(vals));
+  if (props.getProperty(key) === hash && last < end && vals.length && String(sh.getRange(start, 1).getValue()) === String(vals[0][0])) return end;
+  if (end > sh.getMaxRows()) sh.insertRowsAfter(sh.getMaxRows(), end - sh.getMaxRows());
+  if (vals.length) sh.getRange(start, 1, vals.length, width).setValues(vals).setBackgrounds(bg).setFontWeights(fw).setFontColors(fc);
+  heads.forEach(h => sh.getRange(start + h, 1, 1, width).setWrap(true));
+  if (last >= end) sh.getRange(end, 1, last - end + 1, Math.max(width, sh.getLastColumn())).clearContent().setBackground(null).setFontWeight('normal').setFontColor('#000000');
+  props.setProperty(key, hash);
+  return end;
 }
 
 function checksRows_(from, to) {
-  const acc = ss_().getSheetByName(APP.T.ACC_RAW), ads = readRows_(tab_(APP.T.ADS), ADS_HEADERS.length);
+  const acc = ss_().getSheetByName(APP.T.ACC_RAW), ads = rawRows_(APP.T.ADS, ADS_HEADERS.length);
   const adSum = {}, accSum = {};
   ads.forEach(a => { const d = asKey_(a[0]); if (d >= from && d <= to) adSum[a[1]] = (adSum[a[1]] || 0) + num_(a[10]); });
-  if (acc) readRows_(acc, ACC_HEADERS.length).forEach(a => { const d = asKey_(a[0]); if (d >= from && d <= to) accSum[a[1]] = (accSum[a[1]] || 0) + num_(a[4]); });
+  if (acc) rawRows_(APP.T.ACC_RAW, ACC_HEADERS.length).forEach(a => { const d = asKey_(a[0]); if (d >= from && d <= to) accSum[a[1]] = (accSum[a[1]] || 0) + num_(a[4]); });
   const rows = Object.keys(Object.assign({}, adSum, accSum)).map(p => {
     const diff = round2_((accSum[p] || 0) - (adSum[p] || 0));
     return [p + ': صرف الإعلانات / صرف الحساب', round2_(adSum[p] || 0), round2_(accSum[p] || 0),
@@ -205,11 +219,11 @@ function writeClosing_() {
 function writeHealth_() {
   const sh = ensureTab_(APP.T.HEALTH);
   const am = ss_().getSheetByName(APP.T.ADMAP), st = { '❌': 0, '⚠️': 0, '✅': 0 };
-  if (am) readRows_(am, ADMAP_HEADERS.length).forEach(r => { st[r[AM.STATUS]] = (st[r[AM.STATUS]] || 0) + 1; });
+  if (am) rawRows_(APP.T.ADMAP, ADMAP_HEADERS.length).forEach(r => { st[r[AM.STATUS]] = (st[r[AM.STATUS]] || 0) + 1; });
   const o = ss_().getSheetByName(APP.T.ORDERS), unk = { p: 0, pr: 0 };
-  if (o) readRows_(o, ORDERS_HEADERS.length).filter(r => asKey_(r[2]) >= todayKey_().slice(0, 8) + '01')
+  if (o) recentRows_(APP.T.ORDERS, ORDERS_HEADERS.length, 2, sortKey_, todayKey_().slice(0, 8) + '01').filter(r => asKey_(r[2]) >= todayKey_().slice(0, 8) + '01')
     .forEach(r => { if (r[3] === APP.UNKNOWN_PLATFORM) unk.p++; if (r[5] === APP.UNKNOWN_PRODUCT) unk.pr++; });
-  const rows = [['نسخة الكود', APP.VERSION], ['مصدر الأوردرات', cfgStr_('orders.method') === 'pixel' ? '⚠️ مشتريات البيكسل' : cfgStr_('orders.method')], ['أول سحب', getStatus_('BACKFILL')], ['آخر مزامنة كاملة', getStatus_('FULL')], ['آخر تحديث خلال اليوم', getStatus_('LIVE')],
+  const rows = [['نسخة الكود', APP.VERSION], ['مصدر الأوردرات', cfgStr_('orders.method') === 'pixel' ? '⚠️ مشتريات البيكسل' : cfgStr_('orders.method')], ['أول سحب', getStatus_('BACKFILL')], ['آخر مزامنة كاملة', getStatus_('FULL')], ['آخر تحديث خلال اليوم', getStatus_('LIVE')], ['آخر تحديث سريع ⚡', getStatus_('QUICK')],
     ['الأوردرات', getStatus_('ORDERS')], ['أوردرات من غير تاريخ مفهوم', getStatus_('ORDERS_NODATE')], ['ربط الإعلانات', getStatus_('ADMAP')],
     ['إعلانات ❌ / ⚠️ / ✅', st['❌'] + ' / ' + st['⚠️'] + ' / ' + st['✅']],
     ['أوردرات الشهر مش معروف منصتها', unk.p], ['أوردرات الشهر مش معروف منتجها', unk.pr],
@@ -244,8 +258,8 @@ function writeTests_() {
   const sh = ensureTab_(APP.T.TESTS, TESTS_HEADERS);
   if (sh.getLastRow() < 2) return;
   const tests = sh.getRange(2, 1, sh.getLastRow() - 1, TESTS_HEADERS.length).getValues();
-  const ads = readRows_(tab_(APP.T.ADS), ADS_HEADERS.length).map(a => ({ text: norm_([a[5], a[7], a[9]].join(' ')), id: String(a[8]), spend: num_(a[10]), pixel: num_(a[13]) }));
-  const orders = ss_().getSheetByName(APP.T.ORDERS) ? readRows_(tab_(APP.T.ORDERS), ORDERS_HEADERS.length) : [];
+  const ads = rawRows_(APP.T.ADS, ADS_HEADERS.length).map(a => ({ text: norm_([a[5], a[7], a[9]].join(' ')), id: String(a[8]), spend: num_(a[10]), pixel: num_(a[13]) }));
+  const orders = ss_().getSheetByName(APP.T.ORDERS) ? rawRows_(APP.T.ORDERS, ORDERS_HEADERS.length) : [];
   const prods = products_();
   tests.forEach(t => {
     const id = norm_(t[0]);
@@ -262,16 +276,23 @@ function writeTests_() {
 }
 
 /*
- * slow = also the heavy period tabs (Product Performance, Tests, المنتجات, تعادل الحسابات): every 2 days, and from
- * the 📦 menu button. The 15-minute run keeps only what is read during the day light and fresh.
+ * opt.quick (the ⚡ button): Daily Log of the last 3 days + Today, nothing else.
+ * Default (every 15 minutes): + Closing, Health and the catalog tab.
+ * opt.full: the whole Daily Log again (daily run, after a backfill, or when the Ad Map changed in this run),
+ * otherwise only its last 3 days. opt.slow: + the heavy period tabs (Product Performance, Tests, المنتجات,
+ * تعادل الحسابات), every 2 days and from the 📦 menu button.
  */
-function rebuildViews_(slow) {
-  resetCaches_();
-  time_('Daily Log', () => rebuildDaily_());
+function rebuildViews_(opt) {
+  if (!opt || typeof opt !== 'object') opt = { slow: !!opt };
+  CFG_ = null; PRODUCTS_ = null; KNOWN_PRODUCTS_ = null; // settings / products may have changed; the raw tabs' copies stay valid
+  const full = opt.full || opt.slow || ADMAP_CHANGED_;
+  time_('Daily Log', () => rebuildDaily_(full ? '' : shiftKey_(todayKey_(), -2)));
+  ADMAP_CHANGED_ = false;
   time_('Today', () => writeToday_());
+  if (opt.quick) return;
   writeClosing_(); writeHealth_();
-  if (slow) { writePerf_(); writeTests_(); PropertiesService.getDocumentProperties().setProperty('SLOW_VIEWS_AT', String(Date.now())); }
-  EXT.views.forEach(f => { try { f(!!slow); } catch (e) { console.error('ext view: ' + errText_(e)); } });
+  if (opt.slow) { writePerf_(); writeTests_(); PropertiesService.getDocumentProperties().setProperty('SLOW_VIEWS_AT', String(Date.now())); }
+  EXT.views.forEach(f => { try { f(!!opt.slow); } catch (e) { console.error('ext view: ' + errText_(e)); } });
 }
 function slowViewsDue_() {
   const at = Number(PropertiesService.getDocumentProperties().getProperty('SLOW_VIEWS_AT') || 0);

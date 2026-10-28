@@ -39,10 +39,10 @@ function seedTab_(sh, rows, width) {
 function fullSync_(days) {
   resetCaches_();
   const today = todayKey_(), since = shiftKey_(today, -days);
-  syncOrders_();
+  syncOrders_(true); // once a day: the whole orders sheet again
   const r = syncAds_(since, today);
   runLiveExt_();
-  withLock_(() => time_('Views', () => rebuildViews_(slowViewsDue_())));
+  withLock_(() => time_('Views', () => rebuildViews_({ full: true, slow: slowViewsDue_() })));
   setStatus_('FULL', '✓ ' + since + ' → ' + today + ' (' + r.ads + ' صف إعلانات)');
   return r;
 }
@@ -51,7 +51,7 @@ function dailySync() {
   try {
     fullSync_(cfgNum_('sync.refresh_days') || 3);
     PropertiesService.getDocumentProperties().setProperty('SYNCED_THROUGH', shiftKey_(todayKey_(), -1));
-    withLock_(() => refreshAdMap_([], {}, true));
+    updateAdMap_(recentRows_(APP.T.ADS, ADS_HEADERS.length, 1, asKey_, shiftKey_(todayKey_(), -7)), {}, true);
   } catch (e) { setStatus_('FULL', '✗ ' + errText_(e)); console.error(errText_(e)); }
 }
 /*
@@ -92,7 +92,7 @@ function catchUpGap_() {
   let through = asKey_(props.getProperty('SYNCED_THROUGH') || '');
   if (!through) {
     const acc = ss_().getSheetByName(APP.T.ACC_RAW);
-    const days = acc ? readRows_(acc, ACC_HEADERS.length).map(r => asKey_(r[0])).filter(d => d && d < today).sort() : [];
+    const days = acc ? rawRows_(APP.T.ACC_RAW, ACC_HEADERS.length).map(r => asKey_(r[0])).filter(d => d && d < today).sort() : [];
     through = days.length ? shiftKey_(days.pop(), -1) : yest;
   }
   let since = through < yest ? shiftKey_(through, 1) : '';
@@ -142,13 +142,14 @@ function backfillStep() {
       }
       try {
         const meta = fetchMetaAds_(u[1], u[2], u[0]), cat = syncCatalog_(u[1], u[2], u[0]);
+        const plan = adMapPlan_(meta.ads, {}, false), links = plan.ids.length ? fetchMetaLinks_(plan.ids) : {}; // links before the lock
         const w = tryLock_(() => {
           mergeRaw_(APP.T.ADS, ADS_HEADERS, meta.ads, u[1], u[2], meta.accounts, [0, 1, 2, 8], [2, 4, 6, 8]);
           mergeRaw_(APP.T.ACC_RAW, ACC_HEADERS, meta.acc, u[1], u[2], meta.accounts, [0, 1, 2], [2]);
           if (cat) mergeCatalog_(cat.rows, u[1], u[2], cat.keys);
           st.done++; st.tries = 0; save();
           setStatus_('BACKFILL', st.done + ' / ' + st.units.length + ' جزء' + (st.skipped ? ' (اتساب ' + st.skipped.length + ')' : ''));
-          refreshAdMap_(meta.ads, {}, false);
+          if (plan.needed) refreshAdMap_(meta.ads, {}, false, links);
         });
         if (w.skipped) { st.tries = Math.max((st.tries || 1) - 1, 0); save(); busy = true; break; } // busy: same piece next minute
       } catch (e) {
@@ -159,18 +160,18 @@ function backfillStep() {
   }
   if (busy || st.done < st.units.length || Date.now() - start > 3 * 60000) { tryLock_(() => writeHealth_()); return; }
   // Finish: TikTok tab, orders, links still missing, extensions, views.
+  const tt = fetchTikTokTab_(st.since, st.until), ttPlan = adMapPlan_(tt.ads, tt.links, false);
   const r = tryLock_(() => {
-    const tt = fetchTikTokTab_(st.since, st.until);
     mergeRaw_(APP.T.ADS, ADS_HEADERS, tt.ads, st.since, st.until, tt.accounts, [0, 1, 2, 8], [2, 4, 6, 8]);
     mergeRaw_(APP.T.ACC_RAW, ACC_HEADERS, tt.acc, st.since, st.until, tt.accounts, [0, 1, 2], [2]);
-    refreshAdMap_(tt.ads, tt.links, false);
+    if (ttPlan.needed) refreshAdMap_(tt.ads, tt.links, false, {});
     st.finishing = true;
   });
   if (r.skipped || !st.finishing) return;
   try {
     syncOrders_();
     runLiveExt_();
-    withLock_(() => rebuildViews_(slowViewsDue_()));
+    withLock_(() => rebuildViews_({ full: true, slow: slowViewsDue_() }));
     props.deleteProperty('BACKFILL');
     const through = asKey_(props.getProperty('SYNCED_THROUGH') || ''), done = st.until < todayKey_() ? st.until : shiftKey_(todayKey_(), -1);
     if (!through || through < done) props.setProperty('SYNCED_THROUGH', done);
@@ -179,42 +180,76 @@ function backfillStep() {
     setStatus_('FULL', '✓ ' + st.since + ' → ' + st.until);
   } catch (e) { setStatus_('BACKFILL', '✗ ' + errText_(e) + ' — هيحاول تاني بعد دقيقة'); }
 }
-/* Every N minutes: orders, today's ads, views (Today takes the intraday snapshot). Skips quietly if another run is busy. */
 /*
- * Every 15 minutes, and from the 🔄 button (manual = true; a trigger passes an event object instead).
+ * Every 15 minutes, and from the 🔄 button (manual = true; a trigger passes an event object instead):
+ * new orders, today's Meta spend and catalog split, the light extras, then the tabs read during the day.
  * A trigger run skips itself while another run is still going (LIVE_AT). The button waits for the tabs instead of giving up.
  */
 function liveTick(manual) {
   manual = manual === true;
-  const start = Date.now(), took = [], step = (label, fn) => { const t = Date.now(); const v = fn(); took.push(label + ' ' + Math.round((Date.now() - t) / 1000) + 'ث'); return v; };
-  const props = PropertiesService.getDocumentProperties(), busySince = Number(props.getProperty('LIVE_AT') || 0);
-  if (!manual && busySince && start - busySince < 6 * 60000) return;
+  const run = startRun_(manual);
+  if (!run) return;
+  try {
+    step_(run, 'أوردرات', () => syncOrders_());
+    const today = todayKey_();
+    step_(run, 'Meta', () => syncAds_(today, today));
+    if (timeLeft_()) step_(run, 'إضافات', () => runLiveExt_());
+    const r = step_(run, 'تابات', () => tryLock_(() => rebuildViews_({ slow: slowViewsDue_() }), manual ? 120000 : 5000));
+    setStatus_('LIVE', (r.skipped ? 'اتأجل (تحديث تاني شغال)' : '✓ OK') + ' — ' + run.took.join('، '));
+    try { ensureTriggers_(); catchUpGap_(); } catch (e) { console.error('catch-up: ' + errText_(e)); }
+  } catch (e) { setStatus_('LIVE', '✗ ' + errText_(e) + ' — ' + run.took.join('، ')); console.error(errText_(e)); }
+  finally { endRun_(run); }
+}
+/* One update run: marks LIVE_AT so the 15-minute trigger doesn't start on top of it; timings per step. */
+function startRun_(manual) {
+  const props = PropertiesService.getDocumentProperties(), start = Date.now(), busySince = Number(props.getProperty('LIVE_AT') || 0);
+  if (!manual && busySince && start - busySince < 6 * 60000) return null;
   props.setProperty('LIVE_AT', String(start));
   DEADLINE_ = start + 4.5 * 60000;
-  try {
-    resetCaches_();
-    step('أوردرات', () => syncOrders_());
-    const today = todayKey_();
-    step('Meta', () => syncAds_(today, today));
-    if (timeLeft_()) step('إضافات', () => runLiveExt_());
-    const r = step('تابات', () => tryLock_(() => rebuildViews_(slowViewsDue_()), manual ? 120000 : 5000));
-    setStatus_('LIVE', (r.skipped ? 'اتأجل (تحديث تاني شغال)' : '✓ OK') + ' — ' + took.join('، '));
-    try { ensureTriggers_(); catchUpGap_(); } catch (e) { console.error('catch-up: ' + errText_(e)); }
-  } catch (e) { setStatus_('LIVE', '✗ ' + errText_(e) + ' — ' + took.join('، ')); console.error(errText_(e)); }
-  finally { if (props.getProperty('LIVE_AT') === String(start)) props.deleteProperty('LIVE_AT'); }
+  resetCaches_();
+  return { start: start, took: [], props: props };
 }
+function step_(run, label, fn) {
+  const t = Date.now(), v = fn();
+  run.took.push(label + ' ' + Math.round((Date.now() - t) / 1000) + 'ث');
+  return v;
+}
+function endRun_(run) { if (run.props.getProperty('LIVE_AT') === String(run.start)) run.props.deleteProperty('LIVE_AT'); }
 function runLiveExt_() { EXT.live.forEach(f => { try { f(); } catch (e) { console.error('ext live: ' + errText_(e)); } }); }
+
+/* 🔄 Full update now: everything the 15-minute update does. */
 function refreshNow() {
   try {
     liveTick(true);
     const live = getStatus_('LIVE'), bf = PropertiesService.getDocumentProperties().getProperty('BACKFILL');
-    const head = /^✗/.test(live) ? 'التحديث ماكملش:\n'
+    const head = /✗/.test(live) ? 'التحديث ماكملش:\n'
       : /اتأجل/.test(live) ? 'الأرقام اتسحبت، بس في تحديث تلقائي شغال في نفس اللحظة وهو اللي بيكتب التابات. Today هيتحدث خلال دقيقة أو اتنين.\n'
-      : 'اتحدثت أرقام النهارده ✅\n';
+      : 'اتحدث كل حاجة ✅\n';
     alert_(head + live +
       (bf ? '\n\nسحب الشهر شغال في الخلفية (' + getStatus_('BACKFILL') + '). Today بيتحدث لوحده كل 15 دقيقة، مش لازم تدوس تاني.' : ''));
     ss_().setActiveSheet(tab_(APP.T.TODAY));
   } catch (e) { alert_('التحديث ماكملش:\n' + errText_(e)); }
+}
+
+/*
+ * ⚡ Fast update: only today's new orders and today's spend, into Daily Log and Today. No catalog split, benchmark,
+ * running ads or other tabs (the 15-minute update brings those), so it finishes in seconds.
+ */
+function quickRefresh() {
+  const run = startRun_(true);
+  try {
+    step_(run, 'أوردرات', () => syncOrders_());
+    step_(run, 'صرف', () => syncAds_(todayKey_(), todayKey_(), true));
+    step_(run, 'Today', () => withLock_(() => rebuildViews_({ quick: true }), 120000));
+    const secs = Math.round((Date.now() - run.start) / 1000);
+    setStatus_('QUICK', '✓ ' + secs + 'ث — ' + run.took.join('، '));
+    alert_('اتحدث الصرف والأوردرات ✅ في ' + secs + ' ثانية\n' + run.took.join('، ') +
+      '\n\nتقسيم الكتالوج والبنشمارك والإعلانات الشغالة بيتحدثوا لوحدهم كل 15 دقيقة.');
+    ss_().setActiveSheet(tab_(APP.T.TODAY));
+  } catch (e) {
+    setStatus_('QUICK', '✗ ' + errText_(e));
+    alert_('التحديث السريع ماكملش:\n' + errText_(e));
+  } finally { endRun_(run); }
 }
 
 function installTriggers() {
@@ -237,7 +272,8 @@ function onOpen() {
   const ui = SpreadsheetApp.getUi();
   const menu = ui.createMenu('Ads Sheet');
   menu
-    .addItem('🔄 تحديث أرقام النهارده', 'refreshNow')
+    .addItem('⚡ تحديث سريع (الصرف والأوردرات)', 'quickRefresh')
+    .addItem('🔄 تحديث كامل', 'refreshNow')
     .addItem('🔗 تحديث ربط الإعلانات بالمنتجات', 'refreshAdMapNow');
   EXT.menu.forEach(m => menu.addItem(m[0], m[1]));
   menu.addSeparator()

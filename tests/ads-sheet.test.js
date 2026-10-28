@@ -37,7 +37,10 @@ function env(options) {
       const t = JSON.parse(decodeURIComponent(url.match(/time_range=([^&]+)/)[1]));
       return { data: ((opt.catalog || {})[id] || []).filter(r => r.date_start >= t.since && r.date_start <= t.until) };
     }
-    if (/\/insights\?/.test(url) && /level=ad&/.test(url)) return { data: ads[id] || [] };
+    if (/\/insights\?/.test(url) && /level=ad&/.test(url)) { // strictRange: زي Meta بالظبط، الفترة اللي اتطلبت بس
+      const t = JSON.parse(decodeURIComponent(url.match(/time_range=([^&]+)/)[1]));
+      return { data: (ads[id] || []).filter(r => !opt.strictRange || (r.date_start >= t.since && r.date_start <= t.until)) };
+    }
     if (/\/insights\?/.test(url) && !/time_increment/.test(url)) { // تاب Today: الفانل لكل حساب في فترة
       const t = JSON.parse(decodeURIComponent(url.match(/time_range=([^&]+)/)[1])), mine = (ads[id] || []).filter(r => r.date_start >= t.since && r.date_start <= t.until);
       if (!mine.length) return { data: [] };
@@ -468,4 +471,63 @@ test('التحديث التلقائي مابيشتغلش فوق تحديث تا�
   e.c.liveTick(true); // من الزرار
   assert.match(e.c.getStatus_('LIVE'), /✓ OK/);
   assert.equal(e.doc.LIVE_AT, undefined, 'العلامة بتتشال بعد ما يخلص');
+});
+
+test('الأوردرات: التحديث بيقرا الجديد بس من شيت الأوردرات، والقراية الكاملة مرة في اليوم', () => {
+  const probe = env(), today = probe.c.todayKey_(), yest = probe.c.shiftKey_(today, -1);
+  const iso = (day, m) => day + 'T' + String(10 + Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0') + ':00+03:00';
+  const old = Array.from({ length: 650 }, (_, i) => ['#' + (1000 + i), iso(yest, i % 600), 'Lip Oil x1', 300, '', 'Cairo', 'fb', 'Camp', '']);
+  const e = env({ ads: { [A1]: [adRow(today, '111', 600)] }, orders: old });
+  e.c.setupAll();
+  e.c.liveTick(); // أول مرة: الشيت كله
+  const raw = () => e.ss.getSheetByName('Orders Raw').getDataRange().getValues().slice(1);
+  assert.equal(raw().length, 650);
+  const flow = e.source.getSheetByName('orders');
+  flow.getRange(2, 4).setValue(999); // أوردر قديم اتعدل (برا آخر 600 صف)
+  flow.appendRow(['#2000', today + 'T09:00:00+03:00', 'Lip Oil x1', 300, '', 'Cairo', 'fb', 'Camp', '']);
+  e.c.liveTick();
+  assert.equal(raw().length, 651, 'الأوردر الجديد اتضاف');
+  assert.equal(raw().find(r => r[0] === '#1000')[7], 300, 'الصفوف القديمة ماتقريتش تاني');
+  assert.equal(raw()[0][0], '#2000', 'الأحدث فوق');
+  e.c.dailySync(); // مرة في اليوم: الشيت كله
+  assert.equal(raw().find(r => r[0] === '#1000')[7], 999);
+  assert.equal(raw().length, 651);
+});
+
+test('التحديث مابيكتبش تاني حاجة ماتغيرتش، و Today مابيتمسحش', () => {
+  const probe = env(), today = probe.c.todayKey_(), d = n => probe.c.shiftKey_(today, -n);
+  const e = env({ strictRange: true, ads: { [A1]: [adRow(d(10), '111', 100), adRow(d(5), '111', 200), adRow(today, '111', 600), adRow(today, '222', 50)] },
+    creatives: { 111: 'https://chance-cosmetics.com/products/lip-oil', 222: 'https://chance-cosmetics.com/products/lip-oil' } });
+  e.c.setupAll();
+  e.c.fullSync_(14);
+  e.c.liveTick();
+  const w = n => e.ss.getSheetByName(n).writes;
+  const before = { today: w('Today'), ads: w('Ads Raw'), map: w('Ad Map') };
+  const ads = e.ss.getSheetByName('Ads Raw').getDataRange().getValues();
+  assert.equal(ads.length, 5);
+  e.c.liveTick();
+  assert.ok(w('Today') - before.today <= 1, 'Today: خانة Last Update بس');
+  assert.equal(w('Ad Map'), before.map, 'Ad Map ماتغيرش');
+  assert.ok(w('Ads Raw') - before.ads <= 2 * 15, 'Ads Raw: صفوف النهارده بس');
+  assert.deepEqual(e.ss.getSheetByName('Ads Raw').getDataRange().getValues(), ads, 'الأيام القديمة زي ما هي');
+  const v = e.ss.getSheetByName('Today').getDataRange().getValues();
+  assert.equal(v.find(r => r[0] === 'META TOTAL')[2], 650);
+  const daily = e.ss.getSheetByName('Daily Log').getDataRange().getValues().slice(1);
+  assert.deepEqual(daily.map(r => [r[0], r[3]]), [[today, 650], [d(5), 200], [d(10), 100]]);
+});
+
+test('⚡ التحديث السريع: الصرف والأوردرات في Today من غير الكتالوج والحاجات التقيلة', () => {
+  const probe = env(), today = probe.c.todayKey_();
+  const rows = [adRow(today, '111', 600)];
+  const e = env({ ads: { [A1]: rows }, creatives: { 111: 'https://chance-cosmetics.com/products/lip-oil' } });
+  e.c.setupAll();
+  e.c.liveTick();
+  rows[0].spend = '850';
+  e.requests.length = 0;
+  e.c.quickRefresh();
+  const v = e.ss.getSheetByName('Today').getDataRange().getValues();
+  assert.equal(v.find(r => r[0] === 'META TOTAL')[2], 850);
+  assert.ok(!e.requests.some(u => /breakdowns=product_id|\/ads\?/.test(u)), 'مفيش كتالوج ولا إعلانات شغالة');
+  assert.match(e.alerts.pop(), /اتحدث الصرف والأوردرات ✅/);
+  assert.match(e.c.getStatus_('QUICK'), /✓/);
 });

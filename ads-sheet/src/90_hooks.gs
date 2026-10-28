@@ -31,7 +31,7 @@ function chanceEdit_(name, a1) {
 function refreshProductsNow() {
   try {
     resetCaches_(); chanceLive_();
-    withLock_(() => { rebuildViews_(true); });
+    withLock_(() => { rebuildViews_({ full: true, slow: true }); });
     alert_('اتحدثت المنتجات والستوك ✅\nالستوك: ' + getStatus_('STOCK') + '\nالإعلانات الشغالة: ' + getStatus_('ACTIVE'));
     ss_().setActiveSheet(tab_(X.PRODUCTS));
   } catch (e) { alert_('التحديث ماكملش:\n' + errText_(e)); }

@@ -60,39 +60,47 @@ function fetchTikTokTab_(since, until) {
   return { ads: ads, acc: Object.keys(accSum).map(k => accSum[k]), accounts: accs, links: links };
 }
 
-/* Replace [since..until] for the synced accounts; keep everything else. */
+/*
+ * Replace [since..until] for the synced accounts; keep everything else. The tab stays sorted newest day first, so
+ * only the rows of those days are read and written (writeSortedBlock_), never the whole history.
+ */
 function mergeRaw_(sheetName, headers, fresh, since, until, accountKeys, keyCols, idIdx) {
-  const sh = ensureTab_(sheetName, headers), cols = headers.length, synced = new Set(accountKeys);
-  const out = [], seen = new Set();
-  const add = r => {
-    const k = keyCols.map(i => String(r[i])).join('|');
-    if (seen.has(k)) return;
-    seen.add(k); out.push(r);
-  };
-  fresh.forEach(add);
-  readRows_(sh, cols).forEach(r => {
-    r[0] = asKey_(r[0]);
-    if (!r[0]) return;
-    idIdx.forEach(i => { r[i] = String(r[i]); });
-    if (r[0] >= since && r[0] <= until && synced.has(r[1] + '|' + r[2])) return;
-    add(r);
-  });
-  out.sort((a, b) => (a[0] < b[0] ? 1 : a[0] > b[0] ? -1 : num_(b[headers.indexOf('Spend')]) - num_(a[headers.indexOf('Spend')])));
-  writeRows_(sh, out, cols, [1].concat(idIdx.map(i => i + 1)));
-  return out.length;
+  const sh = ensureTab_(sheetName, headers), cols = headers.length, synced = new Set(accountKeys), spend = headers.indexOf('Spend');
+  const sortFn = (a, b) => (a[0] < b[0] ? 1 : a[0] > b[0] ? -1 : num_(b[spend]) - num_(a[spend]));
+  fresh.forEach(r => { if (r[0] < since) since = r[0]; if (r[0] > until) until = r[0]; }); // never outside, but stay safe
+  return writeSortedBlock_(sh, cols, 1, asKey_, since, until, old => {
+    const out = [], seen = new Set();
+    const add = r => {
+      const k = keyCols.map(i => String(r[i])).join('|');
+      if (seen.has(k)) return;
+      seen.add(k); out.push(r);
+    };
+    fresh.forEach(add);
+    old.forEach(r => {
+      r[0] = asKey_(r[0]);
+      if (!r[0]) return;
+      idIdx.forEach(i => { r[i] = String(r[i]); });
+      if (synced.has(r[1] + '|' + r[2])) return;
+      add(r);
+    });
+    return out.sort(sortFn);
+  }, [1].concat(idIdx.map(i => i + 1)), sortFn);
 }
 
-/* Read everything first (no lock), then write inside the lock. */
-function syncAds_(since, until) {
+/*
+ * Read everything first (no lock), then write inside the lock: only the pulled days change (mergeRaw_).
+ * quick = spend only (the ⚡ button): no catalog split, which the 15-minute update brings.
+ */
+function syncAds_(since, until, quick) {
   const meta = time_('Meta — قراءة', () => fetchMetaAds_(since, until));
   const tt = time_('TikTok — قراءة', () => fetchTikTokTab_(since, until));
-  const cat = time_('Meta كتالوج — قراءة', () => syncCatalog_(since, until));
+  const cat = quick ? null : time_('Meta كتالوج — قراءة', () => syncCatalog_(since, until));
   const ads = meta.ads.concat(tt.ads), acc = meta.acc.concat(tt.acc), keys = meta.accounts.concat(tt.accounts);
-  return withLock_(() => {
+  withLock_(() => {
     mergeRaw_(APP.T.ADS, ADS_HEADERS, ads, since, until, keys, [0, 1, 2, 8], [2, 4, 6, 8]);
     mergeRaw_(APP.T.ACC_RAW, ACC_HEADERS, acc, since, until, keys, [0, 1, 2], [2]);
     if (cat) mergeCatalog_(cat.rows, since, until, cat.keys);
-    time_('Ad Map', () => refreshAdMap_(ads, tt.links, false));
-    return { ads: ads.length, since: since, until: until };
   });
+  time_('Ad Map', () => updateAdMap_(ads, tt.links, false));
+  return { ads: ads.length, since: since, until: until };
 }

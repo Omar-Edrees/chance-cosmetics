@@ -98,13 +98,103 @@ function readRows_(sh, cols) {
   if (last < 2) return [];
   return sh.getRange(2, 1, last - 1, cols).getValues().filter(r => r.some(v => v !== '' && v !== null));
 }
-/* Replace all data rows. textCols: 1-based columns forced to text before writing (IDs, dates). */
-function writeRows_(sh, rows, cols, textCols) {
+/*
+ * Rows of a tab, read once per run: Ads Raw, Orders Raw, Ad Map... are read by many views, and each read of a big tab
+ * costs seconds. Every write through writeRows_ / writeSortedBlock_ drops the copy. Don't change the rows you get.
+ */
+let RAW_ = {};
+function rawRows_(name, cols) {
+  const k = name + '|' + cols;
+  if (!RAW_[k]) { const sh = ss_().getSheetByName(name); RAW_[k] = sh ? readRows_(sh, cols) : []; }
+  return RAW_[k];
+}
+function dropRaw_(name) { Object.keys(RAW_).forEach(k => { if (k.split('|')[0] === name) delete RAW_[k]; }); }
+/*
+ * Rows of a newest-first tab (Ads Raw, Orders Raw, Catalog Raw, Daily Log) down to key `since`: read from the top in
+ * chunks and stop at the first older row, so "this month" never reads the whole history.
+ */
+function recentRows_(name, cols, keyCol, keyFn, since) {
+  const all = RAW_[name + '|' + cols];
+  if (all) return all.filter(r => keyFn(r[keyCol - 1]) >= since);
+  const k = name + '|' + cols + '|' + keyCol + '|' + since;
+  if (RAW_[k]) return RAW_[k];
+  const sh = ss_().getSheetByName(name), out = [];
+  RAW_[k] = out;
+  if (!sh) return out;
   const last = sh.getLastRow();
+  for (let r = 2; r <= last; r += 1000) {
+    const part = sh.getRange(r, 1, Math.min(1000, last - r + 1), cols).getValues();
+    for (const x of part) {
+      const key = keyFn(x[keyCol - 1]);
+      if (!key) continue;
+      if (key < since) return out;
+      out.push(x);
+    }
+  }
+  return out;
+}
+
+/*
+ * Replace all data rows. textCols: 1-based columns forced to text before writing (IDs, dates).
+ * Nothing is written when the rows are the same as last time, and old rows are overwritten in place (never cleared
+ * first), so a tab never shows empty while it updates. Returns true if it wrote.
+ */
+function writeRows_(sh, rows, cols, textCols) {
+  dropRaw_(sh.getName());
+  const last = sh.getLastRow(), props = PropertiesService.getDocumentProperties(), key = 'WH_' + sh.getName();
+  const hash = sha_(cols + '|' + JSON.stringify(rows));
+  if (props.getProperty(key) === hash && last === (rows.length ? rows.length + 1 : Math.min(last, 1))) return false;
   if (rows.length + 1 > sh.getMaxRows()) sh.insertRowsAfter(sh.getMaxRows(), rows.length + 1 - sh.getMaxRows());
   (textCols || []).forEach(c => sh.getRange(2, c, Math.max(rows.length, 1), 1).setNumberFormat('@'));
   if (rows.length) sh.getRange(2, 1, rows.length, cols).setValues(rows);
   if (last > rows.length + 1) sh.getRange(rows.length + 2, 1, last - rows.length - 1, cols).clearContent();
+  props.setProperty(key, hash);
+  return true;
+}
+
+/* Sortable text of a key cell: yyyy-MM-dd, or yyyy-MM-dd HH:mm for a date-time. */
+function sortKey_(v) {
+  if (v instanceof Date) return isNaN(v) ? '' : Utilities.formatDate(v, tz_(), 'yyyy-MM-dd HH:mm');
+  return String(v === null || v === undefined ? '' : v).trim();
+}
+/*
+ * A tab sorted newest first by column keyCol (1-based, its text from keyFn): replace only the rows whose key is in [lo..hi].
+ * block(oldRows) gets the rows now in that range and returns the new ones (sorted the same way). Rows are inserted
+ * or deleted around the block, so an update of today reads and writes today only, not months of history.
+ * A tab that isn't sorted yet (old versions) is rewritten whole once, through block(all rows in range) + the rest.
+ */
+function writeSortedBlock_(sh, cols, keyCol, keyFn, lo, hi, block, textCols, sortFn) {
+  dropRaw_(sh.getName());
+  PropertiesService.getDocumentProperties().deleteProperty('WH_' + sh.getName());
+  const last = sh.getLastRow();
+  const keys = last >= 2 ? sh.getRange(2, keyCol, last - 1, 1).getValues().map(r => keyFn(r[0])) : [];
+  const inRange = k => k >= lo && k <= hi;
+  if (!keys.every((k, i) => k && (i === 0 || keys[i - 1] >= k))) {
+    const all = readRows_(sh, cols).filter(r => keyFn(r[keyCol - 1])), k = r => keyFn(r[keyCol - 1]);
+    const out = block(all.filter(r => inRange(k(r)))).concat(all.filter(r => !inRange(k(r))));
+    if (sortFn) out.sort(sortFn);
+    writeRows_(sh, out, cols, textCols);
+    return out.length;
+  }
+  let a = 0;
+  while (a < keys.length && keys[a] > hi) a++;
+  let e = a;
+  while (e < keys.length && keys[e] >= lo) e++;
+  const start = 2 + a, L = e - a, old = L ? sh.getRange(start, 1, L, cols).getValues() : [];
+  const out = block(old), N = out.length;
+  if (N > L) {
+    sh.insertRowsAfter(start + L - 1, N - L);
+    sh.getRange(start, 1, N, cols).setFontWeight('normal').setBackground(null).setFontColor('#000000'); // not the header's look
+  }
+  if (N < L) {
+    if (sh.getMaxRows() - (L - N) >= 2) sh.deleteRows(start + N, L - N);
+    else sh.getRange(start + N, 1, L - N, cols).clearContent();
+  }
+  if (N) {
+    (textCols || []).forEach(c => sh.getRange(start, c, N, 1).setNumberFormat('@'));
+    sh.getRange(start, 1, N, cols).setValues(out);
+  }
+  return keys.length - L + N;
 }
 function setStatus_(key, msg) { PropertiesService.getDocumentProperties().setProperty('STATUS_' + key, nowText_() + '  ' + msg); }
 function getStatus_(key) { return PropertiesService.getDocumentProperties().getProperty('STATUS_' + key) || 'لسه ما اشتغلش'; }
@@ -113,4 +203,4 @@ function errText_(e) {
   const t = String(e && e.message ? e.message : e), tok = PropertiesService.getUserProperties().getProperty('META_TOKEN');
   return tok ? t.split(tok).join('[مخفي]') : t;
 }
-function resetCaches_() { CFG_ = null; PRODUCTS_ = null; KNOWN_PRODUCTS_ = null; }
+function resetCaches_() { CFG_ = null; PRODUCTS_ = null; KNOWN_PRODUCTS_ = null; RAW_ = {}; }

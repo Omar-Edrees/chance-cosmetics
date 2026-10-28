@@ -47,7 +47,7 @@ function knownProducts_() {
   const known = new Map();
   products_().forEach(p => { known.set(norm_(p.name), p.name); p.aliases.forEach(a => { if (!known.has(a)) known.set(a, p.name); }); });
   const osh = ss_().getSheetByName(APP.T.ORDERS);
-  if (osh) readRows_(osh, ORDERS_HEADERS.length).forEach(o => {
+  if (osh) recentRows_(APP.T.ORDERS, ORDERS_HEADERS.length, 2, sortKey_, shiftKey_(todayKey_(), -90)).forEach(o => {
     lineItems_(o[6]).forEach(li => { const n = norm_(li.title); if (n && !known.has(n)) known.set(n, li.title.trim()); });
   });
   KNOWN_PRODUCTS_ = known;
@@ -75,7 +75,7 @@ function catalogProduct_(name) {
 /* "META|adId" of every catalog / Advantage+ ad (any ad Meta ever split by product). */
 function catalogAdIds_() {
   const sh = ss_().getSheetByName(APP.T.CATALOG), ids = new Set();
-  if (sh) readRows_(sh, 4).forEach(r => { if (r[3]) ids.add(r[1] + '|' + String(r[3])); });
+  if (sh) rawRows_(APP.T.CATALOG, CATALOG_HEADERS.length).forEach(r => { if (r[3]) ids.add(r[1] + '|' + String(r[3])); });
   return ids;
 }
 
@@ -85,13 +85,13 @@ function catalogAdIds_() {
  * TOTAL = all spend of catalog ads, the same number as the CATALOG row in Today.
  */
 function writeCatalogTab_() {
-  const sh = ensureTab_(X.CATALOG), g = todayGrid_(), today = todayKey_(), catAds = catalogAdIds_();
+  const sh = ensureTab_(X.CATALOG), g = todayGrid_(), today = todayKey_(), catAds = catalogAdIds_(), month0 = today.slice(0, 8) + '01';
   const split = [], csh = ss_().getSheetByName(APP.T.CATALOG);
-  if (csh) readRows_(csh, CATALOG_HEADERS.length).forEach(r => split.push([asKey_(r[0]), catalogProduct_(r[4]), num_(r[5]), num_(r[6])]));
+  if (csh) recentRows_(APP.T.CATALOG, CATALOG_HEADERS.length, 1, asKey_, month0).forEach(r => split.push([asKey_(r[0]), catalogProduct_(r[4]), num_(r[5]), num_(r[6])]));
   const adSpend = [];
-  readRows_(tab_(APP.T.ADS), ADS_HEADERS.length).forEach(a => { if (catAds.has(a[1] + '|' + String(a[8]))) adSpend.push([asKey_(a[0]), num_(a[10])]); });
+  recentRows_(APP.T.ADS, ADS_HEADERS.length, 1, asKey_, month0).forEach(a => { if (catAds.has(a[1] + '|' + String(a[8]))) adSpend.push([asKey_(a[0]), num_(a[10])]); });
   const orders = [], osh = ss_().getSheetByName(APP.T.ORDERS);
-  if (osh) readRows_(osh, ORDERS_HEADERS.length).forEach(o => {
+  if (osh) recentRows_(APP.T.ORDERS, ORDERS_HEADERS.length, 2, sortKey_, month0).forEach(o => {
     if (o[14] && catAds.has(o[3] + '|' + String(o[14]))) orders.push([asKey_(o[2]), o[5], num_(o[7])]);
   });
   const p = today.split('-').map(Number), noon = new Date(Date.UTC(p[0], p[1] - 1, p[2], 12));
@@ -122,7 +122,7 @@ function writeCatalogTab_() {
   };
   let r = table(1, 'CATALOG — TODAY | ' + Utilities.formatDate(noon, 'UTC', 'dd-MMM-yyyy'), today, today) + 1;
   table(r, 'CATALOG — THIS MONTH | ' + Utilities.formatDate(noon, 'UTC', 'MMM-yyyy'), today.slice(0, 8) + '01', today);
-  writeGrid_(sh, g);
+  if (!writeGrid_(sh, g)) return;
   [[1, 360], [2, 90], [3, 120], [4, 100], [5, 90], [6, 160]].forEach(w => sh.setColumnWidth(w[0], w[1]));
 }
 

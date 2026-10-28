@@ -28,7 +28,7 @@ function writeProductsTab_() {
   // Units and orders per product from Orders Raw.
   const units = {}, ordersWith = {}, units7 = {};
   const osh = ss_().getSheetByName(APP.T.ORDERS);
-  if (osh) readRows_(osh, ORDERS_HEADERS.length).forEach(o => {
+  if (osh) rawRows_(APP.T.ORDERS, ORDERS_HEADERS.length).forEach(o => {
     const d = asKey_(o[2]);
     if (!d) return;
     const seen = new Set();

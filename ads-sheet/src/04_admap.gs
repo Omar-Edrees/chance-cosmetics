@@ -102,10 +102,46 @@ function fetchMetaLinks_(adIds) {
 }
 
 /*
+ * What an update needs from the Ad Map: {needed, ids}. needed = an ad that spent isn't in the map (or was renamed),
+ * an Override was typed or removed, a TikTok link changed, or links are still unread; recheckAll (daily) always.
+ * ids = Meta ads whose links to read.
+ */
+function adMapPlan_(freshAds, tiktokLinks, recheckAll) {
+  const rows = rawRows_(APP.T.ADMAP, ADMAP_HEADERS.length), byKey = new Map(), ids = new Set(), weekAgo = shiftKey_(todayKey_(), -7);
+  let needed = !!recheckAll;
+  rows.forEach(r => byKey.set(adKey_(r[AM.PLAT], String(r[AM.ID]), r[AM.CAMP], r[AM.SET], r[AM.AD]), r));
+  freshAds.forEach(a => {
+    if (num_(a[10]) <= 0 && num_(a[11]) <= 0) return;
+    const r = byKey.get(adKey_(a[1], String(a[8] || ''), a[5], a[7], a[9]));
+    if (!r) { needed = true; if (a[1] === 'META' && a[8]) ids.add(String(a[8])); return; }
+    if (String(r[AM.CAMP]) !== String(a[5]) || String(r[AM.SET]) !== String(a[7]) || String(r[AM.AD]) !== String(a[9]) ||
+      !r[AM.LAST] || asKey_(r[AM.LAST]) < a[0]) needed = true;
+  });
+  rows.forEach(r => {
+    if (String(r[AM.OVR] || '').trim() !== String(r[AM.CONF_VAL] || '')) needed = true;
+    if (r[AM.PLAT] === 'META' && r[AM.ID] && (!r[AM.LINKS] || (recheckAll && asKey_(r[AM.LAST]) >= weekAgo))) { needed = true; ids.add(String(r[AM.ID])); }
+    if (r[AM.PLAT] === 'TIKTOK' && tiktokLinks && tiktokLinks[r[AM.ID]] && tiktokLinks[r[AM.ID]] !== r[AM.LINKS]) needed = true;
+  });
+  return { needed: needed, ids: Array.from(ids) };
+}
+/*
+ * Updates the Ad Map only when something changed for it, and reads the Meta links before taking the lock,
+ * so a slow link read never makes the other updates wait. Returns the number of ads, or false if nothing to do.
+ */
+function updateAdMap_(freshAds, tiktokLinks, recheckAll) {
+  const plan = adMapPlan_(freshAds, tiktokLinks, recheckAll);
+  if (!plan.needed) return false;
+  const links = plan.ids.length && accounts_('META').length ? time_('لينكات الإعلانات', () => fetchMetaLinks_(plan.ids)) : {};
+  return withLock_(() => refreshAdMap_(freshAds, tiktokLinks, recheckAll, links));
+}
+
+/*
  * freshAds: Ads Raw rows just pulled. tiktokLinks: {adId: url}. recheckAll: re-read links of every
  * ad that spent in the last 7 days (daily run), otherwise only ads not in the map yet.
+ * links: Meta links already read ({adId: {links, error}}); without it they are read here.
  */
-function refreshAdMap_(freshAds, tiktokLinks, recheckAll) {
+let ADMAP_CHANGED_ = false;
+function refreshAdMap_(freshAds, tiktokLinks, recheckAll, links) {
   const sh = ensureTab_(APP.T.ADMAP, ADMAP_HEADERS), W = ADMAP_HEADERS.length;
   const rows = readRows_(sh, W), byKey = new Map();
   rows.forEach(r => { r[AM.ID] = String(r[AM.ID]); r[AM.ACC] = String(r[AM.ACC]); byKey.set(adKey_(r[AM.PLAT], r[AM.ID], r[AM.CAMP], r[AM.SET], r[AM.AD]), r); });
@@ -126,7 +162,7 @@ function refreshAdMap_(freshAds, tiktokLinks, recheckAll) {
     if (r[AM.PLAT] === 'TIKTOK' && tiktokLinks && tiktokLinks[r[AM.ID]]) r[AM.LINKS] = tiktokLinks[r[AM.ID]];
   });
   if (needMeta.length && accounts_('META').length) {
-    const got = fetchMetaLinks_(needMeta);
+    const got = links || fetchMetaLinks_(needMeta);
     byKey.forEach(r => {
       const g = got[r[AM.ID]];
       if (!g) return;
@@ -137,7 +173,7 @@ function refreshAdMap_(freshAds, tiktokLinks, recheckAll) {
 
   // Spend this month per ad, from Ads Raw (after merge).
   const monthStart = todayKey_().slice(0, 8) + '01', spend = {};
-  readRows_(tab_(APP.T.ADS), ADS_HEADERS.length).forEach(a => {
+  recentRows_(APP.T.ADS, ADS_HEADERS.length, 1, asKey_, monthStart).forEach(a => {
     const d = asKey_(a[0]);
     if (d < monthStart) return;
     const k = adKey_(a[1], String(a[8] || ''), a[5], a[7], a[9]);
@@ -180,7 +216,8 @@ function refreshAdMap_(freshAds, tiktokLinks, recheckAll) {
   const order = { '❌': 0, '⚠️': 1, '✅': 2 }, out = Array.from(byKey.values())
     .sort((a, b) => (order[a[AM.STATUS]] - order[b[AM.STATUS]]) || (num_(b[AM.SPEND]) - num_(a[AM.SPEND])))
     .map(r => r.slice(0, W));
-  writeRows_(sh, out, W, [1, 3, 15, 17]);
+  if (!writeRows_(sh, out, W, [1, 3, 4, 5, 6, 7, 15, 17, 19])) return out.length; // same as before: nothing to redraw
+  ADMAP_CHANGED_ = true;
   const n = Math.max(out.length, 1);
   sh.getRange(2, AM.OVR + 1, n, 1).setDataValidation(SpreadsheetApp.newDataValidation()
     .requireValueInList(products_().map(p => p.name).concat(['MULTI']), true).setAllowInvalid(true).build()).setBackground('#fff2cc');
@@ -198,7 +235,7 @@ function refreshAdMap_(freshAds, tiktokLinks, recheckAll) {
 function adMapIndex_() {
   const sh = ss_().getSheetByName(APP.T.ADMAP), idx = new Map();
   if (!sh) return idx;
-  readRows_(sh, ADMAP_HEADERS.length).forEach(r => {
+  rawRows_(APP.T.ADMAP, ADMAP_HEADERS.length).forEach(r => {
     const final = String(r[AM.FINAL] || APP.UNMAPPED);
     idx.set(adKey_(r[AM.PLAT], String(r[AM.ID]), r[AM.CAMP], r[AM.SET], r[AM.AD]),
       { product: final, exact: r[AM.STATUS] === '✅' && final !== APP.MULTI && final !== APP.UNMAPPED });
@@ -209,7 +246,7 @@ function adMapIndex_() {
 function refreshAdMapNow() {
   try {
     resetCaches_();
-    const n = withLock_(() => refreshAdMap_([], {}, true));
+    const n = updateAdMap_(recentRows_(APP.T.ADS, ADS_HEADERS.length, 1, asKey_, shiftKey_(todayKey_(), -7)), {}, true);
     alert_('اتحدث ربط الإعلانات ✅ (' + n + ' إعلان)\nراجع الأحمر والأصفر في تاب ' + APP.T.ADMAP + '.');
     ss_().setActiveSheet(tab_(APP.T.ADMAP));
   } catch (e) { alert_('ربط الإعلانات ماكملش:\n' + errText_(e)); }

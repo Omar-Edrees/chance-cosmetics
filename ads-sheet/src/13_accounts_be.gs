@@ -24,7 +24,7 @@ function writeAccountsBE_() {
   const accs = new Map();
   accounts_().forEach(a => accs.set(a.platform + '|' + a.id, { key: a.platform + '|' + a.id, platform: a.platform, name: a.name || a.id, purpose: a.purpose }));
   const cell = {}, add = (k, d, f, v) => { const c = cell[k + '|' + d] = cell[k + '|' + d] || { spend: 0, pixel: 0, pval: 0, orders: 0, revenue: 0 }; c[f] += v; };
-  readRows_(tab_(APP.T.ADS), ADS_HEADERS.length).forEach(a => {
+  rawRows_(APP.T.ADS, ADS_HEADERS.length).forEach(a => {
     const d = asKey_(a[0]);
     if (d < from || d > to) return;
     const k = a[1] + '|' + String(a[2]);
@@ -33,12 +33,12 @@ function writeAccountsBE_() {
   });
   // Orders → account: Ad ID in UTM (exact) → Ad Map account; else the only account of that platform; else "مش معروف الحساب".
   const adAcc = {}, am = ss_().getSheetByName(APP.T.ADMAP);
-  if (am) readRows_(am, ADMAP_HEADERS.length).forEach(r => { if (r[AM.ID]) adAcc[String(r[AM.ID])] = r[AM.PLAT] + '|' + String(r[AM.ACC]); });
+  if (am) rawRows_(APP.T.ADMAP, ADMAP_HEADERS.length).forEach(r => { if (r[AM.ID]) adAcc[String(r[AM.ID])] = r[AM.PLAT] + '|' + String(r[AM.ACC]); });
   const byPlat = {};
   accs.forEach(a => { (byPlat[a.platform] = byPlat[a.platform] || []).push(a.key); });
   let storeOrders = 0, storeRev = 0, attributed = 0;
   const osh = ss_().getSheetByName(APP.T.ORDERS);
-  if (osh) readRows_(osh, ORDERS_HEADERS.length).forEach(o => {
+  if (osh) rawRows_(APP.T.ORDERS, ORDERS_HEADERS.length).forEach(o => {
     const d = asKey_(o[2]);
     if (d < from || d > to) return;
     storeOrders++; storeRev += num_(o[7]);

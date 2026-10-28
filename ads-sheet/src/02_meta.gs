@@ -113,9 +113,9 @@ function discoverAccounts_() {
   if (props.getProperty('ACC_DISCOVER_DAY') === today) return; // once a day
   props.setProperty('ACC_DISCOVER_DAY', today);
   const known = new Set();
-  readRows_(ash, ADS_HEADERS.length).forEach(a => { [a[4], a[6], a[8]].forEach(x => { if (x) known.add(String(x)); }); });
+  metaIdsOf_().forEach(x => known.add(x));
   const ids = new Set();
-  readRows_(osh, ORDERS_HEADERS.length).forEach(o => {
+  recentRows_(APP.T.ORDERS, ORDERS_HEADERS.length, 2, sortKey_, weekAgo).forEach(o => {
     if (o[3] !== 'META' || o[14] || asKey_(o[2]) < weekAgo) return;
     ([o[11], o[12], o[13]].join(' ').match(/\d{15,}/g) || []).forEach(x => { if (!known.has(x)) ids.add(x); });
   });

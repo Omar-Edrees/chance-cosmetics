@@ -72,7 +72,7 @@ function openOrderSheet_() {
   }
   const sh = book.getSheetByName(tabName);
   if (!sh) throw new Error('تاب الأوردرات مش موجود: ' + tabName);
-  return { sheet: sh, tz: book.getSpreadsheetTimeZone() };
+  return { sheet: sh, tz: book.getSpreadsheetTimeZone(), id: book.getId() + '|' + tabName };
 }
 
 /* Decide d/m order once for the whole column; never guess per row. */
@@ -135,19 +135,30 @@ function productOfOrder_(raw) {
   return part.length === 1 ? part[0].name : t.trim();
 }
 
-function readOrderSource_() {
+/*
+ * The store sheet only grows at the bottom (Flow appends a row per order). So a normal update reads the new rows plus
+ * the last ORDERS.OVERLAP rows (their ads may have been linked since), not the whole sheet. full = read everything
+ * (once a day, or when the sheet / its columns changed). Returns {rows (newest first), full, state} or null.
+ */
+const ORDERS = { OVERLAP: 600 };
+function readOrderSource_(full) {
   const src = openOrderSheet_();
-  if (!src) return [];
-  const values = src.sheet.getDataRange().getValues();
-  if (values.length < 2) return [];
-  const head = ensureFlowHeaders_(src.sheet, values[0].map(v => String(v).trim())), c = orderColumns_(head);
+  if (!src) return null;
+  const L = src.sheet.getLastRow(), W = Math.max(src.sheet.getLastColumn(), 1);
+  if (L < 2) return { rows: [], full: true, state: null };
+  const head = ensureFlowHeaders_(src.sheet, src.sheet.getRange(1, 1, 1, W).getValues()[0].map(v => String(v).trim())), c = orderColumns_(head);
   if (c.order_id < 0 || c.date < 0) throw new Error('شيت الأوردرات ناقص فيه عمود رقم الأوردر أو التاريخ. راجع orders.col.* في Settings.');
-  const rows = values.slice(1), fmt = detectDateFormat_(rows, c.date), get = (r, k) => (c[k] >= 0 ? orderCell_(r[c[k]]) : '');
-  const adIds = new Set(); const am = ss_().getSheetByName(APP.T.ADMAP);
-  if (am) readRows_(am, 1).forEach(r => adIds.add(String(r[0])));
+  let st = null;
+  try { st = JSON.parse(PropertiesService.getDocumentProperties().getProperty('ORDERS_SRC') || 'null'); } catch (e) { st = null; }
+  if (!st || st.id !== src.id || st.head !== head.join('|') || !st.fmt || L < st.rows) full = true;
+  const from = full ? 2 : Math.max(2, Math.min(st.rows + 1, L - ORDERS.OVERLAP + 1));
+  const rows = src.sheet.getRange(from, 1, L - from + 1, W).getValues(), fmt = full ? detectDateFormat_(rows, c.date) : st.fmt;
+  const get = (r, k) => (c[k] >= 0 ? orderCell_(r[c[k]]) : '');
+  const adIds = new Set();
+  rawRows_(APP.T.ADMAP, ADMAP_HEADERS.length).forEach(r => adIds.add(String(r[0])));
   // UTMs with names instead of IDs (utm_source = campaign name, utm_campaign = ad name): the ad from Ads Raw.
-  const byName = new Map(), ash = ss_().getSheetByName(APP.T.ADS);
-  if (ash) readRows_(ash, ADS_HEADERS.length).forEach(a => {
+  const byName = new Map();
+  (full ? rawRows_(APP.T.ADS, ADS_HEADERS.length) : recentRows_(APP.T.ADS, ADS_HEADERS.length, 1, asKey_, shiftKey_(todayKey_(), -60))).forEach(a => {
     const k = norm_(a[5]) + '|' + norm_(a[9]);
     if (a[8] && !byName.has(k)) byName.set(k, String(a[8]));
   });
@@ -174,25 +185,46 @@ function readOrderSource_() {
       city: String(get(r, 'city') || '').trim(), phone: phone10_(get(r, 'phone')), alt: phone10_(get(r, 'alt_phone')),
       cancelled: cancelWords.some(w => w && hasToken_(norm_(get(r, 'status')), w)) });
   });
-  if (noDate) setStatus_('ORDERS_NODATE', noDate + ' صف من غير تاريخ مفهوم');
-  return Array.from(byId.values()).map(o => {
+  if (noDate && full) setStatus_('ORDERS_NODATE', noDate + ' صف من غير تاريخ مفهوم');
+  const out = Array.from(byId.values()).map(o => {
     const pl = platformOf_(o.utms.filter(Boolean), o.referrer, o.source);
     const adId = (o.utms.join(' ').match(/\d{10,}/g) || []).find(x => adIds.has(x)) || byName.get(norm_(o.utms[0]) + '|' + norm_(o.utms[1])) || '';
     return [o.id, Utilities.formatDate(o.dt, tz_(), 'yyyy-MM-dd HH:mm'), dayKey_(o.dt), pl.p, pl.s, productOfOrder_(o.raw),
       o.raw.replace(/\s+/g, ' ').slice(0, 1000), o.total, o.city, o.phone ? '0' + o.phone : '', o.alt ? '0' + o.alt : '',
       o.utms[0], o.utms[1], o.utms[2], adId, o.cancelled];
   }).sort((a, b) => (a[1] < b[1] ? 1 : -1));
+  return { rows: out, full: full, state: { id: src.id, head: head.join('|'), fmt: fmt, rows: L } };
 }
 
-function syncOrders_() {
-  const rows = time_('الأوردرات — قراءة', () => readOrderSource_());
-  const hash = sha_(JSON.stringify(rows));
-  const props = PropertiesService.getDocumentProperties();
-  if (props.getProperty('ORDERS_HASH') === hash) return { orders: rows.length, changed: false };
+/*
+ * Orders Raw stays sorted newest first. A normal update replaces only the orders it just read (the newest block);
+ * a full read (full = true, daily) rewrites the tab, and nothing is written when nothing changed.
+ */
+function syncOrders_(full) {
+  const res = time_('الأوردرات — قراءة', () => readOrderSource_(full));
+  if (!res) return { orders: 0, changed: false };
+  const props = PropertiesService.getDocumentProperties(), key = res.full ? 'ORDERS_HASH' : 'ORDERS_TAIL_HASH';
+  const hash = sha_(JSON.stringify(res.rows)), save = () => { if (res.state) props.setProperty('ORDERS_SRC', JSON.stringify(res.state)); };
+  if (props.getProperty(key) === hash && ss_().getSheetByName(APP.T.ORDERS)) { save(); return { orders: res.rows.length, changed: false }; }
+  let total = res.rows.length;
   withLock_(() => {
-    writeRows_(ensureTab_(APP.T.ORDERS, ORDERS_HEADERS), rows, ORDERS_HEADERS.length, [1, 2, 3, 10, 11, 15]);
-    props.setProperty('ORDERS_HASH', hash);
+    const sh = ensureTab_(APP.T.ORDERS, ORDERS_HEADERS), text = [1, 2, 3, 10, 11, 15], byCreated = (a, b) => (sortKey_(a[1]) < sortKey_(b[1]) ? 1 : -1);
+    if (res.full) writeRows_(sh, res.rows, ORDERS_HEADERS.length, text);
+    else if (res.rows.length) {
+      const fresh = new Map(res.rows.map(r => [String(r[0]), r]));
+      total = writeSortedBlock_(sh, ORDERS_HEADERS.length, 2, sortKey_, sortKey_(res.rows[res.rows.length - 1][1]), '9999', old => {
+        const out = res.rows.slice();
+        old.forEach(r => {
+          const f = fresh.get(String(r[0]));
+          if (!f) out.push(r); else f[7] = Math.max(num_(f[7]), num_(r[7])); // an order split over rows: highest total
+        });
+        return out.sort(byCreated);
+      }, text, byCreated);
+    }
+    props.setProperty(key, hash);
+    if (res.full) props.deleteProperty('ORDERS_TAIL_HASH');
+    save();
   });
-  setStatus_('ORDERS', '✓ ' + rows.length + ' أوردر');
-  return { orders: rows.length, changed: true };
+  setStatus_('ORDERS', '✓ ' + total + ' أوردر' + (res.full ? '' : ' (اتقرا الجديد بس)'));
+  return { orders: total, changed: true };
 }
