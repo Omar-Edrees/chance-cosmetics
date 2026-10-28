@@ -458,3 +458,14 @@ test('أوردرات من حساب Meta مش معانا: صف لوحدها بر�
     ['TOTAL META PRODUCT PERFORMANCE', 2, '', 2],
   ]);
 });
+
+test('التحديث التلقائي مابيشتغلش فوق تحديث تاني لسه شغال، وزرار 🔄 بيكمّل', () => {
+  const e = env();
+  e.c.setupAll();
+  e.doc.LIVE_AT = String(Date.now() - 60000);
+  e.c.liveTick({ triggerUid: '1' }); // من التريجر
+  assert.doesNotMatch(e.c.getStatus_('LIVE'), /OK|اتأجل/, 'اتساب للتحديث اللي شغال');
+  e.c.liveTick(true); // من الزرار
+  assert.match(e.c.getStatus_('LIVE'), /✓ OK/);
+  assert.equal(e.doc.LIVE_AT, undefined, 'العلامة بتتشال بعد ما يخلص');
+});

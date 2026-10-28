@@ -11,11 +11,11 @@ function withLock_(fn, waitMs) {
   LOCK_DEPTH_++;
   try { return fn(); } finally { LOCK_DEPTH_--; lock.releaseLock(); }
 }
-/* For triggers: skip quietly if busy; the next run catches up. */
-function tryLock_(fn) {
+/* For triggers: skip quietly if busy (after waitMs, default 5s); the next run catches up. */
+function tryLock_(fn, waitMs) {
   if (LOCK_DEPTH_) return { skipped: false, value: fn() };
   const lock = LockService.getScriptLock();
-  if (!lock.tryLock(5000)) return { skipped: true };
+  if (!lock.tryLock(waitMs || 5000)) return { skipped: true };
   LOCK_DEPTH_++;
   try { return { skipped: false, value: fn() }; } finally { LOCK_DEPTH_--; lock.releaseLock(); }
 }

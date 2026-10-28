@@ -180,8 +180,16 @@ function backfillStep() {
   } catch (e) { setStatus_('BACKFILL', '✗ ' + errText_(e) + ' — هيحاول تاني بعد دقيقة'); }
 }
 /* Every N minutes: orders, today's ads, views (Today takes the intraday snapshot). Skips quietly if another run is busy. */
-function liveTick() {
+/*
+ * Every 15 minutes, and from the 🔄 button (manual = true; a trigger passes an event object instead).
+ * A trigger run skips itself while another run is still going (LIVE_AT). The button waits for the tabs instead of giving up.
+ */
+function liveTick(manual) {
+  manual = manual === true;
   const start = Date.now(), took = [], step = (label, fn) => { const t = Date.now(); const v = fn(); took.push(label + ' ' + Math.round((Date.now() - t) / 1000) + 'ث'); return v; };
+  const props = PropertiesService.getDocumentProperties(), busySince = Number(props.getProperty('LIVE_AT') || 0);
+  if (!manual && busySince && start - busySince < 6 * 60000) return;
+  props.setProperty('LIVE_AT', String(start));
   DEADLINE_ = start + 4.5 * 60000;
   try {
     resetCaches_();
@@ -189,17 +197,21 @@ function liveTick() {
     const today = todayKey_();
     step('Meta', () => syncAds_(today, today));
     if (timeLeft_()) step('إضافات', () => runLiveExt_());
-    const r = step('تابات', () => tryLock_(() => rebuildViews_(slowViewsDue_())));
+    const r = step('تابات', () => tryLock_(() => rebuildViews_(slowViewsDue_()), manual ? 120000 : 5000));
     setStatus_('LIVE', (r.skipped ? 'اتأجل (تحديث تاني شغال)' : '✓ OK') + ' — ' + took.join('، '));
     try { ensureTriggers_(); catchUpGap_(); } catch (e) { console.error('catch-up: ' + errText_(e)); }
   } catch (e) { setStatus_('LIVE', '✗ ' + errText_(e) + ' — ' + took.join('، ')); console.error(errText_(e)); }
+  finally { if (props.getProperty('LIVE_AT') === String(start)) props.deleteProperty('LIVE_AT'); }
 }
 function runLiveExt_() { EXT.live.forEach(f => { try { f(); } catch (e) { console.error('ext live: ' + errText_(e)); } }); }
 function refreshNow() {
   try {
-    liveTick();
+    liveTick(true);
     const live = getStatus_('LIVE'), bf = PropertiesService.getDocumentProperties().getProperty('BACKFILL');
-    alert_((/اتأجل|✗/.test(live) ? 'التحديث ماكملش دلوقتي:\n' : 'اتحدثت أرقام النهارده ✅\n') + live +
+    const head = /^✗/.test(live) ? 'التحديث ماكملش:\n'
+      : /اتأجل/.test(live) ? 'الأرقام اتسحبت، بس في تحديث تلقائي شغال في نفس اللحظة وهو اللي بيكتب التابات. Today هيتحدث خلال دقيقة أو اتنين.\n'
+      : 'اتحدثت أرقام النهارده ✅\n';
+    alert_(head + live +
       (bf ? '\n\nسحب الشهر شغال في الخلفية (' + getStatus_('BACKFILL') + '). Today بيتحدث لوحده كل 15 دقيقة، مش لازم تدوس تاني.' : ''));
     ss_().setActiveSheet(tab_(APP.T.TODAY));
   } catch (e) { alert_('التحديث ماكملش:\n' + errText_(e)); }
