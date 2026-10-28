@@ -18,9 +18,18 @@ const COL_ALTS = {
   total: ['Order Total Cost', 'Total Price', 'Total', 'السعر'],
   city: ['City', 'Shipping City', 'Province', 'المحافظة'],
   utm_source: ['UTM Source', 'utm_source'], utm_campaign: ['UTM Campaign', 'utm_campaign'],
-  utm_content: ['UTM Content', 'utm_content'], referrer: ['Referrer', 'Landing Site Ref'],
+  utm_content: ['UTM Content', 'utm_content'], referrer: ['Referrer', 'Order Referrer', 'Landing Site Ref'],
+  // Shopify Flow columns from the COD form's order attributes (the visit UTMs are empty for form orders).
+  attr_utm_source: ['Attr UTM Source'], attr_utm_campaign: ['Attr UTM Campaign'], attr_utm_content: ['Attr UTM Content'],
   metadata: ['Order Metadata'], status: ['Status', 'Financial Status', 'Cancelled At']
 };
+
+/* Shopify Flow writes "(blank)" for an empty value. */
+function orderCell_(v) {
+  if (typeof v !== 'string') return v;
+  const s = v.trim();
+  return /^(\(blank\)|blank|null|undefined|-)$/i.test(s) ? '' : s;
+}
 
 function orderColumns_(head) {
   const idx = {};
@@ -79,8 +88,9 @@ function platformOf_(utms, referrer) {
   const text = norm_(utms.join(' ')), tk = cfgList_('attribution.tiktok_markers').map(norm_),
     me = cfgList_('attribution.meta_markers').map(norm_);
   const isTk = tk.some(t => hasToken_(text, t)), isMe = me.some(t => hasToken_(text, t));
-  const ref = String(referrer || '').toLowerCase(), refP = /tiktok\./.test(ref) ? 'TIKTOK'
-    : /(facebook\.|instagram\.|fb\.com|threads\.)/.test(ref) ? 'META' : '';
+  // A referrer URL (facebook.com/…) or the COD form's word (Facebook, Instagram, Direct(…)).
+  const ref = String(referrer || '').toLowerCase(), refP = /tiktok/.test(ref) ? 'TIKTOK'
+    : /(facebook|instagram|fb\.com|threads\.|messenger)/.test(ref) ? 'META' : '';
   if (isTk && isMe) return refP ? { p: refP, s: 'referrer' } : { p: APP.UNKNOWN_PLATFORM, s: 'utm_conflict' };
   if (isTk) return { p: 'TIKTOK', s: 'utm' };
   if (isMe) return { p: 'META', s: 'utm' };
@@ -108,7 +118,7 @@ function readOrderSource_() {
   if (values.length < 2) return [];
   const head = values[0].map(v => String(v).trim()), c = orderColumns_(head);
   if (c.order_id < 0 || c.date < 0) throw new Error('شيت الأوردرات ناقص فيه عمود رقم الأوردر أو التاريخ. راجع orders.col.* في Settings.');
-  const rows = values.slice(1), fmt = detectDateFormat_(rows, c.date), get = (r, k) => (c[k] >= 0 ? r[c[k]] : '');
+  const rows = values.slice(1), fmt = detectDateFormat_(rows, c.date), get = (r, k) => (c[k] >= 0 ? orderCell_(r[c[k]]) : '');
   const adIds = new Set(); const am = ss_().getSheetByName(APP.T.ADMAP);
   if (am) readRows_(am, 1).forEach(r => adIds.add(String(r[0])));
   const cancelWords = cfgList_('orders.cancelled_words').map(norm_);
@@ -119,7 +129,7 @@ function readOrderSource_() {
     if (!id) return;
     const dt = parseOrderDate_(get(r, 'date'), fmt, src.tz);
     if (!dt) { noDate++; return; }
-    const utms = ['utm_source', 'utm_campaign', 'utm_content'].map(k => String(get(r, k) || '').trim());
+    const utms = ['utm_source', 'utm_campaign', 'utm_content'].map(k => String(get(r, 'attr_' + k) || get(r, k) || '').trim());
     const meta = String(get(r, 'metadata') || ''), refM = meta.match(/referrer\s*:\s*([^\s\]]+)/i);
     const referrer = String(get(r, 'referrer') || '') || (refM ? refM[1] : '');
     const total = num_(get(r, 'total'));

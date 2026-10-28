@@ -74,3 +74,29 @@ function metaConnect() {
     ui.alert('اتربط ✅ واتأكدت من ' + accs.length + ' حساب.');
   } catch (e) { ui.alert('التوكن اتحفظ، بس فيه حساب مش متاح:\n' + errText_(e)); }
 }
+
+/*
+ * Accounts tab Name ← the account's name in Meta, once a day. A name typed by hand stays: only an empty cell,
+ * the setup placeholder ("Meta 4660") or the name written here last time is replaced.
+ */
+function refreshAccountNames_() {
+  const props = PropertiesService.getDocumentProperties(), today = todayKey_();
+  if (props.getProperty('ACC_NAMES_DAY') === today) return;
+  const sh = ss_().getSheetByName(APP.T.ACCOUNTS);
+  if (!sh || sh.getLastRow() < 2) return;
+  let auto = {}, failed = false;
+  try { auto = JSON.parse(props.getProperty('ACC_NAMES_AUTO') || '{}'); } catch (e) { auto = {}; }
+  sh.getRange(2, 1, sh.getLastRow() - 1, 3).getValues().forEach((r, i) => {
+    const id = String(r[1]).replace(/^act_/i, '').trim(), cur = String(r[2] || '').trim();
+    if (String(r[0]).trim().toUpperCase() !== 'META' || !id) return;
+    if (cur && !/^Meta \d{4}$/.test(cur) && cur !== auto[id]) return;
+    try {
+      const name = String(metaGet_('act_' + id, { fields: 'name' }).name || '').trim();
+      if (!name) return;
+      if (name !== cur) sh.getRange(i + 2, 3).setValue(name);
+      auto[id] = name;
+    } catch (e) { failed = true; console.error('اسم الحساب ' + id + ': ' + errText_(e)); }
+  });
+  props.setProperty('ACC_NAMES_AUTO', JSON.stringify(auto));
+  if (!failed) props.setProperty('ACC_NAMES_DAY', today);
+}

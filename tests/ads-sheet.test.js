@@ -5,7 +5,9 @@ const { FakeSpreadsheet } = require('./fake-google');
 
 /* نفس ID شيت الأوردرات اللي في 00_profile.gs */
 const ORDERS_ID = '15rkiOnnON-nobcGxq1ct5tHnocrvS79f454xkQQg6Ys';
-const A1 = '1354948596094660', A2 = '1443770363884823';
+const A1 = '1354948596094660', A2 = '1443770363884823', A3 = '1980884485605243';
+/* أسامي الحسابات في Meta */
+const NAMES = { [A1]: 'Chance 26', [A2]: 'Chance Golden Era', [A3]: 'chance store . egy3' };
 const ORDER_HEAD = ['Order ID', 'Created At', 'Products', 'Total Price', 'Phone', 'City', 'UTM Source', 'UTM Campaign', 'UTM Content'];
 const STOCK_HEAD = ['Product ID', 'Variant ID', 'Product', 'Variant', 'SKU', 'Handle', 'Stock', 'Price'];
 
@@ -25,7 +27,7 @@ function env(options) {
   active.setActiveSheet = () => {};
   const source = new FakeSpreadsheet('Chance orders', ORDERS_ID);
   source.getSpreadsheetTimeZone = () => 'Africa/Cairo';
-  source.addSheet('orders', [ORDER_HEAD].concat(opt.orders || []));
+  source.addSheet('orders', [opt.orderHead || ORDER_HEAD].concat(opt.orders || []));
   source.addSheet('stock', [STOCK_HEAD].concat(opt.stock || []));
   const ads = opt.ads || {}, creatives = opt.creatives || {}, activeAds = opt.activeAds || {};
   const reply = url => {
@@ -48,7 +50,7 @@ function env(options) {
     if (/\/ads\?/.test(url)) return { data: (activeAds[id] || []).map(x => ({ id: x })) };
     const adId = (url.match(/\/v[\d.]+\/(\d+)\?/) || [])[1];
     if (adId && creatives[adId]) return { creative: { object_story_spec: { link_data: { link: creatives[adId] } } } };
-    return { id: 'act_' + id };
+    return { id: 'act_' + id, name: (opt.names || NAMES)[id] };
   };
   const response = url => { const body = reply(url); return { getResponseCode: () => 200, getContentText: () => JSON.stringify(body) }; };
   const c = load('ads-sheet', {
@@ -132,7 +134,7 @@ test('Today: صف لكل حساب بأرقام المنصة، والإجمالي
     ['PLATFORM', 'AD', 'AMOUNT', 'ORDERS', 'CPP', 'ROAS']);
   const all = tab.getDataRange().getValues().map(r => r.slice(0, 6));
   assert.ok(!all.flat().some(v => /14%|ضريبة/.test(String(v))), 'مفيش 14% في الجدول');
-  const acc1 = all.find(r => r[1] === 'Meta 4660'), acc2 = all.find(r => r[1] === 'Meta 4823'), acc3 = all.find(r => r[1] === 'Meta 5243');
+  const acc1 = all.find(r => r[1] === 'Chance 26'), acc2 = all.find(r => r[1] === 'Chance Golden Era'), acc3 = all.find(r => r[1] === 'chance store . egy3');
   assert.deepEqual(acc1.slice(2), [1000, 4, 250, 1.8]);
   assert.deepEqual(acc2.slice(2), [100, 2, 50, 9]);
   assert.deepEqual(acc3.slice(2), [0, 0, '', '']);
@@ -161,7 +163,7 @@ test('Today: لقطات الـ 3 ساعات من تاب Intraday، مع CPP و R
 test('Today: بنشمارك Meta، متوسط آخر 60 يوم مقابل كل حساب النهارده', () => {
   const e = scenario(), values = e.ss.getSheetByName('Today').getDataRange().getValues();
   const head = values.find(r => r[7] === 'METRIC');
-  assert.deepEqual(head.slice(7, 12), ['METRIC', 'AVERAGE (LAST 60 DAYS)', 'Meta 4660', 'Meta 4823', 'Meta 5243']);
+  assert.deepEqual(head.slice(7, 12), ['METRIC', 'AVERAGE (LAST 60 DAYS)', 'Chance 26', 'Chance Golden Era', 'chance store . egy3']);
   const cpm = values.find(r => r[7] === 'CPM'), cpp = values.find(r => r[7] === 'Cost per purchase');
   // المتوسط من آخر 60 يوم قبل النهارده: إعلان واحد امبارح صرف 300 على 1000 ظهور
   assert.deepEqual(cpm.slice(7, 12), ['CPM', 300, 500, 100, '—']);
@@ -240,4 +242,50 @@ test('نقطة التعادل للأوردر (COD)', () => {
   const p = { price: 300, cost: 100, shipping: 50, other: 10, confirm: 0.8, delivery: 0.75 };
   assert.equal(Math.round(e.c.breakEven_(p) * 100) / 100, 0.8 * (0.75 * 200 - 50 - 10));
   assert.equal(e.c.breakEven_(Object.assign({}, p, { cost: null })), null);
+});
+
+test('أسامي الحسابات من Meta، والاسم اللي اتكتب بالإيد بيفضل', () => {
+  const e = env();
+  e.c.setupAll();
+  const acc = e.ss.getSheetByName('Accounts');
+  acc.getRange(3, 3).setValue('حسابي');
+  e.c.refreshAccountNames_();
+  assert.deepEqual(acc.getRange(2, 3, 4, 1).getValues().map(r => r[0]), ['Chance 26', 'حسابي', 'chance store . egy3', 'TikTok']);
+  // الاسم اتغير في Meta: الاسم اللي الشيت كتبه بيتغير معاه، والمكتوب بالإيد لأ (مرة في اليوم)
+  e.doc.ACC_NAMES_DAY = '';
+  NAMES[A1] = 'Chance 26 New';
+  try { e.c.refreshAccountNames_(); } finally { NAMES[A1] = 'Chance 26'; }
+  assert.equal(acc.getRange(2, 3).getValue(), 'Chance 26 New');
+  assert.equal(acc.getRange(3, 3).getValue(), 'حسابي');
+});
+
+/* شيت الأوردرات زي ما Shopify Flow بيكتبه، ومعاه أعمدة فورم الكاش أون ديليفري */
+const FLOW_HEAD = ['Order ID', 'Order Number', 'Customer Name', 'Customer Email', 'Total Price', 'Created At', 'UTM Source', 'UTM Medium',
+  'UTM Campaign', 'UTM Content', 'UTM Term', 'Attr UTM Source', 'Attr UTM Campaign', 'Attr UTM Content', 'Order Referrer', 'Products'];
+
+test('أوردرات Flow: "(blank)" فاضي، والمصدر من بيانات الفورم، والمنتجات من عمود Products', () => {
+  const AD = '120256366885940102', probe = env(), today = probe.c.todayKey_(), at = hm => ' ' + today + 'T' + hm + ':00+03:00';
+  const B = '(blank)', flow = (id, hm, total, a, products) => ['gid://shopify/Order/' + id, ' #' + id, ' Name', B, total, at(hm), B, B, B, B, B]
+    .concat(a, [products]);
+  const e = env({ orderHead: FLOW_HEAD, ads: { [A1]: [adRow(today, AD, 600)] },
+    creatives: { [AD]: 'https://chance-cosmetics.com/products/lip-oil' },
+    stock: [['P1', 'V1', 'Lip Oil', 'Default Title', 'LO', 'lip-oil', 40, 300]],
+    orders: [
+      flow(1, '10:00', 434, ['facebook', '120256366878570102', AD, 'Instagram'], 'Lip Oil x1'),
+      flow(2, '10:30', 907, ['Black F | CBO', 'Reels | Product Show', 'fb', 'Facebook'], 'Lip Oil x1 | Blush x1'),
+      flow(3, '11:00', 1513, [B, B, B, 'Direct(Chancestoreegy)'], 'Blush x1'),
+      flow(4, '11:30', 534, ['', '', '', ''], 'Lip Oil x2'),
+    ] });
+  e.c.setupAll();
+  e.c.liveTick();
+  e.c.liveTick();
+  const raw = e.ss.getSheetByName('Orders Raw').getDataRange().getValues().slice(1);
+  const by = id => raw.find(r => r[0] === 'gid://shopify/Order/' + id);
+  assert.deepEqual([1, 2, 3, 4].map(id => by(id)[3]), ['META', 'META', 'UNKNOWN', 'UNKNOWN']);
+  assert.equal(by(1)[14], AD);
+  assert.equal(by(2)[5], 'Lip Oil');
+  const meta = todayRow(e, 'META TOTAL'), grand = todayRow(e, 'GRAND TOTAL');
+  assert.deepEqual(meta.slice(2, 6), [600, 2, 300, 2.24]);
+  assert.equal(grand[3], 4);
+  assert.match(String(grand[1]), /منهم 2 أوردر مش معروف مصدره/);
 });
