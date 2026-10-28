@@ -11,7 +11,7 @@
  * Ad accounts and stores are read-only from here: no writes to Meta, TikTok or order sources.
  */
 const APP = {
-  VERSION: '1.10.0',
+  VERSION: '1.11.0',
   T: {
     SETTINGS: 'Settings', ACCOUNTS: 'Accounts', PRODUCTS: 'Products', ADMAP: 'Ad Map',
     ADS: 'Ads Raw', ACC_RAW: 'Account Raw', ORDERS: 'Orders Raw', DAILY: 'Daily Log',
@@ -657,9 +657,9 @@ function decideProduct_(links, camp, set, ad) {
 }
 
 function fetchMetaLinks_(adIds) {
-  const out = {};
+  const out = {}, stop = Date.now() + 60000; // at most a minute per run: many new ads (after a backfill) finish over the next runs
   for (let i = 0; i < adIds.length; i += 25) {
-    if (!timeLeft_()) break; // the rest stay blank and are read next run
+    if (!timeLeft_() || Date.now() > stop) break; // the rest stay blank and are read next run
     const chunk = adIds.slice(i, i + 25);
     const res = metaMany_(chunk.map(id => ({ path: id, params: {
       fields: 'creative{object_story_spec,asset_feed_spec,object_url,link_url,effective_object_story_id}' } })));
@@ -1245,11 +1245,21 @@ function writeTests_() {
   sh.getRange(2, 1, tests.length, TESTS_HEADERS.length).setValues(tests);
 }
 
-function rebuildViews_() {
+/*
+ * slow = also the heavy period tabs (Product Performance, Tests, المنتجات, تعادل الحسابات). The 15-minute run does
+ * them once an hour at most and only with time to spare, so it never hits Apps Script's 6-minute limit.
+ */
+function rebuildViews_(slow) {
   resetCaches_();
-  rebuildDaily_();
-  writeToday_(); writePerf_(); writeClosing_(); writeTests_(); writeHealth_();
-  EXT.views.forEach(f => { try { f(); } catch (e) { console.error('ext view: ' + errText_(e)); } });
+  time_('Daily Log', () => rebuildDaily_());
+  time_('Today', () => writeToday_());
+  writeClosing_(); writeHealth_();
+  if (slow) { writePerf_(); writeTests_(); PropertiesService.getDocumentProperties().setProperty('SLOW_VIEWS_AT', String(Date.now())); }
+  EXT.views.forEach(f => { try { f(!!slow); } catch (e) { console.error('ext view: ' + errText_(e)); } });
+}
+function slowViewsDue_() {
+  const at = Number(PropertiesService.getDocumentProperties().getProperty('SLOW_VIEWS_AT') || 0);
+  return Date.now() - at > 60 * 60000 && (!DEADLINE_ || DEADLINE_ - Date.now() > 150000);
 }
 
 /* Simple trigger: changing the period cells refreshes that view only. */
@@ -1307,7 +1317,7 @@ function fullSync_(days) {
   syncOrders_();
   const r = syncAds_(since, today);
   runLiveExt_();
-  withLock_(() => time_('Views', () => rebuildViews_()));
+  withLock_(() => time_('Views', () => rebuildViews_(true)));
   setStatus_('FULL', '✓ ' + since + ' → ' + today + ' (' + r.ads + ' صف إعلانات)');
   return r;
 }
@@ -1389,7 +1399,7 @@ function backfillStep() {
   const r = tryLock_(() => {
     resetCaches_();
     const save = () => props.setProperty('BACKFILL', JSON.stringify(st));
-    while (st.done < st.units.length && Date.now() - start < 2 * 60000) {
+    while (st.done < st.units.length && Date.now() - start < 90000) {
       const u = st.units[st.done];
       // A piece that keeps dying (6-minute limit, Meta error) is split into single days, then skipped, never repeated forever.
       st.tries = (st.tries || 0) + 1; save();
@@ -1430,7 +1440,7 @@ function backfillStep() {
   try {
     syncOrders_();
     runLiveExt_();
-    withLock_(() => rebuildViews_());
+    withLock_(() => rebuildViews_(true));
     props.deleteProperty('BACKFILL');
     const through = asKey_(props.getProperty('SYNCED_THROUGH') || ''), done = st.until < todayKey_() ? st.until : shiftKey_(todayKey_(), -1);
     if (!through || through < done) props.setProperty('SYNCED_THROUGH', done);
@@ -1441,17 +1451,18 @@ function backfillStep() {
 }
 /* Every N minutes: orders, today's ads, views (Today takes the intraday snapshot). Skips quietly if another run is busy. */
 function liveTick() {
-  DEADLINE_ = Date.now() + 5 * 60000;
+  const start = Date.now(), took = [], step = (label, fn) => { const t = Date.now(); const v = fn(); took.push(label + ' ' + Math.round((Date.now() - t) / 1000) + 'ث'); return v; };
+  DEADLINE_ = start + 4.5 * 60000;
   try {
     resetCaches_();
-    syncOrders_();
+    step('أوردرات', () => syncOrders_());
     const today = todayKey_();
-    syncAds_(today, today);
-    runLiveExt_();
-    const r = tryLock_(() => rebuildViews_());
-    setStatus_('LIVE', r.skipped ? 'اتأجل (تحديث تاني شغال)' : '✓ OK');
+    step('Meta', () => syncAds_(today, today));
+    if (timeLeft_()) step('إضافات', () => runLiveExt_());
+    const r = step('تابات', () => tryLock_(() => rebuildViews_(slowViewsDue_())));
+    setStatus_('LIVE', (r.skipped ? 'اتأجل (تحديث تاني شغال)' : '✓ OK') + ' — ' + took.join('، '));
     try { ensureTriggers_(); catchUpGap_(); } catch (e) { console.error('catch-up: ' + errText_(e)); }
-  } catch (e) { setStatus_('LIVE', '✗ ' + errText_(e)); console.error(errText_(e)); }
+  } catch (e) { setStatus_('LIVE', '✗ ' + errText_(e) + ' — ' + took.join('، ')); console.error(errText_(e)); }
 }
 function runLiveExt_() { EXT.live.forEach(f => { try { f(); } catch (e) { console.error('ext live: ' + errText_(e)); } }); }
 function refreshNow() {
@@ -2346,7 +2357,7 @@ function chanceLive_() {
   try { if (autoAddProducts_()) withLock_(() => refreshAdMap_([], {}, false)); } catch (e) { setStatus_('STOCK', '✗ ' + errText_(e)); }
   try { refreshActive_(); } catch (e) { setStatus_('ACTIVE', '✗ ' + errText_(e)); }
 }
-function chanceViews_() { writeCatalogTab_(); writeProductsTab_(); writeAccountsBE_(); }
+function chanceViews_(slow) { writeCatalogTab_(); if (slow) { writeProductsTab_(); writeAccountsBE_(); } }
 function chanceEdit_(name, a1) {
   if (name === X.PRODUCTS && (a1 === 'B2' || a1 === 'B3')) writeProductsTab_();
   if (name === X.ACC_BE && a1 === 'B2') writeAccountsBE_();
@@ -2354,7 +2365,7 @@ function chanceEdit_(name, a1) {
 function refreshProductsNow() {
   try {
     resetCaches_(); chanceLive_();
-    withLock_(() => { rebuildViews_(); });
+    withLock_(() => { rebuildViews_(true); });
     alert_('اتحدثت المنتجات والستوك ✅\nالستوك: ' + getStatus_('STOCK') + '\nالإعلانات الشغالة: ' + getStatus_('ACTIVE'));
     ss_().setActiveSheet(tab_(X.PRODUCTS));
   } catch (e) { alert_('التحديث ماكملش:\n' + errText_(e)); }
@@ -2364,7 +2375,7 @@ function refreshProductsNow() {
  * views: after the core views are rebuilt (inside the lock). edit: onEdit(e). setup: inside setupAll's lock.
  * live: after ads sync, before views (outside the lock, for reads). menu: [label, functionName]. */
 const EXT = {
-  views: [() => chanceViews_()],
+  views: [slow => chanceViews_(slow)],
   edit: [(name, a1) => chanceEdit_(name, a1)],
   setup: [() => chanceSetup_()],
   live: [() => refreshAccountNames_(), () => discoverAccounts_(), () => chanceLive_(), () => refreshTodayFunnel_()],

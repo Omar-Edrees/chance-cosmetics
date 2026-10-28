@@ -19,7 +19,7 @@ function chanceLive_() {
   try { if (autoAddProducts_()) withLock_(() => refreshAdMap_([], {}, false)); } catch (e) { setStatus_('STOCK', '✗ ' + errText_(e)); }
   try { refreshActive_(); } catch (e) { setStatus_('ACTIVE', '✗ ' + errText_(e)); }
 }
-function chanceViews_() { writeCatalogTab_(); writeProductsTab_(); writeAccountsBE_(); }
+function chanceViews_(slow) { writeCatalogTab_(); if (slow) { writeProductsTab_(); writeAccountsBE_(); } }
 function chanceEdit_(name, a1) {
   if (name === X.PRODUCTS && (a1 === 'B2' || a1 === 'B3')) writeProductsTab_();
   if (name === X.ACC_BE && a1 === 'B2') writeAccountsBE_();
@@ -27,7 +27,7 @@ function chanceEdit_(name, a1) {
 function refreshProductsNow() {
   try {
     resetCaches_(); chanceLive_();
-    withLock_(() => { rebuildViews_(); });
+    withLock_(() => { rebuildViews_(true); });
     alert_('اتحدثت المنتجات والستوك ✅\nالستوك: ' + getStatus_('STOCK') + '\nالإعلانات الشغالة: ' + getStatus_('ACTIVE'));
     ss_().setActiveSheet(tab_(X.PRODUCTS));
   } catch (e) { alert_('التحديث ماكملش:\n' + errText_(e)); }
@@ -37,7 +37,7 @@ function refreshProductsNow() {
  * views: after the core views are rebuilt (inside the lock). edit: onEdit(e). setup: inside setupAll's lock.
  * live: after ads sync, before views (outside the lock, for reads). menu: [label, functionName]. */
 const EXT = {
-  views: [() => chanceViews_()],
+  views: [slow => chanceViews_(slow)],
   edit: [(name, a1) => chanceEdit_(name, a1)],
   setup: [() => chanceSetup_()],
   live: [() => refreshAccountNames_(), () => discoverAccounts_(), () => chanceLive_(), () => refreshTodayFunnel_()],

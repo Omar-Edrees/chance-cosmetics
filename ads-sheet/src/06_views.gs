@@ -247,11 +247,21 @@ function writeTests_() {
   sh.getRange(2, 1, tests.length, TESTS_HEADERS.length).setValues(tests);
 }
 
-function rebuildViews_() {
+/*
+ * slow = also the heavy period tabs (Product Performance, Tests, المنتجات, تعادل الحسابات). The 15-minute run does
+ * them once an hour at most and only with time to spare, so it never hits Apps Script's 6-minute limit.
+ */
+function rebuildViews_(slow) {
   resetCaches_();
-  rebuildDaily_();
-  writeToday_(); writePerf_(); writeClosing_(); writeTests_(); writeHealth_();
-  EXT.views.forEach(f => { try { f(); } catch (e) { console.error('ext view: ' + errText_(e)); } });
+  time_('Daily Log', () => rebuildDaily_());
+  time_('Today', () => writeToday_());
+  writeClosing_(); writeHealth_();
+  if (slow) { writePerf_(); writeTests_(); PropertiesService.getDocumentProperties().setProperty('SLOW_VIEWS_AT', String(Date.now())); }
+  EXT.views.forEach(f => { try { f(!!slow); } catch (e) { console.error('ext view: ' + errText_(e)); } });
+}
+function slowViewsDue_() {
+  const at = Number(PropertiesService.getDocumentProperties().getProperty('SLOW_VIEWS_AT') || 0);
+  return Date.now() - at > 60 * 60000 && (!DEADLINE_ || DEADLINE_ - Date.now() > 150000);
 }
 
 /* Simple trigger: changing the period cells refreshes that view only. */

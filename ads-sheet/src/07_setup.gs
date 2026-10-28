@@ -42,7 +42,7 @@ function fullSync_(days) {
   syncOrders_();
   const r = syncAds_(since, today);
   runLiveExt_();
-  withLock_(() => time_('Views', () => rebuildViews_()));
+  withLock_(() => time_('Views', () => rebuildViews_(true)));
   setStatus_('FULL', '✓ ' + since + ' → ' + today + ' (' + r.ads + ' صف إعلانات)');
   return r;
 }
@@ -124,7 +124,7 @@ function backfillStep() {
   const r = tryLock_(() => {
     resetCaches_();
     const save = () => props.setProperty('BACKFILL', JSON.stringify(st));
-    while (st.done < st.units.length && Date.now() - start < 2 * 60000) {
+    while (st.done < st.units.length && Date.now() - start < 90000) {
       const u = st.units[st.done];
       // A piece that keeps dying (6-minute limit, Meta error) is split into single days, then skipped, never repeated forever.
       st.tries = (st.tries || 0) + 1; save();
@@ -165,7 +165,7 @@ function backfillStep() {
   try {
     syncOrders_();
     runLiveExt_();
-    withLock_(() => rebuildViews_());
+    withLock_(() => rebuildViews_(true));
     props.deleteProperty('BACKFILL');
     const through = asKey_(props.getProperty('SYNCED_THROUGH') || ''), done = st.until < todayKey_() ? st.until : shiftKey_(todayKey_(), -1);
     if (!through || through < done) props.setProperty('SYNCED_THROUGH', done);
@@ -176,17 +176,18 @@ function backfillStep() {
 }
 /* Every N minutes: orders, today's ads, views (Today takes the intraday snapshot). Skips quietly if another run is busy. */
 function liveTick() {
-  DEADLINE_ = Date.now() + 5 * 60000;
+  const start = Date.now(), took = [], step = (label, fn) => { const t = Date.now(); const v = fn(); took.push(label + ' ' + Math.round((Date.now() - t) / 1000) + 'ث'); return v; };
+  DEADLINE_ = start + 4.5 * 60000;
   try {
     resetCaches_();
-    syncOrders_();
+    step('أوردرات', () => syncOrders_());
     const today = todayKey_();
-    syncAds_(today, today);
-    runLiveExt_();
-    const r = tryLock_(() => rebuildViews_());
-    setStatus_('LIVE', r.skipped ? 'اتأجل (تحديث تاني شغال)' : '✓ OK');
+    step('Meta', () => syncAds_(today, today));
+    if (timeLeft_()) step('إضافات', () => runLiveExt_());
+    const r = step('تابات', () => tryLock_(() => rebuildViews_(slowViewsDue_())));
+    setStatus_('LIVE', (r.skipped ? 'اتأجل (تحديث تاني شغال)' : '✓ OK') + ' — ' + took.join('، '));
     try { ensureTriggers_(); catchUpGap_(); } catch (e) { console.error('catch-up: ' + errText_(e)); }
-  } catch (e) { setStatus_('LIVE', '✗ ' + errText_(e)); console.error(errText_(e)); }
+  } catch (e) { setStatus_('LIVE', '✗ ' + errText_(e) + ' — ' + took.join('، ')); console.error(errText_(e)); }
 }
 function runLiveExt_() { EXT.live.forEach(f => { try { f(); } catch (e) { console.error('ext live: ' + errText_(e)); } }); }
 function refreshNow() {

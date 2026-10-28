@@ -77,9 +77,9 @@ function decideProduct_(links, camp, set, ad) {
 }
 
 function fetchMetaLinks_(adIds) {
-  const out = {};
+  const out = {}, stop = Date.now() + 60000; // at most a minute per run: many new ads (after a backfill) finish over the next runs
   for (let i = 0; i < adIds.length; i += 25) {
-    if (!timeLeft_()) break; // the rest stay blank and are read next run
+    if (!timeLeft_() || Date.now() > stop) break; // the rest stay blank and are read next run
     const chunk = adIds.slice(i, i + 25);
     const res = metaMany_(chunk.map(id => ({ path: id, params: {
       fields: 'creative{object_story_spec,asset_feed_spec,object_url,link_url,effective_object_story_id}' } })));
