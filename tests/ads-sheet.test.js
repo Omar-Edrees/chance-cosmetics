@@ -263,11 +263,11 @@ test('أسامي الحسابات من Meta، والاسم اللي اتكتب �
 const FLOW_HEAD = ['Order ID', 'Order Number', 'Customer Name', 'Customer Email', 'Total Price', 'Created At', 'UTM Source', 'UTM Medium',
   'UTM Campaign', 'UTM Content', 'UTM Term', 'Attr UTM Source', 'Attr UTM Campaign', 'Attr UTM Content', 'Order Referrer', 'Products'];
 
-test('أوردرات Flow: "(blank)" فاضي، والمصدر من بيانات الفورم، والمنتجات من عمود Products', () => {
+test('أوردرات Flow: "(blank)" فاضي، والمصدر من بيانات الفورم، والمنتجات من عمود Products، وعناوين الأعمدة بتتكتب لوحدها', () => {
   const AD = '120256366885940102', probe = env(), today = probe.c.todayKey_(), at = hm => ' ' + today + 'T' + hm + ':00+03:00';
   const B = '(blank)', flow = (id, hm, total, a, products) => ['gid://shopify/Order/' + id, ' #' + id, ' Name', B, total, at(hm), B, B, B, B, B]
     .concat(a, [products]);
-  const e = env({ orderHead: FLOW_HEAD, ads: { [A1]: [adRow(today, AD, 600)] },
+  const e = env({ orderHead: FLOW_HEAD.slice(0, 11), ads: { [A1]: [adRow(today, AD, 600)] },
     creatives: { [AD]: 'https://chance-cosmetics.com/products/lip-oil' },
     stock: [['P1', 'V1', 'Lip Oil', 'Default Title', 'LO', 'lip-oil', 40, 300]],
     orders: [
@@ -279,6 +279,7 @@ test('أوردرات Flow: "(blank)" فاضي، والمصدر من بيانات
   e.c.setupAll();
   e.c.liveTick();
   e.c.liveTick();
+  assert.deepEqual(e.source.getSheetByName('orders').getRange(1, 1, 1, 16).getValues()[0], FLOW_HEAD);
   const raw = e.ss.getSheetByName('Orders Raw').getDataRange().getValues().slice(1);
   const by = id => raw.find(r => r[0] === 'gid://shopify/Order/' + id);
   assert.deepEqual([1, 2, 3, 4].map(id => by(id)[3]), ['META', 'META', 'UNKNOWN', 'UNKNOWN']);

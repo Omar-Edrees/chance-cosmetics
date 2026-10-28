@@ -46,7 +46,7 @@
 ## الأوردرات ومصدرها
 
 - الأوردرات من شيت Shopify Flow (`Chance Cosmetics - Shopify Orders`، تاب `orders`). Flow بيكتب `(blank)` في الخانة الفاضية، والشيت بيقراها فاضية.
-- أغلب الأوردرات من فورم الكاش أون ديليفري (`neo_cod_form`)، والـ UTM بتاعها في بيانات الأوردر نفسه مش في زيارة العميل. فـ Flow بيكتب كمان أعمدة `Attr UTM Source` و `Attr UTM Campaign` و `Attr UTM Content` و `Order Referrer` و `Products`، والشيت بياخد منها الأول.
+- أغلب الأوردرات من فورم الكاش أون ديليفري (`neo_cod_form`)، والـ UTM بتاعها في بيانات الأوردر نفسه مش في زيارة العميل. فـ Flow بيكتب كمان أعمدة `Attr UTM Source` و `Attr UTM Campaign` و `Attr UTM Content` و `Order Referrer` و `Products`، والشيت بياخد منها الأول. عناوين الأعمدة دي بيكتبها الكود لوحده مرة واحدة في صف 1 بعد `UTM Term` (دي الكتابة الوحيدة في شيت الأوردرات)، والقيم بيكتبها Flow.
 - المنصة: UTM فيه علامة Meta أو TikTok، وبعدين `Order Referrer` (Facebook أو Instagram أو TikTok). الأوردر اللي مالوش ولا واحد منهم (أوردر يدوي Draft، أو Direct) بيتعد "مش معروف مصدره"، وعدده مكتوب جنب GRAND TOTAL في Today.
 - لو `utm_content` فيه رقم إعلان موجود في Ad Map، الأوردر بيتربط بالإعلان ده وحسابه.
 

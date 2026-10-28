@@ -31,6 +31,21 @@ function orderCell_(v) {
   return /^(\(blank\)|blank|null|undefined|-)$/i.test(s) ? '' : s;
 }
 
+/*
+ * Shopify Flow adds values, not headers. The Flow row ends with the COD form columns right after "UTM Term",
+ * so their headers are written once here (the only write to the orders sheet).
+ */
+const FLOW_EXTRA_HEADERS = ['Attr UTM Source', 'Attr UTM Campaign', 'Attr UTM Content', 'Order Referrer', 'Products'];
+function ensureFlowHeaders_(sheet, head) {
+  if (cfgStr_('orders.method') !== 'shopify_flow_sheet' || head.indexOf(FLOW_EXTRA_HEADERS[0]) >= 0) return head;
+  const last = head.length - 1 - head.slice().reverse().findIndex(h => h !== '');
+  if (head[last] !== 'UTM Term') return head;
+  try {
+    sheet.getRange(1, last + 2, 1, FLOW_EXTRA_HEADERS.length).setValues([FLOW_EXTRA_HEADERS]);
+    return head.slice(0, last + 1).concat(FLOW_EXTRA_HEADERS);
+  } catch (e) { setStatus_('ORDERS_HEADERS', '✗ مش قادر أكتب عناوين أعمدة الفورم في شيت الأوردرات: ' + errText_(e)); return head; }
+}
+
 function orderColumns_(head) {
   const idx = {};
   Object.keys(COL_ALTS).forEach(k => {
@@ -116,7 +131,7 @@ function readOrderSource_() {
   if (!src) return [];
   const values = src.sheet.getDataRange().getValues();
   if (values.length < 2) return [];
-  const head = values[0].map(v => String(v).trim()), c = orderColumns_(head);
+  const head = ensureFlowHeaders_(src.sheet, values[0].map(v => String(v).trim())), c = orderColumns_(head);
   if (c.order_id < 0 || c.date < 0) throw new Error('شيت الأوردرات ناقص فيه عمود رقم الأوردر أو التاريخ. راجع orders.col.* في Settings.');
   const rows = values.slice(1), fmt = detectDateFormat_(rows, c.date), get = (r, k) => (c[k] >= 0 ? orderCell_(r[c[k]]) : '');
   const adIds = new Set(); const am = ss_().getSheetByName(APP.T.ADMAP);
