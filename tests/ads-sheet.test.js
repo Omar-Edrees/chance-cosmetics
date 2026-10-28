@@ -335,7 +335,7 @@ test('الكتالوج: Today فيه صف CATALOG واحد بصرفه وأورد
     catalog: { [A1]: [cat('222', 'Lip Oil', 150, 1), cat('222', 'Blush - Pink', 200), cat('222', 'Satin Collection', 30), cat('222', 'Mascara', 0.5)] },
     activeAds: { [A1]: ['111', '222'] },
     orders: [ // UTM بالأسامي: Source = اسم الكامبين، Campaign = اسم الإعلان
-      flow(1, '10:00', 300, ['Camp', 'Ad 111', 'fb', 'Facebook'], 'Lip Oil x1'),
+      flow(1, '10:00', 300, ['Camp', 'Ad 111', 'fb', 'Facebook'], 'Lip Oil x1 | Blush x2'),
       flow(2, '10:30', 250, ['Camp', 'Ad 222', 'ig', 'Instagram'], 'Blush x1'),
     ] });
   e.c.setupAll();
@@ -353,10 +353,12 @@ test('الكتالوج: Today فيه صف CATALOG واحد بصرفه وأورد
 
   const between = (v, col, from, to) => { const i = v.findIndex(r => r[col] === from); return v.slice(i + 1, v.findIndex((r, j) => j > i && r[col] === to) + 1); };
   const v = e.ss.getSheetByName('Today').getDataRange().getValues();
-  assert.deepEqual(between(v, 7, 'PRODUCT', 'TOTAL META PRODUCT PERFORMANCE').map(r => r.slice(7, 14)), [
-    ['CATALOG (كل إعلانات الكتالوج)', 1, 400, 400, 0.63, 2, '✅ 1 إعلان'],
-    ['Lip Oil', 1, 600, 600, 0.5, 2, '✅ 1 إعلان'],
-    ['TOTAL META PRODUCT PERFORMANCE', 2, 1000, 500, 0.55, 4, ''],
+  assert.equal(v.find(r => r[7] === 'PRODUCT')[14], 'ORDERED PRODUCTS (اللي اتطلب)');
+  // عمود ORDERED PRODUCTS: إعلان Lip Oil جاب أوردر فيه Lip Oil و Blush
+  assert.deepEqual(between(v, 7, 'PRODUCT', 'TOTAL META PRODUCT PERFORMANCE').map(r => r.slice(7, 15)), [
+    ['CATALOG (كل إعلانات الكتالوج)', 1, 400, 400, 0.63, 2, '✅ 1 إعلان', 'Blush (1)'],
+    ['Lip Oil', 1, 600, 600, 0.5, 2, '✅ 1 إعلان', 'Lip Oil (1)، Blush (1)'],
+    ['TOTAL META PRODUCT PERFORMANCE', 2, 1000, 500, 0.55, 4, '', ''],
   ]);
   const t = e.ss.getSheetByName('الكتالوج').getDataRange().getValues();
   assert.deepEqual(between(t, 0, 'PRODUCT', 'TOTAL CATALOG').map(r => r.slice(0, 6)), [

@@ -35,20 +35,24 @@ function rebuildDaily_() {
   if (osh && !pixelOrders) readRows_(osh, ORDERS_HEADERS.length).forEach(o => {
     const d = asKey_(o[2]);
     if (!d) return;
-    // An order counts on the product of the ad that brought it (the same place as that ad's spend), like Meta does.
-    // A Meta order whose ad isn't in the sheet (another account, a renamed ad) gets its own row instead of a product.
-    let product = o[5];
-    if (o[3] === 'META') {
-      const id = String(o[14] || ''), m = id ? idx.get(adKey_('META', id, '', '', '')) : null;
-      product = id && catAds.has('META|' + id) ? APP.CATALOG : m ? m.product : APP.META_NO_AD;
-    }
-    const r = row(d, o[3], product);
+    const r = row(d, o[3], orderAdProduct_(o, idx, catAds));
     r[8]++; if (o[15] === true || String(o[15]).toUpperCase() === 'TRUE') r[9]++; r[10] += num_(o[7]);
   });
   const rows = Array.from(agg.values()).map(r => r.map((v, i) => (i >= 3 && i !== 5 && i !== 6 ? round2_(v) : v)))
     .sort((a, b) => (a[0] < b[0] ? 1 : a[0] > b[0] ? -1 : b[3] - a[3]));
   writeRows_(ensureTab_(APP.T.DAILY, DAILY_HEADERS), rows, DAILY_HEADERS.length, [1]);
   return rows;
+}
+
+/*
+ * The row an order counts on: the product of the ad that brought it (the same place as that ad's spend), like Meta.
+ * Catalog ad → CATALOG. A Meta order whose ad isn't in the sheet (another account, a renamed ad) → its own row.
+ * Other platforms: the order's own product.
+ */
+function orderAdProduct_(o, idx, catAds) {
+  if (o[3] !== 'META') return o[5];
+  const id = String(o[14] || ''), m = id ? idx.get(adKey_('META', id, '', '', '')) : null;
+  return id && catAds.has('META|' + id) ? APP.CATALOG : m ? m.product : APP.META_NO_AD;
 }
 
 function dailyRows_() { return readRows_(tab_(APP.T.DAILY), DAILY_HEADERS.length).map(r => { r[0] = asKey_(r[0]); return r; }); }
