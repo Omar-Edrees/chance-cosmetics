@@ -146,7 +146,7 @@ function todayAccounts_(today) {
 }
 
 /* Left side: the Daily Ad Closing table. */
-function todayClosing_(g, today, sum) {
+function todayClosing_(g, today, sum, rows) {
   const S = TODAY, pixel = cfgStr_('orders.method') === 'pixel';
   g.set(1, 1, (cfgStr_('business.name') || 'ADS').toUpperCase() + ' — DAILY AD CLOSING', { bg: S.DARK, fc: '#ffffff', b: 'bold', al: 'center' });
   g.fill(1, 2, 5, { bg: S.DARK });
@@ -184,10 +184,14 @@ function todayClosing_(g, today, sum) {
   platform('META', S.META, accs.META, 'META TOTAL', { bg: S.META_TOTAL, b: 'bold', fc: '#1d4ed8' }, 'META');
   platform('TIKTOK', S.TIKTOK, accs.TIKTOK, 'TIKTOK TOTAL', { bg: S.TT_TOTAL, b: 'bold' }, 'TIKTOK');
   // Store orders with no ad source: no spend, so orders only. NO SOURCE shows only when some orders carry no data at all.
-  [[APP.DIRECT, 'DIRECT', 'دخول مباشر للموقع'], [APP.MANUAL, 'MANUAL (DRAFT)', 'أوردرات يدوي'],
-    [APP.UNKNOWN_PLATFORM, 'NO SOURCE', 'من غير بيانات مصدر']].forEach(x => {
+  // META OUT: orders from a Meta ad account that isn't in the sheet (no spend here), named by what they bought.
+  const out = {};
+  rows.forEach(x => { if (x[0] === today && x[1] === APP.META_OUT) out[x[2]] = (out[x[2]] || 0) + num_(x[8]); });
+  const outNames = Object.keys(out).sort((a, b) => out[b] - out[a]).slice(0, 2).join(' / ');
+  [[APP.META_OUT, 'META (حساب مش معانا)', 'من غير صرف: ' + outNames], [APP.DIRECT, 'DIRECT', 'دخول مباشر للموقع'],
+    [APP.MANUAL, 'MANUAL (DRAFT)', 'أوردرات يدوي'], [APP.UNKNOWN_PLATFORM, 'NO SOURCE', 'من غير بيانات مصدر']].forEach(x => {
     const t = sum.byPlatform[x[0]] || { orders: 0 };
-    if (x[0] === APP.UNKNOWN_PLATFORM && !t.orders) return;
+    if ((x[0] === APP.UNKNOWN_PLATFORM || x[0] === APP.META_OUT) && !t.orders) return;
     const style = { bg: S.OTHER };
     g.set(r, 1, x[1], { bg: S.OTHER, b: 'bold' });
     g.set(r, 2, x[2], style);
@@ -263,23 +267,35 @@ function todayRunning_() {
 function todayOrders_(from) {
   const osh = ss_().getSheetByName(APP.T.ORDERS), out = [];
   if (!osh) return out;
-  const idx = adMapIndex_(), catAds = catalogAdIds_();
+  const idx = adMapIndex_(), catAds = catalogAdIds_(), known = metaIdsOf_();
   readRows_(osh, ORDERS_HEADERS.length).forEach(o => {
     const d = asKey_(o[2]);
-    if (!d || d < from || o[3] !== 'META') return;
-    const items = Array.from(new Set(lineItems_(o[6]).map(li => productNameOf_(li.title))));
-    out.push({ d: d, key: orderAdProduct_(o, idx, catAds), items: items.length ? items : [String(o[5] || APP.UNKNOWN_PRODUCT)] });
+    if (!d || d < from || o[3] !== 'META' || outsideMeta_(o, known)) return;
+    const items = [];
+    lineItems_(o[6]).forEach(li => {
+      const name = productNameOf_(li.title), it = items.find(x => x.name === name);
+      if (it) it.qty += li.qty; else items.push({ name: name, qty: li.qty });
+    });
+    out.push({ d: d, key: orderAdProduct_(o, idx, catAds), items: items.length ? items : [{ name: String(o[5] || APP.UNKNOWN_PRODUCT), qty: 1 }] });
   });
   return out;
 }
 /*
- * [[product, orders with it]]: what the orders of one row bought — the ad's own product first, then most ordered.
- * An order with two products counts on both.
+ * [[ordered product, orders]] for one row. Each order counts once, so the ORDERS column adds up to the row's META ORDERS:
+ * on the ad's own product when the order has it, else on the product with the most pieces. Other products in
+ * those orders show next to the name ("+ 3 منتجات تانية").
  */
 function orderedList_(orders, key, from, to) {
-  const n = {};
-  orders.forEach(o => { if (o.key === key && o.d >= from && o.d <= to) o.items.forEach(i => { n[i] = (n[i] || 0) + 1; }); });
-  return Object.keys(n).sort((a, b) => ((b === key) - (a === key)) || (n[b] - n[a]) || (a < b ? -1 : 1)).map(i => [i, n[i]]);
+  const n = {}, more = {};
+  orders.forEach(o => {
+    if (o.key !== key || o.d < from || o.d > to) return;
+    const main = o.items.some(i => i.name === key) ? key : o.items.reduce((a, b) => (b.qty > a.qty ? b : a)).name;
+    n[main] = (n[main] || 0) + 1;
+    more[main] = more[main] || [];
+    o.items.forEach(i => { if (i.name !== main && more[main].indexOf(i.name) < 0) more[main].push(i.name); });
+  });
+  const label = (name, m) => name + (m.length === 1 ? ' + ' + m[0] : m.length === 2 ? ' + منتجين تانيين' : m.length ? ' + ' + m.length + ' منتجات تانية' : '');
+  return Object.keys(n).sort((a, b) => ((b === key) - (a === key)) || (n[b] - n[a]) || (a < b ? -1 : 1)).map(i => [label(i, more[i]), n[i]]);
 }
 function todayProducts_(g, r, title, from, to, rows, running, orders) {
   const S = TODAY, c = S.RIGHT_COL, meta = {}, special = [APP.CATALOG, APP.MULTI, APP.UNMAPPED, APP.META_NO_AD, APP.UNKNOWN_PRODUCT];
@@ -338,7 +354,7 @@ function writeToday_() {
   const sh = ensureTab_(APP.T.TODAY), today = todayKey_(), rows = dailyRows_(), sum = summarize_(rows, today, today), g = todayGrid_();
   const p = today.split('-').map(Number), noon = new Date(Date.UTC(p[0], p[1] - 1, p[2], 12));
   const shown = Utilities.formatDate(noon, 'UTC', 'dd-MMM-yyyy'), month = Utilities.formatDate(noon, 'UTC', 'MMM-yyyy');
-  todayClosing_(g, today, sum);
+  todayClosing_(g, today, sum, rows);
   let r = todaySlots_(g, 1, today) + 1;
   r = todayBenchmark_(g, r, today, shown) + 1;
   const running = todayRunning_(), orders = todayOrders_(today.slice(0, 8) + '01');

@@ -19,7 +19,8 @@ function rebuildDaily_() {
     if (!agg.has(k)) agg.set(k, [d, pl, pr, 0, 0, 0, 0, 0, 0, 0, 0]);
     return agg.get(k);
   };
-  readRows_(tab_(APP.T.ADS), ADS_HEADERS.length).forEach(a => {
+  const ads = readRows_(tab_(APP.T.ADS), ADS_HEADERS.length), known = metaIdsOf_(ads);
+  ads.forEach(a => {
     const d = asKey_(a[0]);
     if (!d) return;
     // A catalog / Advantage+ ad (Meta splits it by product) counts whole under CATALOG; its split is in the الكتالوج tab.
@@ -35,7 +36,7 @@ function rebuildDaily_() {
   if (osh && !pixelOrders) readRows_(osh, ORDERS_HEADERS.length).forEach(o => {
     const d = asKey_(o[2]);
     if (!d) return;
-    const r = row(d, o[3], orderAdProduct_(o, idx, catAds));
+    const r = outsideMeta_(o, known) ? row(d, APP.META_OUT, o[5]) : row(d, o[3], orderAdProduct_(o, idx, catAds));
     r[8]++; if (o[15] === true || String(o[15]).toUpperCase() === 'TRUE') r[9]++; r[10] += num_(o[7]);
   });
   const rows = Array.from(agg.values()).map(r => r.map((v, i) => (i >= 3 && i !== 5 && i !== 6 ? round2_(v) : v)))
@@ -53,6 +54,19 @@ function orderAdProduct_(o, idx, catAds) {
   if (o[3] !== 'META') return o[5];
   const id = String(o[14] || ''), m = id ? idx.get(adKey_('META', id, '', '', '')) : null;
   return id && catAds.has('META|' + id) ? APP.CATALOG : m ? m.product : APP.META_NO_AD;
+}
+
+/* Every campaign / ad set / ad ID in Ads Raw (rows given, or read). */
+function metaIdsOf_(ads) {
+  const ids = new Set();
+  (ads || readRows_(tab_(APP.T.ADS), ADS_HEADERS.length)).forEach(a => { [a[4], a[6], a[8]].forEach(x => { if (x) ids.add(String(x)); }); });
+  return ids;
+}
+/* A Meta order whose UTMs carry only IDs that no account in the sheet has: another ad account (no spend here). */
+function outsideMeta_(o, known) {
+  if (o[3] !== 'META' || o[14]) return false;
+  const ids = [o[11], o[12], o[13]].join(' ').match(/\d{15,}/g) || [];
+  return ids.length > 0 && !ids.some(x => known.has(x));
 }
 
 function dailyRows_() { return readRows_(tab_(APP.T.DAILY), DAILY_HEADERS.length).map(r => { r[0] = asKey_(r[0]); return r; }); }

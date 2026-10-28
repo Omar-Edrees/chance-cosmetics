@@ -358,12 +358,11 @@ test('الكتالوج: Today فيه صف CATALOG واحد بصرفه وأورد
   const between = (v, col, from, to) => { const i = v.findIndex(r => r[col] === from); return v.slice(i + 1, v.findIndex((r, j) => j > i && r[col] === to) + 1); };
   const v = e.ss.getSheetByName('Today').getDataRange().getValues();
   assert.deepEqual(v.find(r => r[7] === 'PRODUCT').slice(14, 16), ['ORDERED PRODUCT (اللي اتطلب)', 'ORDERS']);
-  // إعلان Lip Oil جاب أوردر فيه Lip Oil و Blush: صفين، منتج الإعلان الأول، وأرقام الإعلان في أول صف بس
+  // إعلان Lip Oil جاب أوردر فيه Lip Oil و Blush: الأوردر بيتعد مرة واحدة على منتج الإعلان، والمنتج التاني جنبه
   assert.deepEqual(between(v, 7, 'PRODUCT', 'TOTAL META PRODUCT PERFORMANCE').map(r => r.slice(7, 16)), [
     ['CATALOG (كل إعلانات الكتالوج)', 1, 400, 400, 0.63, 2, '✅ 1 إعلان', 'Blush', 1],
-    ['Lip Oil', 1, 600, 600, 0.5, 2, '✅ 1 إعلان', 'Lip Oil', 1],
-    ['', '', '', '', '', '', '', 'Blush', 1],
-    ['TOTAL META PRODUCT PERFORMANCE', 2, 1000, 500, 0.55, 4, '', '', 3],
+    ['Lip Oil', 1, 600, 600, 0.5, 2, '✅ 1 إعلان', 'Lip Oil + Blush', 1],
+    ['TOTAL META PRODUCT PERFORMANCE', 2, 1000, 500, 0.55, 4, '', '', 2],
   ]);
   const t = e.ss.getSheetByName('الكتالوج').getDataRange().getValues();
   assert.deepEqual(between(t, 0, 'PRODUCT', 'TOTAL CATALOG').map(r => r.slice(0, 6)), [
@@ -429,4 +428,33 @@ test('أوردرات من كامبين مش في أي حساب متسجل: ال�
   assert.ok(acc.some(r => r[0] === 'META' && r[1] === A4 && r[2] === 'Chance New' && r[4] === true));
   assert.ok(JSON.parse(e.doc.BACKFILL).units.every(u => u[0] === A4), 'صرف الحساب الجديد بيتسحب من أول الشهر');
   assert.match(e.c.getStatus_('ACC_DISCOVER'), /اتضاف 555000111222333/);
+});
+
+test('أوردرات من حساب Meta مش معانا: صف لوحدها برا META TOTAL، وعمود ORDERS بيعد كل أوردر مرة واحدة', () => {
+  const probe = env(), today = probe.c.todayKey_(), at = hm => ' ' + today + 'T' + hm + ':00+03:00', B = '(blank)';
+  const flow = (id, hm, total, a, products) => ['gid://shopify/Order/' + id, ' #' + id, ' N', B, total, at(hm), B, B, B, B, B].concat(a, [products, '4655075']);
+  const e = env({ orderHead: FLOW_HEAD,
+    ads: { [A1]: [adRow(today, '111', 600)] },
+    creatives: { 111: 'https://chance-cosmetics.com/products/lip-oil' },
+    shop: { 'lip-oil': { title: 'Lip Oil', handle: 'lip-oil', price: 30000 } },
+    orders: [
+      flow(1, '10:00', 300, ['Camp', 'Ad 111', 'fb', 'Facebook'], 'Lip Oil x1'),
+      flow(2, '10:30', 900, ['Camp', 'Ad 111', 'fb', 'Facebook'], 'Blush x1 | Mascara x2 | Primer x1 | Blush x1'),
+      flow(3, '11:00', 400, ['facebook', '120256366878570102', '120256366885940102', 'Instagram'], 'Marshmallow x2'),
+    ] });
+  e.c.setupAll();
+  const st = e.ss.getSheetByName('Settings'), keys = st.getDataRange().getValues().map(r => r[0]);
+  st.getRange(keys.indexOf('business.store_domains') + 1, 2).setValue('chance-cosmetics.com');
+  e.c.liveTick();
+  e.c.liveTick();
+  const v = e.ss.getSheetByName('Today').getDataRange().getValues(), row = l => v.find(r => r[0] === l);
+  assert.deepEqual(row('META TOTAL').slice(2, 4), [600, 2], 'META TOTAL من غير أوردر الحساب التاني');
+  assert.deepEqual(row('META (حساب مش معانا)').slice(1, 4), ['من غير صرف: Marshmallow', '', 1]);
+  assert.equal(row('GRAND TOTAL')[3], 3);
+  const i = v.findIndex(r => r[7] === 'PRODUCT');
+  assert.deepEqual(v.slice(i + 1, i + 4).map(r => [r[7], r[8], r[14], r[15]]), [
+    ['Lip Oil', 2, 'Lip Oil', 1],
+    ['', '', 'Blush + منتجين تانيين', 1], // مفيش Lip Oil في الأوردر: على المنتج اللي فيه قطع أكتر
+    ['TOTAL META PRODUCT PERFORMANCE', 2, '', 2],
+  ]);
 });
