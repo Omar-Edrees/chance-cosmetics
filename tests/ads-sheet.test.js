@@ -261,12 +261,12 @@ test('أسامي الحسابات من Meta، والاسم اللي اتكتب �
 
 /* شيت الأوردرات زي ما Shopify Flow بيكتبه، ومعاه أعمدة فورم الكاش أون ديليفري */
 const FLOW_HEAD = ['Order ID', 'Order Number', 'Customer Name', 'Customer Email', 'Total Price', 'Created At', 'UTM Source', 'UTM Medium',
-  'UTM Campaign', 'UTM Content', 'UTM Term', 'Attr UTM Source', 'Attr UTM Campaign', 'Attr UTM Content', 'Order Referrer', 'Products'];
+  'UTM Campaign', 'UTM Content', 'UTM Term', 'Attr UTM Source', 'Attr UTM Campaign', 'Attr UTM Content', 'Order Referrer', 'Products', 'Source Name'];
 
 test('أوردرات Flow: "(blank)" فاضي، والمصدر من بيانات الفورم، والمنتجات من عمود Products، وعناوين الأعمدة بتتكتب لوحدها', () => {
   const AD = '120256366885940102', probe = env(), today = probe.c.todayKey_(), at = hm => ' ' + today + 'T' + hm + ':00+03:00';
-  const B = '(blank)', flow = (id, hm, total, a, products) => ['gid://shopify/Order/' + id, ' #' + id, ' Name', B, total, at(hm), B, B, B, B, B]
-    .concat(a, [products]);
+  const B = '(blank)', flow = (id, hm, total, a, products, src) => ['gid://shopify/Order/' + id, ' #' + id, ' Name', B, total, at(hm), B, B, B, B, B]
+    .concat(a, products === undefined ? [] : [products, src || '4655075']);
   const e = env({ orderHead: FLOW_HEAD.slice(0, 11), ads: { [A1]: [adRow(today, AD, 600)] },
     creatives: { [AD]: 'https://chance-cosmetics.com/products/lip-oil' },
     stock: [['P1', 'V1', 'Lip Oil', 'Default Title', 'LO', 'lip-oil', 40, 300]],
@@ -274,19 +274,23 @@ test('أوردرات Flow: "(blank)" فاضي، والمصدر من بيانات
       flow(1, '10:00', 434, ['facebook', '120256366878570102', AD, 'Instagram'], 'Lip Oil x1'),
       flow(2, '10:30', 907, ['Black F | CBO', 'Reels | Product Show', 'fb', 'Facebook'], 'Lip Oil x1 | Blush x1'),
       flow(3, '11:00', 1513, [B, B, B, 'Direct(Chancestoreegy)'], 'Blush x1'),
-      flow(4, '11:30', 534, ['', '', '', ''], 'Lip Oil x2'),
+      flow(4, '11:30', 534, ['', '', '', ''], 'Lip Oil x2', 'shopify_draft_order'),
+      flow(5, '12:00', 300, []), // صف قديم من قبل تعديل Flow: مفيش ولا عمود من الجديد
     ] });
   e.c.setupAll();
   e.c.liveTick();
   e.c.liveTick();
-  assert.deepEqual(e.source.getSheetByName('orders').getRange(1, 1, 1, 16).getValues()[0], FLOW_HEAD);
+  assert.deepEqual(e.source.getSheetByName('orders').getRange(1, 1, 1, 17).getValues()[0], FLOW_HEAD);
   const raw = e.ss.getSheetByName('Orders Raw').getDataRange().getValues().slice(1);
   const by = id => raw.find(r => r[0] === 'gid://shopify/Order/' + id);
-  assert.deepEqual([1, 2, 3, 4].map(id => by(id)[3]), ['META', 'META', 'UNKNOWN', 'UNKNOWN']);
+  assert.deepEqual([1, 2, 3, 4, 5].map(id => by(id)[3]), ['META', 'META', 'DIRECT', 'MANUAL', 'UNKNOWN']);
   assert.equal(by(1)[14], AD);
   assert.equal(by(2)[5], 'Lip Oil');
   const meta = todayRow(e, 'META TOTAL'), grand = todayRow(e, 'GRAND TOTAL');
   assert.deepEqual(meta.slice(2, 6), [600, 2, 300, 2.24]);
-  assert.equal(grand[3], 4);
-  assert.match(String(grand[1]), /منهم 2 أوردر مش معروف مصدره/);
+  assert.deepEqual(['DIRECT', 'MANUAL (DRAFT)', 'NO SOURCE'].map(l => todayRow(e, l)[3]), [1, 1, 1]);
+  const labels = e.ss.getSheetByName('Today').getDataRange().getValues().map(r => r[0]);
+  assert.deepEqual(labels.slice(labels.indexOf('TIKTOK TOTAL'), labels.indexOf('GRAND TOTAL') + 1),
+    ['TIKTOK TOTAL', 'DIRECT', 'MANUAL (DRAFT)', 'NO SOURCE', 'GRAND TOTAL']);
+  assert.equal(grand[3], 5);
 });

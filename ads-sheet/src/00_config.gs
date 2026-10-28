@@ -15,7 +15,8 @@ const APP = {
   UNMAPPED: '❌ صرف مش مربوط بمنتج',
   MULTI: 'صفحة كل المنتجات (MULTI)',
   UNKNOWN_PRODUCT: 'منتج مش معروف',
-  UNKNOWN_PLATFORM: 'UNKNOWN'
+  UNKNOWN_PLATFORM: 'UNKNOWN',
+  DIRECT: 'DIRECT', MANUAL: 'MANUAL'
 };
 
 /* Chance tabs (90_hooks.gs plugs them into the engine through EXT). */

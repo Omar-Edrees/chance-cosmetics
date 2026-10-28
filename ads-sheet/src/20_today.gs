@@ -9,7 +9,7 @@ const TODAY = {
   GAP_COL: 7, RIGHT_COL: 8, WIDTH: 16,
   DARK: '#1f2937', YELLOW: '#fff200', META: '#1d4ed8', TIKTOK: '#111111', META_TOTAL: '#dbe8fb', TT_TOTAL: '#e0e0e0',
   GRAND: '#00ff00', LABEL: '#f3f4f6', METRIC: '#e8f0fe', AVG: '#e8eefc', SPECIAL: '#fde8e8', TOTAL: '#e8eefc',
-  GREEN: '#d9ead3', RED: '#f4cccc',
+  GREEN: '#d9ead3', RED: '#f4cccc', OTHER: '#f3f4f6',
   MONEY: '#,##0.00', COUNT: '0', RATIO: '0.00', PCT: '0.00%',
   FUNNEL_KEY: 'TODAY_FUNNEL', AVG_KEY: 'TODAY_FUNNEL_AVG', AVG_DAYS: 60,
   FIELDS: 'spend,impressions,clicks,inline_link_clicks,actions',
@@ -175,10 +175,22 @@ function todayClosing_(g, today, sum) {
   };
   platform('META', S.META, accs.META, 'META TOTAL', { bg: S.META_TOTAL, b: 'bold', fc: '#1d4ed8' }, 'META');
   platform('TIKTOK', S.TIKTOK, accs.TIKTOK, 'TIKTOK TOTAL', { bg: S.TT_TOTAL, b: 'bold' }, 'TIKTOK');
-  const grand = { bg: S.GRAND, b: 'bold' }, unknown = (sum.byPlatform[APP.UNKNOWN_PLATFORM] || { orders: 0 }).orders;
+  // Store orders with no ad source: no spend, so orders only. NO SOURCE shows only when some orders carry no data at all.
+  [[APP.DIRECT, 'DIRECT', 'دخول مباشر على الموقع'], [APP.MANUAL, 'MANUAL (DRAFT)', 'أوردرات اتعملت بالإيد في شوبيفاي'],
+    [APP.UNKNOWN_PLATFORM, 'NO SOURCE', 'أوردرات مالهاش بيانات مصدر في شيت الأوردرات']].forEach(x => {
+    const t = sum.byPlatform[x[0]] || { orders: 0 };
+    if (x[0] === APP.UNKNOWN_PLATFORM && !t.orders) return;
+    const style = { bg: S.OTHER };
+    g.set(r, 1, x[1], { bg: S.OTHER, b: 'bold' });
+    g.set(r, 2, x[2], style);
+    g.set(r, 3, '', style);
+    g.set(r, 4, t.orders, Object.assign({ nf: S.COUNT, al: 'right' }, style));
+    g.set(r, 5, '', style); g.set(r, 6, '', style);
+    r++;
+  });
+  const grand = { bg: S.GRAND, b: 'bold' };
   g.set(r, 1, 'GRAND TOTAL', grand);
   line(r, '', sum.total.spend, sum.total.orders, sum.total.revenue, grand, true);
-  if (unknown) g.cell(r, 2).v = 'منهم ' + unknown + ' أوردر مش معروف مصدره';
   return r;
 }
 

@@ -4,7 +4,8 @@
  * shopify_flow_sheet (Shopify Flow → Google Sheets), csv_tab (a tab in this file), none.
  * An API source (e.g. TakeTheme) is a separate adapter written per business: it must
  * return the same row shape as readOrderSource_().
- * Platform: UTM evidence > referrer > UNKNOWN. Unknown orders are shown, never guessed.
+ * Platform: UTM evidence > referrer > DIRECT (referrer "Direct", or a store order with neither)
+ * > MANUAL (draft order typed in the admin) > UNKNOWN (no source data at all). Never guessed.
  */
 const ORDERS_HEADERS = ['Order ID', 'Created at', 'Date', 'Platform', 'Signal', 'Product', 'Products raw', 'Total',
   'City', 'Phone', 'Alt phone', 'UTM source', 'UTM campaign', 'UTM content', 'Ad ID', 'Cancelled'];
@@ -21,6 +22,7 @@ const COL_ALTS = {
   utm_content: ['UTM Content', 'utm_content'], referrer: ['Referrer', 'Order Referrer', 'Landing Site Ref'],
   // Shopify Flow columns from the COD form's order attributes (the visit UTMs are empty for form orders).
   attr_utm_source: ['Attr UTM Source'], attr_utm_campaign: ['Attr UTM Campaign'], attr_utm_content: ['Attr UTM Content'],
+  source_name: ['Source Name'],
   metadata: ['Order Metadata'], status: ['Status', 'Financial Status', 'Cancelled At']
 };
 
@@ -35,14 +37,16 @@ function orderCell_(v) {
  * Shopify Flow adds values, not headers. The Flow row ends with the COD form columns right after "UTM Term",
  * so their headers are written once here (the only write to the orders sheet).
  */
-const FLOW_EXTRA_HEADERS = ['Attr UTM Source', 'Attr UTM Campaign', 'Attr UTM Content', 'Order Referrer', 'Products'];
+const FLOW_EXTRA_HEADERS = ['Attr UTM Source', 'Attr UTM Campaign', 'Attr UTM Content', 'Order Referrer', 'Products', 'Source Name'];
 function ensureFlowHeaders_(sheet, head) {
-  if (cfgStr_('orders.method') !== 'shopify_flow_sheet' || head.indexOf(FLOW_EXTRA_HEADERS[0]) >= 0) return head;
-  const last = head.length - 1 - head.slice().reverse().findIndex(h => h !== '');
-  if (head[last] !== 'UTM Term') return head;
+  const at = head.indexOf('UTM Term') + 1;
+  if (cfgStr_('orders.method') !== 'shopify_flow_sheet' || !at) return head;
+  const want = head.slice(0, at).concat(FLOW_EXTRA_HEADERS);
+  if (FLOW_EXTRA_HEADERS.every((h, i) => head[at + i] === h)) return head;
+  if (FLOW_EXTRA_HEADERS.some((h, i) => head[at + i] && head[at + i] !== h)) return head; // something else is there: leave it
   try {
-    sheet.getRange(1, last + 2, 1, FLOW_EXTRA_HEADERS.length).setValues([FLOW_EXTRA_HEADERS]);
-    return head.slice(0, last + 1).concat(FLOW_EXTRA_HEADERS);
+    sheet.getRange(1, at + 1, 1, FLOW_EXTRA_HEADERS.length).setValues([FLOW_EXTRA_HEADERS]);
+    return want.concat(head.slice(want.length));
   } catch (e) { setStatus_('ORDERS_HEADERS', '✗ مش قادر أكتب عناوين أعمدة الفورم في شيت الأوردرات: ' + errText_(e)); return head; }
 }
 
@@ -99,7 +103,7 @@ function parseOrderDate_(v, fmt, tz) {
     String(m[4] || '0').padStart(2, '0') + ':' + (m[5] || '00'), tz, 'yyyy-MM-dd HH:mm');
 }
 
-function platformOf_(utms, referrer) {
+function platformOf_(utms, referrer, sourceName) {
   const text = norm_(utms.join(' ')), tk = cfgList_('attribution.tiktok_markers').map(norm_),
     me = cfgList_('attribution.meta_markers').map(norm_);
   const isTk = tk.some(t => hasToken_(text, t)), isMe = me.some(t => hasToken_(text, t));
@@ -111,6 +115,10 @@ function platformOf_(utms, referrer) {
   if (isMe) return { p: 'META', s: 'utm' };
   if (text) return { p: cfgStr_('attribution.other_utm_platform') === 'UNKNOWN' ? APP.UNKNOWN_PLATFORM : 'META', s: 'utm_convention' };
   if (refP) return { p: refP, s: 'referrer' };
+  const source = String(sourceName || '').toLowerCase();
+  if (/^direct/.test(ref)) return { p: APP.DIRECT, s: 'referrer' };
+  if (/draft/.test(source)) return { p: APP.MANUAL, s: 'draft_order' };
+  if (source) return { p: APP.DIRECT, s: 'no_utm' };
   return { p: APP.UNKNOWN_PLATFORM, s: 'none' };
 }
 
@@ -155,13 +163,13 @@ function readOrderSource_() {
       utms.forEach((u, i) => { if (!o.utms[i] && u) o.utms[i] = u; });
       return;
     }
-    byId.set(id, { id: id, dt: dt, utms: utms, referrer: referrer, total: total, raw: String(get(r, 'product') || ''),
+    byId.set(id, { id: id, dt: dt, utms: utms, referrer: referrer, source: String(get(r, 'source_name') || ''), total: total, raw: String(get(r, 'product') || ''),
       city: String(get(r, 'city') || '').trim(), phone: phone10_(get(r, 'phone')), alt: phone10_(get(r, 'alt_phone')),
       cancelled: cancelWords.some(w => w && hasToken_(norm_(get(r, 'status')), w)) });
   });
   if (noDate) setStatus_('ORDERS_NODATE', noDate + ' صف من غير تاريخ مفهوم');
   return Array.from(byId.values()).map(o => {
-    const pl = platformOf_(o.utms.filter(Boolean), o.referrer);
+    const pl = platformOf_(o.utms.filter(Boolean), o.referrer, o.source);
     const adId = (o.utms.join(' ').match(/\d{10,}/g) || []).find(x => adIds.has(x)) || '';
     return [o.id, Utilities.formatDate(o.dt, tz_(), 'yyyy-MM-dd HH:mm'), dayKey_(o.dt), pl.p, pl.s, productOfOrder_(o.raw),
       o.raw.replace(/\s+/g, ' ').slice(0, 1000), o.total, o.city, o.phone ? '0' + o.phone : '', o.alt ? '0' + o.alt : '',
