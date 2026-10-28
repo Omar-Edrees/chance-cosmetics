@@ -550,3 +550,19 @@ test('أوردرات قبل تعديل Flow: المصدر والمنتجات م�
   assert.equal(v.find(r => r[0] === 'META (حساب مش معانا)')[3], 1);
   assert.ok(!v.some(r => r[0] === 'NO SOURCE'));
 });
+
+test('لينك البايو و ChatGPT مش إعلانات: DIRECT', () => {
+  const probe = env(), today = probe.c.todayKey_(), at = ' ' + today + 'T10:00:00+03:00', B = '(blank)';
+  const row = (id, a, src) => ['gid://shopify/Order/' + id, ' #' + id, ' N', B, 500, at, B, B, B, B, B].concat(a, ['Lip Oil x1', src || '4655075']);
+  const e = env({ orderHead: FLOW_HEAD, orders: [
+    row(1, ['ig', B, 'link_in_bio', 'Instagram']),
+    row(2, ['chatgpt.com', B, B, 'Direct(Chancestoreegy)'], 'shopify_draft_order'),
+    row(3, ['Camp', 'Ad 1', 'fb', 'Facebook']),
+  ] });
+  e.c.setupAll();
+  e.c.liveTick();
+  const raw = e.ss.getSheetByName('Orders Raw').getDataRange().getValues().slice(1), p = id => raw.find(r => r[0] === 'gid://shopify/Order/' + id).slice(3, 5);
+  assert.deepEqual(p(1), ['DIRECT', 'organic']);
+  assert.deepEqual(p(2), ['DIRECT', 'referrer']);
+  assert.deepEqual(p(3), ['META', 'utm']);
+});

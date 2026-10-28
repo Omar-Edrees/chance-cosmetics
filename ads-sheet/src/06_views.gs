@@ -285,9 +285,9 @@ function writeTests_() {
 function rebuildViews_(opt) {
   if (!opt || typeof opt !== 'object') opt = { slow: !!opt };
   CFG_ = null; PRODUCTS_ = null; KNOWN_PRODUCTS_ = null; // settings / products may have changed; the raw tabs' copies stay valid
-  const full = opt.full || opt.slow || ADMAP_CHANGED_;
+  const full = opt.full || opt.slow || ADMAP_CHANGED_ || ORDERS_REREAD_;
   time_('Daily Log', () => rebuildDaily_(full ? '' : shiftKey_(todayKey_(), -2)));
-  ADMAP_CHANGED_ = false;
+  ADMAP_CHANGED_ = false; ORDERS_REREAD_ = false;
   time_('Today', () => writeToday_());
   if (opt.quick) return;
   writeClosing_(); writeHealth_();

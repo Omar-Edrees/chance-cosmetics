@@ -103,8 +103,13 @@ function parseOrderDate_(v, fmt, tz) {
     String(m[4] || '0').padStart(2, '0') + ':' + (m[5] || '00'), tz, 'yyyy-MM-dd HH:mm');
 }
 
+/*
+ * utms = [source, campaign, content]. A link-in-bio visit ("link_in_bio") is not an ad: DIRECT. A UTM with no campaign
+ * and no Meta / TikTok word (utm_source=chatgpt.com) says nothing about an ad, so the referrer and source decide.
+ */
 function platformOf_(utms, referrer, sourceName) {
-  const text = norm_(utms.join(' ')), tk = cfgList_('attribution.tiktok_markers').map(norm_),
+  if (utms.some(u => /link.?in.?bio/i.test(String(u || '')))) return { p: APP.DIRECT, s: 'organic' };
+  const text = norm_(utms.filter(Boolean).join(' ')), tk = cfgList_('attribution.tiktok_markers').map(norm_),
     me = cfgList_('attribution.meta_markers').map(norm_);
   const isTk = tk.some(t => hasToken_(text, t)), isMe = me.some(t => hasToken_(text, t));
   // A referrer URL (facebook.com/…) or the COD form's word (Facebook, Instagram, Direct(…)).
@@ -113,7 +118,7 @@ function platformOf_(utms, referrer, sourceName) {
   if (isTk && isMe) return refP ? { p: refP, s: 'referrer' } : { p: APP.UNKNOWN_PLATFORM, s: 'utm_conflict' };
   if (isTk) return { p: 'TIKTOK', s: 'utm' };
   if (isMe) return { p: 'META', s: 'utm' };
-  if (text) return { p: cfgStr_('attribution.other_utm_platform') === 'UNKNOWN' ? APP.UNKNOWN_PLATFORM : 'META', s: 'utm_convention' };
+  if (text && String(utms[1] || '').trim()) return { p: cfgStr_('attribution.other_utm_platform') === 'UNKNOWN' ? APP.UNKNOWN_PLATFORM : 'META', s: 'utm_convention' };
   if (refP) return { p: refP, s: 'referrer' };
   const source = String(sourceName || '').toLowerCase();
   if (/^direct/.test(ref)) return { p: APP.DIRECT, s: 'referrer' };
@@ -150,7 +155,8 @@ function readOrderSource_(full) {
   if (c.order_id < 0 || c.date < 0) throw new Error('شيت الأوردرات ناقص فيه عمود رقم الأوردر أو التاريخ. راجع orders.col.* في Settings.');
   let st = null;
   try { st = JSON.parse(PropertiesService.getDocumentProperties().getProperty('ORDERS_SRC') || 'null'); } catch (e) { st = null; }
-  if (!st || st.id !== src.id || st.head !== head.join('|') || !st.fmt || L < st.rows) full = true;
+  const patch = String(ORDER_PATCH_DATA.length); // a new ORDER_PATCH = read everything once, so old rows get it
+  if (!st || st.id !== src.id || st.head !== head.join('|') || !st.fmt || L < st.rows || st.patch !== patch) full = true;
   const from = full ? 2 : Math.max(2, Math.min(st.rows + 1, L - ORDERS.OVERLAP + 1));
   const rows = src.sheet.getRange(from, 1, L - from + 1, W).getValues(), fmt = full ? detectDateFormat_(rows, c.date) : st.fmt;
   const get = (r, k) => (c[k] >= 0 ? orderCell_(r[c[k]]) : '');
@@ -169,7 +175,7 @@ function readOrderSource_(full) {
     const id = String(get(r0, 'order_id') === null ? '' : get(r0, 'order_id')).trim();
     if (!id) return;
     // A row from before Flow wrote the form columns: those columns from ORDER_PATCH (16_orders_patch.gs).
-    const fix = ORDER_PATCH[id] && !ORDER_PATCH_COLS.some(k => k !== 'product' && get(r0, k)) ? ORDER_PATCH[id] : null;
+    const fix = !ORDER_PATCH_COLS.some(k => k !== 'product' && get(r0, k)) ? orderPatch_(id) : null;
     const r = !fix ? r0 : r0.slice();
     if (fix) ORDER_PATCH_COLS.forEach((k, i) => { if (c[k] >= 0) r[c[k]] = fix[i]; });
     const dt = parseOrderDate_(get(r, 'date'), fmt, src.tz);
@@ -191,19 +197,20 @@ function readOrderSource_(full) {
   });
   if (noDate && full) setStatus_('ORDERS_NODATE', noDate + ' صف من غير تاريخ مفهوم');
   const out = Array.from(byId.values()).map(o => {
-    const pl = platformOf_(o.utms.filter(Boolean), o.referrer, o.source);
+    const pl = platformOf_(o.utms, o.referrer, o.source);
     const adId = (o.utms.join(' ').match(/\d{10,}/g) || []).find(x => adIds.has(x)) || byName.get(norm_(o.utms[0]) + '|' + norm_(o.utms[1])) || '';
     return [o.id, Utilities.formatDate(o.dt, tz_(), 'yyyy-MM-dd HH:mm'), dayKey_(o.dt), pl.p, pl.s, productOfOrder_(o.raw),
       o.raw.replace(/\s+/g, ' ').slice(0, 1000), o.total, o.city, o.phone ? '0' + o.phone : '', o.alt ? '0' + o.alt : '',
       o.utms[0], o.utms[1], o.utms[2], adId, o.cancelled];
   }).sort((a, b) => (a[1] < b[1] ? 1 : -1));
-  return { rows: out, full: full, state: { id: src.id, head: head.join('|'), fmt: fmt, rows: L } };
+  return { rows: out, full: full, state: { id: src.id, head: head.join('|'), fmt: fmt, rows: L, patch: patch } };
 }
 
 /*
  * Orders Raw stays sorted newest first. A normal update replaces only the orders it just read (the newest block);
  * a full read (full = true, daily) rewrites the tab, and nothing is written when nothing changed.
  */
+let ORDERS_REREAD_ = false; // old orders changed in this run: the whole Daily Log is rebuilt
 function syncOrders_(full) {
   const res = time_('الأوردرات — قراءة', () => readOrderSource_(full));
   if (!res) return { orders: 0, changed: false };
@@ -213,7 +220,7 @@ function syncOrders_(full) {
   let total = res.rows.length;
   withLock_(() => {
     const sh = ensureTab_(APP.T.ORDERS, ORDERS_HEADERS), text = [1, 2, 3, 10, 11, 15], byCreated = (a, b) => (sortKey_(a[1]) < sortKey_(b[1]) ? 1 : -1);
-    if (res.full) writeRows_(sh, res.rows, ORDERS_HEADERS.length, text);
+    if (res.full) ORDERS_REREAD_ = writeRows_(sh, res.rows, ORDERS_HEADERS.length, text) || ORDERS_REREAD_;
     else if (res.rows.length) {
       const fresh = new Map(res.rows.map(r => [String(r[0]), r]));
       total = writeSortedBlock_(sh, ORDERS_HEADERS.length, 2, sortKey_, sortKey_(res.rows[res.rows.length - 1][1]), '9999', old => {
