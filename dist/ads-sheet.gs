@@ -11,7 +11,7 @@
  * Ad accounts and stores are read-only from here: no writes to Meta, TikTok or order sources.
  */
 const APP = {
-  VERSION: '1.9.0',
+  VERSION: '1.10.0',
   T: {
     SETTINGS: 'Settings', ACCOUNTS: 'Accounts', PRODUCTS: 'Products', ADMAP: 'Ad Map',
     ADS: 'Ads Raw', ACC_RAW: 'Account Raw', ORDERS: 'Orders Raw', DAILY: 'Daily Log',
@@ -2245,12 +2245,14 @@ function todayOrders_(from) {
   });
   return out;
 }
-/* "Blush (3)، Lip Oil (1)": what the orders of one row bought, most ordered first. */
-function orderedText_(orders, key, from, to) {
+/*
+ * [[product, orders with it]]: what the orders of one row bought — the ad's own product first, then most ordered.
+ * An order with two products counts on both.
+ */
+function orderedList_(orders, key, from, to) {
   const n = {};
   orders.forEach(o => { if (o.key === key && o.d >= from && o.d <= to) o.items.forEach(i => { n[i] = (n[i] || 0) + 1; }); });
-  const list = Object.keys(n).sort((a, b) => n[b] - n[a]);
-  return list.slice(0, 5).map(i => i + ' (' + n[i] + ')').join('، ') + (list.length > 5 ? '، +' + (list.length - 5) : '');
+  return Object.keys(n).sort((a, b) => ((b === key) - (a === key)) || (n[b] - n[a]) || (a < b ? -1 : 1)).map(i => [i, n[i]]);
 }
 function todayProducts_(g, r, title, from, to, rows, running, orders) {
   const S = TODAY, c = S.RIGHT_COL, meta = {}, special = [APP.CATALOG, APP.MULTI, APP.UNMAPPED, APP.META_NO_AD, APP.UNKNOWN_PRODUCT];
@@ -2259,11 +2261,12 @@ function todayProducts_(g, r, title, from, to, rows, running, orders) {
     const t = meta[x[2]] = meta[x[2]] || { spend: 0, orders: 0, revenue: 0, pixel: 0 };
     t.spend += num_(x[3]); t.orders += num_(x[8]); t.revenue += num_(x[10]); t.pixel += num_(x[7]);
   });
-  r = todayHead_(g, r, c, 8, title, ['PRODUCT', 'META ORDERS', 'META SPEND', 'META CPP', 'META ROAS', 'PIXEL PURCHASES', 'RUNNING NOW',
-    'ORDERED PRODUCTS (اللي اتطلب)']);
+  r = todayHead_(g, r, c, 9, title, ['PRODUCT', 'META ORDERS', 'META SPEND', 'META CPP', 'META ROAS', 'PIXEL PURCHASES', 'RUNNING NOW',
+    'ORDERED PRODUCT (اللي اتطلب)', 'ORDERS']);
   const names = Object.keys(meta).filter(n => special.indexOf(n) < 0 && (meta[n].spend > 0 || meta[n].orders > 0))
     .sort((a, b) => (meta[b].spend - meta[a].spend) || (meta[b].orders - meta[a].orders));
   const tot = { spend: 0, orders: 0, revenue: 0, pixel: 0 };
+  let orderedSum = 0;
   const put = (name, t, style) => {
     g.set(r, c, name, style);
     g.set(r, c + 1, t.orders, Object.assign({ nf: S.COUNT, al: 'right' }, style));
@@ -2273,8 +2276,20 @@ function todayProducts_(g, r, title, from, to, rows, running, orders) {
     g.set(r, c + 5, t.pixel, Object.assign({ nf: S.COUNT, al: 'right' }, style));
     const total = name === 'TOTAL META PRODUCT PERFORMANCE';
     g.set(r, c + 6, total ? '' : running(name), Object.assign({}, style, { fc: '#137333' }));
-    g.set(r, c + 7, total ? '' : orderedText_(orders, name, from, to), style);
-    r++;
+    // One line per ordered product under the ad's product; the ad's numbers span those lines.
+    const list = total ? [] : orderedList_(orders, name, from, to), k = Math.max(list.length, 1);
+    if (total) { g.set(r, c + 7, '', style); g.set(r, c + 8, orderedSum, Object.assign({ nf: S.COUNT, al: 'right' }, style)); }
+    for (let i = 0; i < k; i++) {
+      const item = list[i] || ['', ''];
+      if (i) g.fill(r + i, c, 7, Object.assign({}, style));
+      if (!total) {
+        g.set(r + i, c + 7, item[0], Object.assign({}, style, { b: 'normal' }));
+        g.set(r + i, c + 8, item[1], Object.assign({ nf: S.COUNT, al: 'right' }, style, { b: 'normal' }));
+        orderedSum += item[1] || 0;
+      }
+    }
+    if (k > 1) for (let col = c; col < c + 7; col++) g.merge(r, col, k, 1);
+    r += k;
   };
   // CATALOG first (all catalog / Advantage+ ads together; per product in the الكتالوج tab), then products, then the rest.
   const add = (n, style) => {
@@ -2305,7 +2320,7 @@ function writeToday_() {
   writeGrid_(sh, g);
   sh.setFrozenRows(0);
   [[1, 150], [2, 210], [3, 120], [4, 130], [5, 130], [6, 130], [7, 24], [8, 240]].forEach(w => sh.setColumnWidth(w[0], w[1]));
-  for (let col = 9; col <= TODAY.WIDTH; col++) sh.setColumnWidth(col, col === TODAY.RIGHT_COL + 7 ? 340 : 115);
+  for (let col = 9; col <= TODAY.WIDTH; col++) sh.setColumnWidth(col, col === TODAY.RIGHT_COL + 7 ? 320 : 115);
   sh.getRange(8, 1, 1, 6).setWrap(true);
 }
 

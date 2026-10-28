@@ -168,6 +168,10 @@ test('Today: صف لكل حساب بأرقام المنصة، والإجمالي
 
 test('Today: لقطات الـ 3 ساعات من تاب Intraday، مع CPP و ROAS', () => {
   const e = scenario();
+  // اللقطات بتتاخد من الساعة الحقيقية: التاب يبقى بلقطة 3 بس، عشان الاختبار مايتأثرش بساعة تشغيله
+  const intra = e.ss.getSheetByName('Intraday');
+  e.c.writeRows_(intra, [], 7, []);
+  e.doc.INTRA_LAST = 'x'; e.c.takeIntraday_ = () => false;
   e.ss.getSheetByName('Intraday').appendRow([e.today, '15:00', 'META', 500, 2, 250, 1000]);
   e.ss.getSheetByName('Intraday').appendRow([e.today, '15:00', 'الإجمالي', 500, 3, 166.67, 1250]);
   e.c.writeToday_();
@@ -353,12 +357,13 @@ test('الكتالوج: Today فيه صف CATALOG واحد بصرفه وأورد
 
   const between = (v, col, from, to) => { const i = v.findIndex(r => r[col] === from); return v.slice(i + 1, v.findIndex((r, j) => j > i && r[col] === to) + 1); };
   const v = e.ss.getSheetByName('Today').getDataRange().getValues();
-  assert.equal(v.find(r => r[7] === 'PRODUCT')[14], 'ORDERED PRODUCTS (اللي اتطلب)');
-  // عمود ORDERED PRODUCTS: إعلان Lip Oil جاب أوردر فيه Lip Oil و Blush
-  assert.deepEqual(between(v, 7, 'PRODUCT', 'TOTAL META PRODUCT PERFORMANCE').map(r => r.slice(7, 15)), [
-    ['CATALOG (كل إعلانات الكتالوج)', 1, 400, 400, 0.63, 2, '✅ 1 إعلان', 'Blush (1)'],
-    ['Lip Oil', 1, 600, 600, 0.5, 2, '✅ 1 إعلان', 'Lip Oil (1)، Blush (1)'],
-    ['TOTAL META PRODUCT PERFORMANCE', 2, 1000, 500, 0.55, 4, '', ''],
+  assert.deepEqual(v.find(r => r[7] === 'PRODUCT').slice(14, 16), ['ORDERED PRODUCT (اللي اتطلب)', 'ORDERS']);
+  // إعلان Lip Oil جاب أوردر فيه Lip Oil و Blush: صفين، منتج الإعلان الأول، وأرقام الإعلان في أول صف بس
+  assert.deepEqual(between(v, 7, 'PRODUCT', 'TOTAL META PRODUCT PERFORMANCE').map(r => r.slice(7, 16)), [
+    ['CATALOG (كل إعلانات الكتالوج)', 1, 400, 400, 0.63, 2, '✅ 1 إعلان', 'Blush', 1],
+    ['Lip Oil', 1, 600, 600, 0.5, 2, '✅ 1 إعلان', 'Lip Oil', 1],
+    ['', '', '', '', '', '', '', 'Blush', 1],
+    ['TOTAL META PRODUCT PERFORMANCE', 2, 1000, 500, 0.55, 4, '', '', 3],
   ]);
   const t = e.ss.getSheetByName('الكتالوج').getDataRange().getValues();
   assert.deepEqual(between(t, 0, 'PRODUCT', 'TOTAL CATALOG').map(r => r.slice(0, 6)), [
