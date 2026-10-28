@@ -110,6 +110,8 @@ function discoverAccounts_() {
   const osh = ss_().getSheetByName(APP.T.ORDERS), ash = ss_().getSheetByName(APP.T.ADS);
   if (!osh || !ash || !accounts_('META').length) return;
   const props = PropertiesService.getDocumentProperties(), today = todayKey_(), weekAgo = shiftKey_(today, -7);
+  if (props.getProperty('ACC_DISCOVER_DAY') === today) return; // once a day
+  props.setProperty('ACC_DISCOVER_DAY', today);
   const known = new Set();
   readRows_(ash, ADS_HEADERS.length).forEach(a => { [a[4], a[6], a[8]].forEach(x => { if (x) known.add(String(x)); }); });
   const ids = new Set();

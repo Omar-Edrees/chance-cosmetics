@@ -11,7 +11,7 @@
  * Ad accounts and stores are read-only from here: no writes to Meta, TikTok or order sources.
  */
 const APP = {
-  VERSION: '1.12.0',
+  VERSION: '1.13.0',
   T: {
     SETTINGS: 'Settings', ACCOUNTS: 'Accounts', PRODUCTS: 'Products', ADMAP: 'Ad Map',
     ADS: 'Ads Raw', ACC_RAW: 'Account Raw', ORDERS: 'Orders Raw', DAILY: 'Daily Log',
@@ -448,6 +448,8 @@ function discoverAccounts_() {
   const osh = ss_().getSheetByName(APP.T.ORDERS), ash = ss_().getSheetByName(APP.T.ADS);
   if (!osh || !ash || !accounts_('META').length) return;
   const props = PropertiesService.getDocumentProperties(), today = todayKey_(), weekAgo = shiftKey_(today, -7);
+  if (props.getProperty('ACC_DISCOVER_DAY') === today) return; // once a day
+  props.setProperty('ACC_DISCOVER_DAY', today);
   const known = new Set();
   readRows_(ash, ADS_HEADERS.length).forEach(a => { [a[4], a[6], a[8]].forEach(x => { if (x) known.add(String(x)); }); });
   const ids = new Set();
@@ -1246,8 +1248,8 @@ function writeTests_() {
 }
 
 /*
- * slow = also the heavy period tabs (Product Performance, Tests, المنتجات, تعادل الحسابات). The 15-minute run does
- * them once an hour at most and only with time to spare, so it never hits Apps Script's 6-minute limit.
+ * slow = also the heavy period tabs (Product Performance, Tests, المنتجات, تعادل الحسابات): every 2 days, and from
+ * the 📦 menu button. The 15-minute run keeps only what is read during the day light and fresh.
  */
 function rebuildViews_(slow) {
   resetCaches_();
@@ -1259,7 +1261,7 @@ function rebuildViews_(slow) {
 }
 function slowViewsDue_() {
   const at = Number(PropertiesService.getDocumentProperties().getProperty('SLOW_VIEWS_AT') || 0);
-  return Date.now() - at > 60 * 60000 && (!DEADLINE_ || DEADLINE_ - Date.now() > 150000);
+  return Date.now() - at > 48 * 3600000 && (!DEADLINE_ || DEADLINE_ - Date.now() > 150000);
 }
 
 /* Simple trigger: changing the period cells refreshes that view only. */
@@ -1317,7 +1319,7 @@ function fullSync_(days) {
   syncOrders_();
   const r = syncAds_(since, today);
   runLiveExt_();
-  withLock_(() => time_('Views', () => rebuildViews_(true)));
+  withLock_(() => time_('Views', () => rebuildViews_(slowViewsDue_())));
   setStatus_('FULL', '✓ ' + since + ' → ' + today + ' (' + r.ads + ' صف إعلانات)');
   return r;
 }
@@ -1445,7 +1447,7 @@ function backfillStep() {
   try {
     syncOrders_();
     runLiveExt_();
-    withLock_(() => rebuildViews_(true));
+    withLock_(() => rebuildViews_(slowViewsDue_()));
     props.deleteProperty('BACKFILL');
     const through = asKey_(props.getProperty('SYNCED_THROUGH') || ''), done = st.until < todayKey_() ? st.until : shiftKey_(todayKey_(), -1);
     if (!through || through < done) props.setProperty('SYNCED_THROUGH', done);
@@ -2364,7 +2366,11 @@ function chanceSetup_() {
 }
 function chanceLive_() {
   STOCK_ = null;
-  try { if (autoAddProducts_()) withLock_(() => refreshAdMap_([], {}, false)); } catch (e) { setStatus_('STOCK', '✗ ' + errText_(e)); }
+  const props = PropertiesService.getDocumentProperties(), today = todayKey_();
+  if (props.getProperty('STOCK_DAY') !== today) { // stock → Products: once a day
+    props.setProperty('STOCK_DAY', today);
+    try { if (autoAddProducts_()) withLock_(() => refreshAdMap_([], {}, false)); } catch (e) { setStatus_('STOCK', '✗ ' + errText_(e)); }
+  }
   try { refreshActive_(); } catch (e) { setStatus_('ACTIVE', '✗ ' + errText_(e)); }
 }
 function chanceViews_(slow) { writeCatalogTab_(); if (slow) { writeProductsTab_(); writeAccountsBE_(); } }

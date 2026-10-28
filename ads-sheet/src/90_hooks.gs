@@ -16,7 +16,11 @@ function chanceSetup_() {
 }
 function chanceLive_() {
   STOCK_ = null;
-  try { if (autoAddProducts_()) withLock_(() => refreshAdMap_([], {}, false)); } catch (e) { setStatus_('STOCK', '✗ ' + errText_(e)); }
+  const props = PropertiesService.getDocumentProperties(), today = todayKey_();
+  if (props.getProperty('STOCK_DAY') !== today) { // stock → Products: once a day
+    props.setProperty('STOCK_DAY', today);
+    try { if (autoAddProducts_()) withLock_(() => refreshAdMap_([], {}, false)); } catch (e) { setStatus_('STOCK', '✗ ' + errText_(e)); }
+  }
   try { refreshActive_(); } catch (e) { setStatus_('ACTIVE', '✗ ' + errText_(e)); }
 }
 function chanceViews_(slow) { writeCatalogTab_(); if (slow) { writeProductsTab_(); writeAccountsBE_(); } }

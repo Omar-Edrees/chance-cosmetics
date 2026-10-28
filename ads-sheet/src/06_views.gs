@@ -248,8 +248,8 @@ function writeTests_() {
 }
 
 /*
- * slow = also the heavy period tabs (Product Performance, Tests, المنتجات, تعادل الحسابات). The 15-minute run does
- * them once an hour at most and only with time to spare, so it never hits Apps Script's 6-minute limit.
+ * slow = also the heavy period tabs (Product Performance, Tests, المنتجات, تعادل الحسابات): every 2 days, and from
+ * the 📦 menu button. The 15-minute run keeps only what is read during the day light and fresh.
  */
 function rebuildViews_(slow) {
   resetCaches_();
@@ -261,7 +261,7 @@ function rebuildViews_(slow) {
 }
 function slowViewsDue_() {
   const at = Number(PropertiesService.getDocumentProperties().getProperty('SLOW_VIEWS_AT') || 0);
-  return Date.now() - at > 60 * 60000 && (!DEADLINE_ || DEADLINE_ - Date.now() > 150000);
+  return Date.now() - at > 48 * 3600000 && (!DEADLINE_ || DEADLINE_ - Date.now() > 150000);
 }
 
 /* Simple trigger: changing the period cells refreshes that view only. */

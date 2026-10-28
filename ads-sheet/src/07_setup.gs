@@ -42,7 +42,7 @@ function fullSync_(days) {
   syncOrders_();
   const r = syncAds_(since, today);
   runLiveExt_();
-  withLock_(() => time_('Views', () => rebuildViews_(true)));
+  withLock_(() => time_('Views', () => rebuildViews_(slowViewsDue_())));
   setStatus_('FULL', '✓ ' + since + ' → ' + today + ' (' + r.ads + ' صف إعلانات)');
   return r;
 }
@@ -170,7 +170,7 @@ function backfillStep() {
   try {
     syncOrders_();
     runLiveExt_();
-    withLock_(() => rebuildViews_(true));
+    withLock_(() => rebuildViews_(slowViewsDue_()));
     props.deleteProperty('BACKFILL');
     const through = asKey_(props.getProperty('SYNCED_THROUGH') || ''), done = st.until < todayKey_() ? st.until : shiftKey_(todayKey_(), -1);
     if (!through || through < done) props.setProperty('SYNCED_THROUGH', done);
