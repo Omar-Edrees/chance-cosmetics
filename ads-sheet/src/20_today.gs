@@ -204,7 +204,7 @@ function todayClosing_(g, today, sum, rows) {
   const out = {};
   rows.forEach(x => { if (x[0] === today && x[1] === APP.META_OUT) out[x[2]] = (out[x[2]] || 0) + num_(x[8]); });
   const outNames = Object.keys(out).sort((a, b) => out[b] - out[a]).slice(0, 2).join(' / ');
-  [[APP.META_OUT, 'META (حساب مش معانا)', 'من غير صرف: ' + outNames], [APP.DIRECT, 'DIRECT', 'مباشر أو لينك البايو (من غير إعلان)'],
+  [[APP.META_OUT, 'META (حساب مش معانا)', 'مش داخل في التوتال: ' + outNames], [APP.DIRECT, 'DIRECT', 'مباشر أو لينك البايو (من غير إعلان)'],
     [APP.MANUAL, 'MANUAL (DRAFT)', 'أوردرات يدوي'], [APP.UNKNOWN_PLATFORM, 'NO SOURCE', 'من غير بيانات مصدر']].forEach(x => {
     const t = sum.byPlatform[x[0]] || { orders: 0 };
     if ((x[0] === APP.UNKNOWN_PLATFORM || x[0] === APP.META_OUT) && !t.orders) return;

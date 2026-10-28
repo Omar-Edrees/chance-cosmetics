@@ -452,8 +452,8 @@ test('أوردرات من حساب Meta مش معانا: صف لوحدها بر�
   e.c.liveTick();
   const v = e.ss.getSheetByName('Today').getDataRange().getValues(), row = l => v.find(r => r[0] === l);
   assert.deepEqual(row('META TOTAL').slice(2, 4), [600, 2], 'META TOTAL من غير أوردر الحساب التاني');
-  assert.deepEqual(row('META (حساب مش معانا)').slice(1, 4), ['من غير صرف: Marshmallow', '', 1]);
-  assert.equal(row('GRAND TOTAL')[3], 3);
+  assert.deepEqual(row('META (حساب مش معانا)').slice(1, 4), ['مش داخل في التوتال: Marshmallow', '', 1]);
+  assert.equal(row('GRAND TOTAL')[3], 2, 'أوردرات الحساب التاني برا GRAND TOTAL');
   const i = v.findIndex(r => r[7] === 'PRODUCT');
   assert.deepEqual(v.slice(i + 1, i + 4).map(r => [r[7], r[8], r[14], r[15]]), [
     ['Lip Oil', 2, 'Lip Oil', 1],

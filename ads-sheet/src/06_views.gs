@@ -77,13 +77,17 @@ function outsideMeta_(o, known) {
 
 function dailyRows_() { return rawRows_(APP.T.DAILY, DAILY_HEADERS.length).map(r => { r[0] = asKey_(r[0]); return r; }); }
 
-/* Totals for a date range: by platform, by product, overall. */
+/*
+ * Totals for a date range: by platform, by product, overall. META OUT (orders from an ad account not in the sheet)
+ * has its own platform total but stays out of the overall total until that account is added.
+ */
 function summarize_(rows, from, to) {
   const z = () => ({ spend: 0, notExact: 0, imp: 0, clicks: 0, pixel: 0, orders: 0, cancelled: 0, revenue: 0 });
   const out = { total: z(), byPlatform: {}, byProduct: {} };
   rows.forEach(r => {
     if (r[0] < from || r[0] > to) return;
-    [out.total, out.byPlatform[r[1]] = out.byPlatform[r[1]] || z(), out.byProduct[r[2]] = out.byProduct[r[2]] || z()].forEach(t => {
+    const plat = out.byPlatform[r[1]] = out.byPlatform[r[1]] || z(), prod = out.byProduct[r[2]] = out.byProduct[r[2]] || z();
+    (r[1] === APP.META_OUT ? [plat, prod] : [out.total, plat, prod]).forEach(t => {
       t.spend += num_(r[3]); t.notExact += num_(r[4]); t.imp += num_(r[5]); t.clicks += num_(r[6]);
       t.pixel += num_(r[7]); t.orders += num_(r[8]); t.cancelled += num_(r[9]); t.revenue += num_(r[10]);
     });
