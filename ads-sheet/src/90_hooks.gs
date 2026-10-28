@@ -9,7 +9,7 @@
  */
 
 function chanceSetup_() {
-  ensureTab_(X.PRODUCTS); ensureTab_(X.ACC_BE);
+  ensureTab_(X.PRODUCTS); ensureTab_(X.ACC_BE); ensureTab_(X.CATALOG);
   const tk = ['date', 'account_id', 'campaign', 'adgroup', 'ad_id', 'ad', 'spend', 'impressions', 'clicks', 'purchases', 'landing']
     .map(k => cfgStr_('tiktok.col.' + k)).filter(Boolean);
   ensureTab_(cfgStr_('tiktok.tab') || 'TikTok Data', tk);
@@ -19,7 +19,7 @@ function chanceLive_() {
   try { if (autoAddProducts_()) withLock_(() => refreshAdMap_([], {}, false)); } catch (e) { setStatus_('STOCK', '✗ ' + errText_(e)); }
   try { refreshActive_(); } catch (e) { setStatus_('ACTIVE', '✗ ' + errText_(e)); }
 }
-function chanceViews_() { writeProductsTab_(); writeAccountsBE_(); }
+function chanceViews_() { writeCatalogTab_(); writeProductsTab_(); writeAccountsBE_(); }
 function chanceEdit_(name, a1) {
   if (name === X.PRODUCTS && (a1 === 'B2' || a1 === 'B3')) writeProductsTab_();
   if (name === X.ACC_BE && a1 === 'B2') writeAccountsBE_();

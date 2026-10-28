@@ -3,10 +3,11 @@
 function refreshActive_() {
   const accs = accounts_('META');
   if (!accs.length) return;
-  const idx = adMapIndex_(), out = {};
+  const idx = adMapIndex_(), catAds = catalogAdIds_(), out = {};
   accs.forEach(acc => {
     metaAll_('act_' + acc.id + '/ads', { fields: 'id', effective_status: JSON.stringify(['ACTIVE']) }).forEach(a => {
-      const m = idx.get(adKey_('META', String(a.id), '', '', '')), p = m ? m.product : APP.UNMAPPED;
+      const m = idx.get(adKey_('META', String(a.id), '', '', ''));
+      const p = catAds.has('META|' + String(a.id)) ? APP.CATALOG : m ? m.product : APP.UNMAPPED;
       out[p] = (out[p] || 0) + 1;
     });
   });

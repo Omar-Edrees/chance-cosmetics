@@ -72,16 +72,58 @@ function catalogProduct_(name) {
   return String(name || '').trim();
 }
 
-/* key "date|platform|adId" → [{product, spend, pixel, value}] */
-function catalogIndex_() {
-  const sh = ss_().getSheetByName(APP.T.CATALOG), idx = new Map();
-  if (!sh) return idx;
-  readRows_(sh, CATALOG_HEADERS.length).forEach(r => {
-    const k = asKey_(r[0]) + '|' + r[1] + '|' + String(r[3]);
-    if (!idx.has(k)) idx.set(k, []);
-    idx.get(k).push({ product: catalogProduct_(r[4]), spend: num_(r[5]), pixel: num_(r[6]), value: num_(r[7]) });
+/* "META|adId" of every catalog / Advantage+ ad (any ad Meta ever split by product). */
+function catalogAdIds_() {
+  const sh = ss_().getSheetByName(APP.T.CATALOG), ids = new Set();
+  if (sh) readRows_(sh, 4).forEach(r => { if (r[3]) ids.add(r[1] + '|' + String(r[3])); });
+  return ids;
+}
+
+/*
+ * Tab الكتالوج: where catalog / Advantage+ spend went, product by product (Meta's split), today and this month.
+ * Orders = store orders that came from a catalog ad (UTM → ad), counted on the order's product.
+ * TOTAL = all spend of catalog ads, the same number as the CATALOG row in Today.
+ */
+function writeCatalogTab_() {
+  const sh = ensureTab_(X.CATALOG), g = todayGrid_(), today = todayKey_(), catAds = catalogAdIds_();
+  const split = [], csh = ss_().getSheetByName(APP.T.CATALOG);
+  if (csh) readRows_(csh, CATALOG_HEADERS.length).forEach(r => split.push([asKey_(r[0]), catalogProduct_(r[4]), num_(r[5]), num_(r[6])]));
+  const adSpend = [];
+  readRows_(tab_(APP.T.ADS), ADS_HEADERS.length).forEach(a => { if (catAds.has(a[1] + '|' + String(a[8]))) adSpend.push([asKey_(a[0]), num_(a[10])]); });
+  const orders = [], osh = ss_().getSheetByName(APP.T.ORDERS);
+  if (osh) readRows_(osh, ORDERS_HEADERS.length).forEach(o => {
+    if (o[14] && catAds.has(o[3] + '|' + String(o[14]))) orders.push([asKey_(o[2]), o[5], num_(o[7])]);
   });
-  return idx;
+  const p = today.split('-').map(Number), noon = new Date(Date.UTC(p[0], p[1] - 1, p[2], 12));
+  const table = (r, title, from, to) => {
+    const by = {}, z = n => (by[n] = by[n] || { spend: 0, pixel: 0, orders: 0, revenue: 0 });
+    split.forEach(x => { if (x[0] >= from && x[0] <= to) { z(x[1]).spend += x[2]; z(x[1]).pixel += x[3]; } });
+    orders.forEach(x => { if (x[0] >= from && x[0] <= to) { z(x[1]).orders++; z(x[1]).revenue += x[2]; } });
+    const total = { spend: adSpend.filter(x => x[0] >= from && x[0] <= to).reduce((s, x) => s + x[1], 0), pixel: 0, orders: 0, revenue: 0 };
+    r = todayHead_(g, r, 1, 6, title, ['PRODUCT', 'ORDERS', 'META SPEND', 'CPP', 'ROAS', 'META PURCHASES (PIXEL)']);
+    const put = (name, t, style) => {
+      g.set(r, 1, name, style);
+      g.set(r, 2, t.orders, Object.assign({ nf: TODAY.COUNT, al: 'right' }, style));
+      g.set(r, 3, round2_(t.spend), Object.assign({ nf: TODAY.MONEY, al: 'right' }, style));
+      g.set(r, 4, ratioOrBlank_(t.spend, t.orders, 2), Object.assign({ nf: TODAY.MONEY, al: 'right' }, style));
+      g.set(r, 5, ratioOrBlank_(t.revenue, t.spend, 2), Object.assign({ nf: TODAY.RATIO, al: 'right' }, style));
+      g.set(r, 6, t.pixel === '' ? '' : t.pixel, Object.assign({ nf: TODAY.COUNT, al: 'right' }, style));
+      r++;
+    };
+    const names = Object.keys(by).filter(n => n !== CATALOG.OTHER).sort((a, b) => (by[b].spend - by[a].spend) || (by[b].orders - by[a].orders));
+    names.forEach(n => { put(n, by[n], {}); });
+    if (by[CATALOG.OTHER]) put(CATALOG.OTHER, by[CATALOG.OTHER], { bg: TODAY.SPECIAL });
+    let splitSum = 0;
+    Object.keys(by).forEach(n => { splitSum += by[n].spend; total.pixel += by[n].pixel; total.orders += by[n].orders; total.revenue += by[n].revenue; });
+    if (total.spend - splitSum >= 0.01) put('صرف Meta ماقسمتهوش على منتجات', { spend: total.spend - splitSum, pixel: '', orders: 0, revenue: 0 }, { bg: TODAY.SPECIAL });
+    if (!names.length && !by[CATALOG.OTHER] && !total.spend) { g.set(r, 1, 'مفيش صرف كتالوج في الفترة دي', { fc: '#6b7280' }); r++; }
+    put('TOTAL CATALOG', total, { bg: TODAY.TOTAL, b: 'bold' });
+    return r;
+  };
+  let r = table(1, 'CATALOG — TODAY | ' + Utilities.formatDate(noon, 'UTC', 'dd-MMM-yyyy'), today, today) + 1;
+  table(r, 'CATALOG — THIS MONTH | ' + Utilities.formatDate(noon, 'UTC', 'MMM-yyyy'), today.slice(0, 8) + '01', today);
+  writeGrid_(sh, g);
+  [[1, 360], [2, 90], [3, 120], [4, 100], [5, 90], [6, 160]].forEach(w => sh.setColumnWidth(w[0], w[1]));
 }
 
 /*

@@ -145,6 +145,12 @@ function readOrderSource_() {
   const rows = values.slice(1), fmt = detectDateFormat_(rows, c.date), get = (r, k) => (c[k] >= 0 ? orderCell_(r[c[k]]) : '');
   const adIds = new Set(); const am = ss_().getSheetByName(APP.T.ADMAP);
   if (am) readRows_(am, 1).forEach(r => adIds.add(String(r[0])));
+  // UTMs with names instead of IDs (utm_source = campaign name, utm_campaign = ad name): the ad from Ads Raw.
+  const byName = new Map(), ash = ss_().getSheetByName(APP.T.ADS);
+  if (ash) readRows_(ash, ADS_HEADERS.length).forEach(a => {
+    const k = norm_(a[5]) + '|' + norm_(a[9]);
+    if (a[8] && !byName.has(k)) byName.set(k, String(a[8]));
+  });
   const cancelWords = cfgList_('orders.cancelled_words').map(norm_);
   const byId = new Map();
   let noDate = 0;
@@ -171,7 +177,7 @@ function readOrderSource_() {
   if (noDate) setStatus_('ORDERS_NODATE', noDate + ' صف من غير تاريخ مفهوم');
   return Array.from(byId.values()).map(o => {
     const pl = platformOf_(o.utms.filter(Boolean), o.referrer, o.source);
-    const adId = (o.utms.join(' ').match(/\d{10,}/g) || []).find(x => adIds.has(x)) || '';
+    const adId = (o.utms.join(' ').match(/\d{10,}/g) || []).find(x => adIds.has(x)) || byName.get(norm_(o.utms[0]) + '|' + norm_(o.utms[1])) || '';
     return [o.id, Utilities.formatDate(o.dt, tz_(), 'yyyy-MM-dd HH:mm'), dayKey_(o.dt), pl.p, pl.s, productOfOrder_(o.raw),
       o.raw.replace(/\s+/g, ' ').slice(0, 1000), o.total, o.city, o.phone ? '0' + o.phone : '', o.alt ? '0' + o.alt : '',
       o.utms[0], o.utms[1], o.utms[2], adId, o.cancelled];

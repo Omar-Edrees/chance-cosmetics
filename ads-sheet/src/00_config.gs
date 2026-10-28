@@ -16,11 +16,12 @@ const APP = {
   MULTI: 'صفحة كل المنتجات (MULTI)',
   UNKNOWN_PRODUCT: 'منتج مش معروف',
   UNKNOWN_PLATFORM: 'UNKNOWN',
-  DIRECT: 'DIRECT', MANUAL: 'MANUAL'
+  DIRECT: 'DIRECT', MANUAL: 'MANUAL',
+  CATALOG: 'CATALOG (كل إعلانات الكتالوج)'
 };
 
 /* Chance tabs (90_hooks.gs plugs them into the engine through EXT). */
-const X = { PRODUCTS: 'المنتجات', ACC_BE: 'تعادل الحسابات' };
+const X = { PRODUCTS: 'المنتجات', ACC_BE: 'تعادل الحسابات', CATALOG: 'الكتالوج' };
 
 /* [key, default, Arabic description]. Empty default = must be filled or stays "ناقص". */
 const SETTINGS_SPEC = [

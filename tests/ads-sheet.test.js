@@ -318,7 +318,7 @@ test('أوردرات Flow: "(blank)" فاضي، والمصدر من بيانات
   assert.equal(grand[3], 5);
 });
 
-test('كل جنيه في Meta على منتج: لينك صفحة المنتج، وصرف الكتالوج متقسم على منتجاته، والباقي بس في MULTI', () => {
+test('الكتالوج: Today فيه صف CATALOG واحد بصرفه وأوردراته، وتاب الكتالوج فيه تقسيمه على المنتجات', () => {
   const probe = env(), today = probe.c.todayKey_(), at = hm => ' ' + today + 'T' + hm + ':00+03:00', B = '(blank)';
   const flow = (id, hm, total, a, products) => ['gid://shopify/Order/' + id, ' #' + id, ' Name', B, total, at(hm), B, B, B, B, B].concat(a, [products, '4655075']);
   const cat = (adId, name, spend, buys) => ({ date_start: today, ad_id: adId, product_id: '5056' + spend + ', ' + name, spend: String(spend),
@@ -329,9 +329,9 @@ test('كل جنيه في Meta على منتج: لينك صفحة المنتج، 
     shop: { 'lip-oil': { title: 'Lip Oil', handle: 'lip-oil', price: 30000 } },
     catalog: { [A1]: [cat('222', 'Lip Oil', 150, 1), cat('222', 'Blush - Pink', 200), cat('222', 'Satin Collection', 30), cat('222', 'Mascara', 0.5)] },
     activeAds: { [A1]: ['111', '222'] },
-    orders: [
-      flow(1, '10:00', 300, ['facebook', 'c', 'x', 'Facebook'], 'Lip Oil x1'),
-      flow(2, '10:30', 250, ['facebook', 'c', 'x', 'Instagram'], 'Blush x1'),
+    orders: [ // UTM بالأسامي: Source = اسم الكامبين، Campaign = اسم الإعلان
+      flow(1, '10:00', 300, ['Camp', 'Ad 111', 'fb', 'Facebook'], 'Lip Oil x1'),
+      flow(2, '10:30', 250, ['Camp', 'Ad 222', 'ig', 'Instagram'], 'Blush x1'),
     ] });
   e.c.setupAll();
   // الدومين مكتوب بـ https و / زي الشيت الحقيقي
@@ -343,17 +343,27 @@ test('كل جنيه في Meta على منتج: لينك صفحة المنتج، 
   assert.deepEqual(products.map(r => [r[0], r[2], r[5]]), [['Lip Oil', 'lip-oil', 300]]);
   const map = e.ss.getSheetByName('Ad Map').getDataRange().getValues().slice(1);
   assert.equal(map.find(r => r[0] === '111')[9], 'LINK');
-  const v = e.ss.getSheetByName('Today').getDataRange().getValues(), first = v.findIndex(r => r[7] === 'PRODUCT');
-  const table = v.slice(first + 1, v.findIndex((r, i) => i > first && r[7] === 'TOTAL META PRODUCT PERFORMANCE') + 1).map(r => r.slice(7, 13));
-  assert.deepEqual(v[first].slice(7, 13), ['PRODUCT', 'META ORDERS', 'META SPEND', 'META CPP', 'META ROAS', 'RUNNING NOW']);
-  assert.deepEqual(table, [
-    ['Lip Oil', 1, 750, 750, 0.4, '✅ 1 إعلان + كتالوج'],
-    ['Blush', 1, 200, 200, 1.25, '✅ كتالوج'],
-    ['Satin Collection', 0, 30, '', 0, '✅ كتالوج'],
-    ['منتجات تانية من الكتالوج (صرف صغير)', 0, 0.5, '', 0, '✅ كتالوج'],
-    ['صفحة كل المنتجات (MULTI)', 0, 19.5, '', 0, '✅ 1 إعلان'],
+  const raw = e.ss.getSheetByName('Orders Raw').getDataRange().getValues().slice(1);
+  assert.deepEqual(raw.map(r => r[14]).sort(), ['111', '222'], 'الأوردر اتربط بالإعلان من اسم الكامبين والإعلان');
+
+  const between = (v, col, from, to) => { const i = v.findIndex(r => r[col] === from); return v.slice(i + 1, v.findIndex((r, j) => j > i && r[col] === to) + 1); };
+  const v = e.ss.getSheetByName('Today').getDataRange().getValues();
+  assert.deepEqual(between(v, 7, 'PRODUCT', 'TOTAL META PRODUCT PERFORMANCE').map(r => r.slice(7, 13)), [
+    ['CATALOG (كل إعلانات الكتالوج)', 1, 400, 400, 0.63, '✅ 1 إعلان'],
+    ['Lip Oil', 1, 600, 600, 0.5, '✅ 1 إعلان'],
     ['TOTAL META PRODUCT PERFORMANCE', 2, 1000, 500, 0.55, ''],
   ]);
+  const t = e.ss.getSheetByName('الكتالوج').getDataRange().getValues();
+  assert.deepEqual(between(t, 0, 'PRODUCT', 'TOTAL CATALOG').map(r => r.slice(0, 6)), [
+    ['Blush', 1, 200, 200, 1.25, 0],
+    ['Lip Oil', 0, 150, '', 0, 1],
+    ['Satin Collection', 0, 30, '', 0, 0],
+    ['منتجات تانية من الكتالوج (صرف صغير)', 0, 0.5, '', 0, 0],
+    ['صرف Meta ماقسمتهوش على منتجات', 0, 19.5, '', 0, ''],
+    ['TOTAL CATALOG', 1, 400, 400, 0.63, 1],
+  ]);
+  assert.match(String(t[0][0]), /^CATALOG — TODAY/);
+  assert.ok(t.some(r => /^CATALOG — THIS MONTH/.test(String(r[0]))));
 });
 
 test('أيام ناقصة في الصرف بتتسحب لوحدها، والتحديث التلقائي بيتشغل لو مش شغال', () => {

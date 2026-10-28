@@ -9,7 +9,7 @@ const TODAY = {
   GAP_COL: 7, RIGHT_COL: 8, WIDTH: 16,
   DARK: '#1f2937', YELLOW: '#fff200', META: '#1d4ed8', TIKTOK: '#111111', META_TOTAL: '#dbe8fb', TT_TOTAL: '#e0e0e0',
   GRAND: '#00ff00', LABEL: '#f3f4f6', METRIC: '#e8f0fe', AVG: '#e8eefc', SPECIAL: '#fde8e8', TOTAL: '#e8eefc',
-  GREEN: '#d9ead3', RED: '#f4cccc', OTHER: '#f3f4f6',
+  GREEN: '#d9ead3', RED: '#f4cccc', OTHER: '#f3f4f6', CATALOG: '#fff2cc',
   MONEY: '#,##0.00', COUNT: '0', RATIO: '0.00', PCT: '0.00%',
   FUNNEL_KEY: 'TODAY_FUNNEL', AVG_KEY: 'TODAY_FUNNEL_AVG', AVG_DAYS: 60, AVG_VERSION: 2,
   FIELDS: 'spend,impressions,clicks,inline_link_clicks,actions,action_values',
@@ -255,18 +255,12 @@ function todayBenchmark_(g, r, today, shown) {
  * that product. RUNNING: Meta ads running now that point at the product, and "catalog" when a catalog / Advantage+
  * ad spent on it today.
  */
-function todayRunning_(today) {
-  const active = activeMap_(), cat = new Set(), sh = ss_().getSheetByName(APP.T.CATALOG);
-  if (sh) readRows_(sh, CATALOG_HEADERS.length).forEach(r => { if (asKey_(r[0]) === today && num_(r[5]) > 0) cat.add(catalogProduct_(r[4])); });
-  return name => {
-    const n = active[name] || 0, parts = [];
-    if (n) parts.push(n + (n === 1 ? ' إعلان' : ' إعلانات'));
-    if (cat.has(name)) parts.push('كتالوج');
-    return parts.length ? '✅ ' + parts.join(' + ') : '';
-  };
+function todayRunning_() {
+  const active = activeMap_();
+  return name => { const n = active[name] || 0; return n ? '✅ ' + n + (n === 1 ? ' إعلان' : ' إعلانات') : ''; };
 }
 function todayProducts_(g, r, title, from, to, rows, running) {
-  const S = TODAY, c = S.RIGHT_COL, meta = {}, special = [APP.MULTI, APP.UNMAPPED, APP.UNKNOWN_PRODUCT];
+  const S = TODAY, c = S.RIGHT_COL, meta = {}, special = [APP.CATALOG, APP.MULTI, APP.UNMAPPED, APP.UNKNOWN_PRODUCT];
   rows.forEach(x => {
     if (x[0] < from || x[0] > to || x[1] !== 'META') return;
     const t = meta[x[2]] = meta[x[2]] || { spend: 0, orders: 0, revenue: 0 };
@@ -282,16 +276,19 @@ function todayProducts_(g, r, title, from, to, rows, running) {
     g.set(r, c + 2, Math.round(t.spend * 100) / 100, Object.assign({ nf: S.MONEY, al: 'right' }, style));
     g.set(r, c + 3, ratioOrBlank_(t.spend, t.orders, 2), Object.assign({ nf: S.MONEY, al: 'right' }, style));
     g.set(r, c + 4, ratioOrBlank_(t.revenue, t.spend, 2), Object.assign({ nf: S.RATIO, al: 'right' }, style));
-    g.set(r, c + 5, style.b ? '' : running(name), Object.assign({ fc: '#137333' }, style));
+    g.set(r, c + 5, name === 'TOTAL META PRODUCT PERFORMANCE' ? '' : running(name), Object.assign({}, style, { fc: '#137333' }));
     r++;
   };
-  names.forEach(n => { put(n, meta[n], {}); ['spend', 'orders', 'revenue'].forEach(k => { tot[k] += meta[n][k]; }); });
-  special.forEach(n => {
+  // CATALOG first (all catalog / Advantage+ ads together; per product in the الكتالوج tab), then products, then the rest.
+  const add = (n, style) => {
     const t = meta[n];
     if (!t || (t.spend <= 0 && t.orders <= 0)) return;
-    put(n, t, { bg: S.SPECIAL });
+    put(n, t, style);
     ['spend', 'orders', 'revenue'].forEach(k => { tot[k] += t[k]; });
-  });
+  };
+  add(APP.CATALOG, { bg: S.CATALOG, b: 'bold' });
+  names.forEach(n => add(n, {}));
+  special.filter(n => n !== APP.CATALOG).forEach(n => add(n, { bg: S.SPECIAL }));
   if (!names.length && !special.some(n => meta[n])) { g.set(r, c, 'مفيش صرف Meta في الفترة دي', { fc: '#6b7280' }); r++; }
   put('TOTAL META PRODUCT PERFORMANCE', tot, { bg: S.TOTAL, b: 'bold' });
   return r;
@@ -305,7 +302,7 @@ function writeToday_() {
   todayClosing_(g, today, sum);
   let r = todaySlots_(g, 1, today) + 1;
   r = todayBenchmark_(g, r, today, shown) + 1;
-  const running = todayRunning_(today);
+  const running = todayRunning_();
   r = todayProducts_(g, r, 'PRODUCT PERFORMANCE — TODAY | ' + shown, today, today, rows, running) + 1;
   todayProducts_(g, r, 'PRODUCT PERFORMANCE — THIS MONTH | ' + month, today.slice(0, 8) + '01', today, rows, running);
   writeGrid_(sh, g);
