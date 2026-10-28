@@ -86,10 +86,12 @@ function mergeRaw_(sheetName, headers, fresh, since, until, accountKeys, keyCols
 function syncAds_(since, until) {
   const meta = time_('Meta — قراءة', () => fetchMetaAds_(since, until));
   const tt = time_('TikTok — قراءة', () => fetchTikTokTab_(since, until));
+  const cat = time_('Meta كتالوج — قراءة', () => syncCatalog_(since, until));
   const ads = meta.ads.concat(tt.ads), acc = meta.acc.concat(tt.acc), keys = meta.accounts.concat(tt.accounts);
   return withLock_(() => {
     mergeRaw_(APP.T.ADS, ADS_HEADERS, ads, since, until, keys, [0, 1, 2, 8], [2, 4, 6, 8]);
     mergeRaw_(APP.T.ACC_RAW, ACC_HEADERS, acc, since, until, keys, [0, 1, 2], [2]);
+    if (cat) mergeCatalog_(cat.rows, since, until, cat.keys);
     time_('Ad Map', () => refreshAdMap_(ads, tt.links, false));
     return { ads: ads.length, since: since, until: until };
   });

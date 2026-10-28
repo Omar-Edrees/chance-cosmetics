@@ -131,7 +131,8 @@ function productOfOrder_(raw) {
   const exact = prods.filter(p => norm_(p.name) === n || p.aliases.indexOf(n) >= 0);
   if (exact.length === 1) return exact[0].name;
   const part = prods.filter(p => p.aliases.some(a => a && a.length >= 3 && n.indexOf(a) >= 0));
-  return part.length === 1 ? part[0].name : APP.UNKNOWN_PRODUCT;
+  // Not in Products: the Shopify title itself is the product (the same name catalog ads report).
+  return part.length === 1 ? part[0].name : t.trim();
 }
 
 function readOrderSource_() {

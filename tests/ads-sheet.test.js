@@ -33,6 +33,10 @@ function env(options) {
   const reply = url => {
     requests.push(url);
     const id = (url.match(/act_(\d+)/) || [])[1];
+    if (/\/insights\?/.test(url) && /breakdowns=product_id/.test(url)) { // كتالوج: الصرف لكل منتج
+      const t = JSON.parse(decodeURIComponent(url.match(/time_range=([^&]+)/)[1]));
+      return { data: ((opt.catalog || {})[id] || []).filter(r => r.date_start >= t.since && r.date_start <= t.until) };
+    }
     if (/\/insights\?/.test(url) && /level=ad&/.test(url)) return { data: ads[id] || [] };
     if (/\/insights\?/.test(url) && !/time_increment/.test(url)) { // تاب Today: الفانل لكل حساب في فترة
       const t = JSON.parse(decodeURIComponent(url.match(/time_range=([^&]+)/)[1])), mine = (ads[id] || []).filter(r => r.date_start >= t.since && r.date_start <= t.until);
@@ -53,7 +57,17 @@ function env(options) {
     if (adId && creatives[adId]) return { creative: { object_story_spec: { link_data: { link: creatives[adId] } } } };
     return { id: 'act_' + id, name: (opt.names || NAMES)[id] };
   };
-  const response = url => { const body = reply(url); return { getResponseCode: () => 200, getContentText: () => JSON.stringify(body) }; };
+  const shop = url => { // صفحة منتج في المتجر: /products/<handle>.js
+    const m = url.match(/\/products\/([^/?]+)\.js$/), p = m && (opt.shop || {})[decodeURIComponent(m[1])];
+    return p ? { code: 200, body: p } : { code: 404, body: {} };
+  };
+  const response = url => {
+    if (!/graph\.facebook\.com/.test(url)) { requests.push(url); const r = shop(url); return { getResponseCode: () => r.code, getContentText: () => JSON.stringify(r.body) }; }
+    const body = reply(url); return { getResponseCode: () => 200, getContentText: () => JSON.stringify(body) };
+  };
+  const triggers = [];
+  const trigger = fn => { const b = { timeBased: () => b, everyMinutes: () => b, atHour: () => b, nearMinute: () => b, everyDays: () => b,
+    inTimezone: () => b, create: () => { const t = { getHandlerFunction: () => fn }; triggers.push(t); return t; } }; return b; };
   const c = load('ads-sheet', {
     SpreadsheetApp: {
       getActive: () => active, openById: id => { if (id !== ORDERS_ID) throw new Error('not found ' + id); return source; },
@@ -63,8 +77,9 @@ function env(options) {
     PropertiesService: { getDocumentProperties: () => store(doc), getUserProperties: () => store(user) },
     LockService: { getScriptLock: () => ({ tryLock: () => true, releaseLock: () => {} }) },
     UrlFetchApp: { fetch: url => response(url), fetchAll: reqs => reqs.map(r => response(r.url)) },
+    ScriptApp: { getProjectTriggers: () => triggers.slice(), deleteTrigger: t => triggers.splice(triggers.indexOf(t), 1), newTrigger: trigger },
   });
-  return { c, ss: active, source, doc, alerts, requests };
+  return { c, ss: active, source, doc, alerts, requests, triggers };
 }
 
 const adRow = (date, adId, spend, ad) => ({ date_start: date, campaign_id: 'C1', campaign_name: 'Camp', adset_id: 'S1', adset_name: 'Set',
@@ -241,7 +256,7 @@ test('تاب المنتجات: الستوك من شوبيفاي، والقطع �
 test('Meta بتتقري بس: مفيش أي طلب كتابة', () => {
   const e = scenario();
   assert.ok(e.requests.length > 0);
-  e.requests.forEach(u => assert.match(u, /^https:\/\/graph\.facebook\.com\//));
+  e.requests.filter(u => !/\/products\/[^/]+\.js$/.test(u)).forEach(u => assert.match(u, /^https:\/\/graph\.facebook\.com\//));
 });
 
 test('نقطة التعادل للأوردر (COD)', () => {
@@ -301,4 +316,68 @@ test('أوردرات Flow: "(blank)" فاضي، والمصدر من بيانات
   assert.deepEqual(labels.slice(labels.indexOf('TIKTOK TOTAL'), labels.indexOf('GRAND TOTAL') + 1),
     ['TIKTOK TOTAL', 'DIRECT', 'MANUAL (DRAFT)', 'NO SOURCE', 'GRAND TOTAL']);
   assert.equal(grand[3], 5);
+});
+
+test('كل جنيه في Meta على منتج: لينك صفحة المنتج، وصرف الكتالوج متقسم على منتجاته، والباقي بس في MULTI', () => {
+  const probe = env(), today = probe.c.todayKey_(), at = hm => ' ' + today + 'T' + hm + ':00+03:00', B = '(blank)';
+  const flow = (id, hm, total, a, products) => ['gid://shopify/Order/' + id, ' #' + id, ' Name', B, total, at(hm), B, B, B, B, B].concat(a, [products, '4655075']);
+  const cat = (adId, name, spend, buys) => ({ date_start: today, ad_id: adId, product_id: '5056' + spend + ', ' + name, spend: String(spend),
+    actions: buys ? [{ action_type: 'offsite_conversion.fb_pixel_purchase', value: String(buys) }] : [] });
+  const e = env({ orderHead: FLOW_HEAD,
+    ads: { [A1]: [adRow(today, '111', 600), adRow(today, '222', 400)] },
+    creatives: { 111: 'https://chance-cosmetics.com/products/lip-oil?utm_source=fb', 222: 'https://chance-cosmetics.com/collections/all' },
+    shop: { 'lip-oil': { title: 'Lip Oil', handle: 'lip-oil', price: 30000 } },
+    catalog: { [A1]: [cat('222', 'Lip Oil', 150, 1), cat('222', 'Blush - Pink', 200), cat('222', 'Satin Collection', 30), cat('222', 'Mascara', 0.5)] },
+    activeAds: { [A1]: ['111', '222'] },
+    orders: [
+      flow(1, '10:00', 300, ['facebook', 'c', 'x', 'Facebook'], 'Lip Oil x1'),
+      flow(2, '10:30', 250, ['facebook', 'c', 'x', 'Instagram'], 'Blush x1'),
+    ] });
+  e.c.setupAll();
+  // الدومين مكتوب بـ https و / زي الشيت الحقيقي
+  const st = e.ss.getSheetByName('Settings'), keys = st.getDataRange().getValues().map(r => r[0]);
+  st.getRange(keys.indexOf('business.store_domains') + 1, 2).setValue('https://www.chance-cosmetics.com/');
+  e.c.liveTick();
+  e.c.liveTick();
+  const products = e.ss.getSheetByName('Products').getDataRange().getValues().slice(1);
+  assert.deepEqual(products.map(r => [r[0], r[2], r[5]]), [['Lip Oil', 'lip-oil', 300]]);
+  const map = e.ss.getSheetByName('Ad Map').getDataRange().getValues().slice(1);
+  assert.equal(map.find(r => r[0] === '111')[9], 'LINK');
+  const v = e.ss.getSheetByName('Today').getDataRange().getValues(), first = v.findIndex(r => r[7] === 'PRODUCT');
+  const table = v.slice(first + 1, v.findIndex((r, i) => i > first && r[7] === 'TOTAL META PRODUCT PERFORMANCE') + 1).map(r => r.slice(7, 13));
+  assert.deepEqual(v[first].slice(7, 13), ['PRODUCT', 'META ORDERS', 'META SPEND', 'META CPP', 'META ROAS', 'RUNNING NOW']);
+  assert.deepEqual(table, [
+    ['Lip Oil', 1, 750, 750, 0.4, '✅ 1 إعلان + كتالوج'],
+    ['Blush', 1, 200, 200, 1.25, '✅ كتالوج'],
+    ['Satin Collection', 0, 30, '', 0, '✅ كتالوج'],
+    ['منتجات تانية من الكتالوج (صرف صغير)', 0, 0.5, '', 0, '✅ كتالوج'],
+    ['صفحة كل المنتجات (MULTI)', 0, 19.5, '', 0, '✅ 1 إعلان'],
+    ['TOTAL META PRODUCT PERFORMANCE', 2, 1000, 500, 0.55, ''],
+  ]);
+});
+
+test('أيام ناقصة في الصرف بتتسحب لوحدها، والتحديث التلقائي بيتشغل لو مش شغال', () => {
+  const probe = env(), today = probe.c.todayKey_(), d = n => probe.c.shiftKey_(today, -n);
+  const e = env({ ads: { [A1]: [adRow(d(12), '111', 100), adRow(today, '111', 50)] } });
+  e.c.setupAll();
+  e.c.fullSync_(14); // زي أول سحب قديم: أيام لحد قبل 12 يوم بس
+  const acc = e.ss.getSheetByName('Account Raw');
+  e.c.writeRows_(acc, acc.getDataRange().getValues().slice(1).filter(r => r[0] === d(12)), 6, [1, 3]);
+  delete e.doc.SYNCED_THROUGH;
+  e.c.liveTick();
+  const names = e.triggers.map(t => t.getHandlerFunction()).sort();
+  assert.deepEqual(names, ['backfillStep', 'dailySync', 'liveTick']);
+  const job = JSON.parse(e.doc.BACKFILL);
+  // أول مرة: الشهر كله تاني عشان صرف الكتالوج يتقسم، أو من أول يوم ناقص لو قبل كده
+  const monthStart = today.slice(0, 8) + '01';
+  assert.equal(job.since, monthStart < d(12) ? monthStart : d(12));
+  assert.equal(job.until, d(1));
+  // بعد كده: من أول يوم ناقص بس
+  delete e.doc.BACKFILL; delete e.doc.SYNCED_THROUGH;
+  e.c.liveTick();
+  assert.equal(JSON.parse(e.doc.BACKFILL).since, d(12));
+  e.c.pauseTriggers();
+  e.triggers.splice(0, e.triggers.length);
+  e.c.liveTick();
+  assert.deepEqual(e.triggers.map(t => t.getHandlerFunction()), [], 'اتوقف من المنيو: مايتشغلش لوحده');
 });

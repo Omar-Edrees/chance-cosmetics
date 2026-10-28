@@ -32,7 +32,7 @@ function linksFromCreative_(c) {
 /* Store URLs only. Returns {slugs:[...], paths:[...], multi:bool, store:bool}.
  * slugs = product pages matched by business.product_url_regex; paths = other store pages (unknown shape). */
 function parseStoreLinks_(links) {
-  const domains = cfgList_('business.store_domains').map(d => d.toLowerCase().replace(/^www\./, ''));
+  const domains = cfgList_('business.store_domains').map(storeHost_).filter(Boolean);
   const prodRx = new RegExp(cfgStr_('business.product_url_regex') || '/products?/([^/]+)', 'i');
   const multiRx = new RegExp(cfgStr_('business.multi_url_regex') || '^/?$|/collections?(/|$)', 'i');
   const res = { slugs: [], paths: [], multi: false, store: false };
@@ -143,6 +143,14 @@ function refreshAdMap_(freshAds, tiktokLinks, recheckAll) {
     const k = adKey_(a[1], String(a[8] || ''), a[5], a[7], a[9]);
     spend[k] = (spend[k] || 0) + num_(a[10]);
   });
+
+  // Product pages not in Products yet: add them from the store (Shopify title), then decide.
+  const known = new Set();
+  products_().forEach(p => p.slugs.forEach(s => known.add(s)));
+  const newSlugs = new Set();
+  byKey.forEach(r => parseStoreLinks_(String(r[AM.LINKS] || '').split(',').map(x => x.trim()).filter(x => x && x !== '-'))
+    .slugs.forEach(s => { if (!known.has(s)) newSlugs.add(s); }));
+  if (newSlugs.size) addProductsFromLinks_(Array.from(newSlugs));
 
   const unassigned = new Set(), valid = new Set(products_().map(p => p.name).concat(['MULTI']));
   byKey.forEach((r, key) => {

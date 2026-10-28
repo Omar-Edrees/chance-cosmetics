@@ -13,7 +13,7 @@ const INTRA_HEADERS = ['Date', 'Slot', 'Platform', 'Spend', 'Orders', 'CPP', 'Re
 function taxRate_() { return cfgNum_('costs.ad_tax_pct') || 0; }
 
 function rebuildDaily_() {
-  const idx = adMapIndex_(), agg = new Map(), pixelOrders = cfgStr_('orders.method') === 'pixel';
+  const idx = adMapIndex_(), cat = catalogIndex_(), agg = new Map(), pixelOrders = cfgStr_('orders.method') === 'pixel';
   const row = (d, pl, pr) => {
     const k = d + '|' + pl + '|' + pr;
     if (!agg.has(k)) agg.set(k, [d, pl, pr, 0, 0, 0, 0, 0, 0, 0, 0]);
@@ -23,8 +23,17 @@ function rebuildDaily_() {
     const d = asKey_(a[0]);
     if (!d) return;
     const m = idx.get(adKey_(a[1], String(a[8] || ''), a[5], a[7], a[9])) || { product: APP.UNMAPPED, exact: false };
-    const r = row(d, a[1], m.product), s = num_(a[10]);
-    r[3] += s; if (!m.exact) r[4] += s; r[5] += num_(a[11]); r[6] += num_(a[12]); r[7] += num_(a[13]);
+    const s = num_(a[10]), parts = cat.get(d + '|' + a[1] + '|' + String(a[8] || '')) || [];
+    // Catalog / Advantage+ ad: each product's part of the spend goes to that product (Meta's split, exact).
+    // Impressions and clicks follow the spend share; what Meta doesn't split stays on the ad's own product.
+    let left = s, pixelLeft = num_(a[13]);
+    parts.forEach(p => {
+      const part = Math.min(p.spend, left), share = s > 0 ? part / s : 0, r = row(d, a[1], p.product);
+      r[3] += part; r[5] += num_(a[11]) * share; r[6] += num_(a[12]) * share; r[7] += p.pixel;
+      left -= part; pixelLeft -= p.pixel;
+    });
+    const r = row(d, a[1], m.product), share = s > 0 ? left / s : (parts.length ? 0 : 1);
+    r[3] += left; if (!m.exact) r[4] += left; r[5] += num_(a[11]) * share; r[6] += num_(a[12]) * share; r[7] += Math.max(pixelLeft, 0);
     // No real orders source yet: pixel purchases stand in as orders (labelled in Today and Health).
     if (pixelOrders) { r[8] += num_(a[13]); r[10] += num_(a[14]); }
   });
@@ -35,7 +44,7 @@ function rebuildDaily_() {
     const r = row(d, o[3], o[5]);
     r[8]++; if (o[15] === true || String(o[15]).toUpperCase() === 'TRUE') r[9]++; r[10] += num_(o[7]);
   });
-  const rows = Array.from(agg.values()).map(r => r.map((v, i) => (i >= 3 && i !== 5 && i !== 6 ? round2_(v) : v)))
+  const rows = Array.from(agg.values()).map(r => r.map((v, i) => (i === 5 || i === 6 ? Math.round(v) : i >= 3 ? round2_(v) : v)))
     .sort((a, b) => (a[0] < b[0] ? 1 : a[0] > b[0] ? -1 : b[3] - a[3]));
   writeRows_(ensureTab_(APP.T.DAILY, DAILY_HEADERS), rows, DAILY_HEADERS.length, [1]);
   return rows;

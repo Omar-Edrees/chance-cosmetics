@@ -11,12 +11,12 @@
  * Ad accounts and stores are read-only from here: no writes to Meta, TikTok or order sources.
  */
 const APP = {
-  VERSION: '1.5.0',
+  VERSION: '1.6.0',
   T: {
     SETTINGS: 'Settings', ACCOUNTS: 'Accounts', PRODUCTS: 'Products', ADMAP: 'Ad Map',
     ADS: 'Ads Raw', ACC_RAW: 'Account Raw', ORDERS: 'Orders Raw', DAILY: 'Daily Log',
     TODAY: 'Today', PERF: 'Product Performance', CLOSING: 'Closing', INTRA: 'Intraday',
-    TESTS: 'Tests', BENCH: 'Benchmarks', HEALTH: 'Health'
+    TESTS: 'Tests', BENCH: 'Benchmarks', HEALTH: 'Health', CATALOG: 'Catalog Raw'
   },
   UNMAPPED: '❌ صرف مش مربوط بمنتج',
   MULTI: 'صفحة كل المنتجات (MULTI)',
@@ -331,7 +331,7 @@ function errText_(e) {
   const t = String(e && e.message ? e.message : e), tok = PropertiesService.getUserProperties().getProperty('META_TOKEN');
   return tok ? t.split(tok).join('[مخفي]') : t;
 }
-function resetCaches_() { CFG_ = null; PRODUCTS_ = null; }
+function resetCaches_() { CFG_ = null; PRODUCTS_ = null; KNOWN_PRODUCTS_ = null; }
 
 /* ======== 02_meta.gs ======== */
 /* Meta Graph API, read-only. Token is pasted once from the menu and kept in User Properties. */
@@ -526,10 +526,12 @@ function mergeRaw_(sheetName, headers, fresh, since, until, accountKeys, keyCols
 function syncAds_(since, until) {
   const meta = time_('Meta — قراءة', () => fetchMetaAds_(since, until));
   const tt = time_('TikTok — قراءة', () => fetchTikTokTab_(since, until));
+  const cat = time_('Meta كتالوج — قراءة', () => syncCatalog_(since, until));
   const ads = meta.ads.concat(tt.ads), acc = meta.acc.concat(tt.acc), keys = meta.accounts.concat(tt.accounts);
   return withLock_(() => {
     mergeRaw_(APP.T.ADS, ADS_HEADERS, ads, since, until, keys, [0, 1, 2, 8], [2, 4, 6, 8]);
     mergeRaw_(APP.T.ACC_RAW, ACC_HEADERS, acc, since, until, keys, [0, 1, 2], [2]);
+    if (cat) mergeCatalog_(cat.rows, since, until, cat.keys);
     time_('Ad Map', () => refreshAdMap_(ads, tt.links, false));
     return { ads: ads.length, since: since, until: until };
   });
@@ -570,7 +572,7 @@ function linksFromCreative_(c) {
 /* Store URLs only. Returns {slugs:[...], paths:[...], multi:bool, store:bool}.
  * slugs = product pages matched by business.product_url_regex; paths = other store pages (unknown shape). */
 function parseStoreLinks_(links) {
-  const domains = cfgList_('business.store_domains').map(d => d.toLowerCase().replace(/^www\./, ''));
+  const domains = cfgList_('business.store_domains').map(storeHost_).filter(Boolean);
   const prodRx = new RegExp(cfgStr_('business.product_url_regex') || '/products?/([^/]+)', 'i');
   const multiRx = new RegExp(cfgStr_('business.multi_url_regex') || '^/?$|/collections?(/|$)', 'i');
   const res = { slugs: [], paths: [], multi: false, store: false };
@@ -681,6 +683,14 @@ function refreshAdMap_(freshAds, tiktokLinks, recheckAll) {
     const k = adKey_(a[1], String(a[8] || ''), a[5], a[7], a[9]);
     spend[k] = (spend[k] || 0) + num_(a[10]);
   });
+
+  // Product pages not in Products yet: add them from the store (Shopify title), then decide.
+  const known = new Set();
+  products_().forEach(p => p.slugs.forEach(s => known.add(s)));
+  const newSlugs = new Set();
+  byKey.forEach(r => parseStoreLinks_(String(r[AM.LINKS] || '').split(',').map(x => x.trim()).filter(x => x && x !== '-'))
+    .slugs.forEach(s => { if (!known.has(s)) newSlugs.add(s); }));
+  if (newSlugs.size) addProductsFromLinks_(Array.from(newSlugs));
 
   const unassigned = new Set(), valid = new Set(products_().map(p => p.name).concat(['MULTI']));
   byKey.forEach((r, key) => {
@@ -879,7 +889,8 @@ function productOfOrder_(raw) {
   const exact = prods.filter(p => norm_(p.name) === n || p.aliases.indexOf(n) >= 0);
   if (exact.length === 1) return exact[0].name;
   const part = prods.filter(p => p.aliases.some(a => a && a.length >= 3 && n.indexOf(a) >= 0));
-  return part.length === 1 ? part[0].name : APP.UNKNOWN_PRODUCT;
+  // Not in Products: the Shopify title itself is the product (the same name catalog ads report).
+  return part.length === 1 ? part[0].name : t.trim();
 }
 
 function readOrderSource_() {
@@ -954,7 +965,7 @@ const INTRA_HEADERS = ['Date', 'Slot', 'Platform', 'Spend', 'Orders', 'CPP', 'Re
 function taxRate_() { return cfgNum_('costs.ad_tax_pct') || 0; }
 
 function rebuildDaily_() {
-  const idx = adMapIndex_(), agg = new Map(), pixelOrders = cfgStr_('orders.method') === 'pixel';
+  const idx = adMapIndex_(), cat = catalogIndex_(), agg = new Map(), pixelOrders = cfgStr_('orders.method') === 'pixel';
   const row = (d, pl, pr) => {
     const k = d + '|' + pl + '|' + pr;
     if (!agg.has(k)) agg.set(k, [d, pl, pr, 0, 0, 0, 0, 0, 0, 0, 0]);
@@ -964,8 +975,17 @@ function rebuildDaily_() {
     const d = asKey_(a[0]);
     if (!d) return;
     const m = idx.get(adKey_(a[1], String(a[8] || ''), a[5], a[7], a[9])) || { product: APP.UNMAPPED, exact: false };
-    const r = row(d, a[1], m.product), s = num_(a[10]);
-    r[3] += s; if (!m.exact) r[4] += s; r[5] += num_(a[11]); r[6] += num_(a[12]); r[7] += num_(a[13]);
+    const s = num_(a[10]), parts = cat.get(d + '|' + a[1] + '|' + String(a[8] || '')) || [];
+    // Catalog / Advantage+ ad: each product's part of the spend goes to that product (Meta's split, exact).
+    // Impressions and clicks follow the spend share; what Meta doesn't split stays on the ad's own product.
+    let left = s, pixelLeft = num_(a[13]);
+    parts.forEach(p => {
+      const part = Math.min(p.spend, left), share = s > 0 ? part / s : 0, r = row(d, a[1], p.product);
+      r[3] += part; r[5] += num_(a[11]) * share; r[6] += num_(a[12]) * share; r[7] += p.pixel;
+      left -= part; pixelLeft -= p.pixel;
+    });
+    const r = row(d, a[1], m.product), share = s > 0 ? left / s : (parts.length ? 0 : 1);
+    r[3] += left; if (!m.exact) r[4] += left; r[5] += num_(a[11]) * share; r[6] += num_(a[12]) * share; r[7] += Math.max(pixelLeft, 0);
     // No real orders source yet: pixel purchases stand in as orders (labelled in Today and Health).
     if (pixelOrders) { r[8] += num_(a[13]); r[10] += num_(a[14]); }
   });
@@ -976,7 +996,7 @@ function rebuildDaily_() {
     const r = row(d, o[3], o[5]);
     r[8]++; if (o[15] === true || String(o[15]).toUpperCase() === 'TRUE') r[9]++; r[10] += num_(o[7]);
   });
-  const rows = Array.from(agg.values()).map(r => r.map((v, i) => (i >= 3 && i !== 5 && i !== 6 ? round2_(v) : v)))
+  const rows = Array.from(agg.values()).map(r => r.map((v, i) => (i === 5 || i === 6 ? Math.round(v) : i >= 3 ? round2_(v) : v)))
     .sort((a, b) => (a[0] < b[0] ? 1 : a[0] > b[0] ? -1 : b[3] - a[3]));
   writeRows_(ensureTab_(APP.T.DAILY, DAILY_HEADERS), rows, DAILY_HEADERS.length, [1]);
   return rows;
@@ -1243,6 +1263,7 @@ function dailySync() {
   DEADLINE_ = Date.now() + 5 * 60000;
   try {
     fullSync_(cfgNum_('sync.refresh_days') || 3);
+    PropertiesService.getDocumentProperties().setProperty('SYNCED_THROUGH', shiftKey_(todayKey_(), -1));
     withLock_(() => refreshAdMap_([], {}, true));
   } catch (e) { setStatus_('FULL', '✗ ' + errText_(e)); console.error(errText_(e)); }
 }
@@ -1252,19 +1273,57 @@ function dailySync() {
  */
 function backfill() {
   try {
-    const today = todayKey_(), from = cfgStr_('sync.backfill_from'), units = [];
+    const today = todayKey_(), from = cfgStr_('sync.backfill_from');
     const since = from === 'month_start' ? today.slice(0, 8) + '01' : asKey_(from) && asKey_(from) <= today ? asKey_(from)
       : shiftKey_(today, -(cfgNum_('sync.backfill_days') || 30));
-    accounts_('META').forEach(a => {
-      for (let s = since; s <= today; s = shiftKey_(s, 5)) units.push([a.id, s, shiftKey_(s, 4) > today ? today : shiftKey_(s, 4)]);
-    });
-    PropertiesService.getDocumentProperties().setProperty('BACKFILL', JSON.stringify({ units: units, done: 0, since: since, until: today }));
-    ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === 'backfillStep').forEach(t => ScriptApp.deleteTrigger(t));
-    ScriptApp.newTrigger('backfillStep').timeBased().everyMinutes(1).create();
-    setStatus_('BACKFILL', '0 / ' + units.length + ' جزء');
+    const units = startBackfill_(since, today);
     alert_('السحب بدأ ✅ من ' + since + ' لـ ' + today + '\nهيشتغل على ' + units.length + ' جزء لوحده كل دقيقة (حوالي ' + Math.ceil(units.length / 4) + ' دقايق).\n' +
       'سيب الشيت وتابع التقدم في تاب ' + APP.T.HEALTH + '. لما يخلص هتلاقي "أول سحب: خلص".');
   } catch (e) { alert_('السحب ماكملش:\n' + errText_(e)); }
+}
+function startBackfill_(since, until) {
+  const units = [];
+  accounts_('META').forEach(a => {
+    for (let s = since; s <= until; s = shiftKey_(s, 5)) units.push([a.id, s, shiftKey_(s, 4) > until ? until : shiftKey_(s, 4)]);
+  });
+  PropertiesService.getDocumentProperties().setProperty('BACKFILL', JSON.stringify({ units: units, done: 0, since: since, until: until }));
+  ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === 'backfillStep').forEach(t => ScriptApp.deleteTrigger(t));
+  ScriptApp.newTrigger('backfillStep').timeBased().everyMinutes(1).create();
+  setStatus_('BACKFILL', '0 / ' + units.length + ' جزء (' + since + ' → ' + until + ')');
+  return units;
+}
+/*
+ * Days Meta was never pulled (no daily run for a while) are pulled again in the background, in pieces.
+ * The first time (no CATALOG_FROM yet), the whole month is pulled again so catalog ads get their product split.
+ */
+function catchUpGap_() {
+  const props = PropertiesService.getDocumentProperties();
+  if (props.getProperty('BACKFILL') || !accounts_('META').length) return false;
+  const today = todayKey_(), yest = shiftKey_(today, -1), monthStart = today.slice(0, 8) + '01';
+  let through = asKey_(props.getProperty('SYNCED_THROUGH') || '');
+  if (!through) {
+    const acc = ss_().getSheetByName(APP.T.ACC_RAW);
+    const days = acc ? readRows_(acc, ACC_HEADERS.length).map(r => asKey_(r[0])).filter(d => d && d < today).sort() : [];
+    through = days.length ? shiftKey_(days.pop(), -1) : yest;
+  }
+  let since = through < yest ? shiftKey_(through, 1) : '';
+  const catalogFirst = !props.getProperty('CATALOG_FROM') && monthStart <= yest;
+  if (catalogFirst) since = since && since < monthStart ? since : monthStart;
+  if (!since) return false;
+  if (catalogFirst) props.setProperty('CATALOG_FROM', since);
+  if (since < shiftKey_(today, -60)) since = shiftKey_(today, -60);
+  startBackfill_(since, yest);
+  return true;
+}
+/* The live and daily triggers exist (unless paused from the menu). */
+function ensureTriggers_() {
+  if (PropertiesService.getDocumentProperties().getProperty('TRIGGERS_PAUSED')) return;
+  const have = ScriptApp.getProjectTriggers().map(t => t.getHandlerFunction());
+  if (have.indexOf('liveTick') >= 0 && have.indexOf('dailySync') >= 0) return;
+  let every = cfgNum_('sync.live_minutes') || 15;
+  every = [1, 5, 10, 15, 30].filter(v => v <= every).pop() || 15;
+  if (have.indexOf('liveTick') < 0) ScriptApp.newTrigger('liveTick').timeBased().everyMinutes(every).create();
+  if (have.indexOf('dailySync') < 0) ScriptApp.newTrigger('dailySync').timeBased().atHour(0).nearMinute(30).everyDays(1).inTimezone(tz_()).create();
 }
 function backfillStep() {
   const props = PropertiesService.getDocumentProperties();
@@ -1279,6 +1338,8 @@ function backfillStep() {
       const u = st.units[st.done], meta = fetchMetaAds_(u[1], u[2], u[0]);
       mergeRaw_(APP.T.ADS, ADS_HEADERS, meta.ads, u[1], u[2], meta.accounts, [0, 1, 2, 8], [2, 4, 6, 8]);
       mergeRaw_(APP.T.ACC_RAW, ACC_HEADERS, meta.acc, u[1], u[2], meta.accounts, [0, 1, 2], [2]);
+      const cat = syncCatalog_(u[1], u[2], u[0]);
+      if (cat) mergeCatalog_(cat.rows, u[1], u[2], cat.keys);
       refreshAdMap_(meta.ads, {}, false);
       st.done++;
       props.setProperty('BACKFILL', JSON.stringify(st));
@@ -1299,6 +1360,8 @@ function backfillStep() {
     runLiveExt_();
     withLock_(() => rebuildViews_());
     props.deleteProperty('BACKFILL');
+    const through = asKey_(props.getProperty('SYNCED_THROUGH') || ''), done = st.until < todayKey_() ? st.until : shiftKey_(todayKey_(), -1);
+    if (!through || through < done) props.setProperty('SYNCED_THROUGH', done);
     stopTrigger();
     setStatus_('BACKFILL', 'خلص ✅');
     setStatus_('FULL', '✓ ' + st.since + ' → ' + st.until);
@@ -1315,6 +1378,7 @@ function liveTick() {
     runLiveExt_();
     const r = tryLock_(() => rebuildViews_());
     setStatus_('LIVE', r.skipped ? 'اتأجل (تحديث تاني شغال)' : '✓ OK');
+    try { ensureTriggers_(); catchUpGap_(); } catch (e) { console.error('catch-up: ' + errText_(e)); }
   } catch (e) { setStatus_('LIVE', '✗ ' + errText_(e)); console.error(errText_(e)); }
 }
 function runLiveExt_() { EXT.live.forEach(f => { try { f(); } catch (e) { console.error('ext live: ' + errText_(e)); } }); }
@@ -1330,10 +1394,12 @@ function installTriggers() {
   every = [1, 5, 10, 15, 30].filter(v => v <= every).pop() || 15;
   ScriptApp.newTrigger('liveTick').timeBased().everyMinutes(every).create();
   ScriptApp.newTrigger('dailySync').timeBased().atHour(0).nearMinute(30).everyDays(1).inTimezone(tz_()).create();
+  PropertiesService.getDocumentProperties().deleteProperty('TRIGGERS_PAUSED');
   alert_('التحديث التلقائي شغال ✅\nكل ' + every + ' دقيقة خلال اليوم، ومزامنة كاملة الساعة 12:30 بالليل.');
 }
 function pauseTriggers() {
   ScriptApp.getProjectTriggers().filter(t => ['liveTick', 'dailySync'].indexOf(t.getHandlerFunction()) >= 0).forEach(t => ScriptApp.deleteTrigger(t));
+  PropertiesService.getDocumentProperties().setProperty('TRIGGERS_PAUSED', nowText_());
   alert_('التحديث التلقائي اتوقف ⏸');
 }
 
@@ -1650,6 +1716,145 @@ function writeAccountsBE_() {
   ]);
 }
 
+/* ======== 15_catalog.gs ======== */
+/*
+ * Products of catalog and Advantage+ ads. Meta reports their spend per product shown (insights breakdown product_id:
+ * "<id>, <product title>" or "<id>, <title> - <variant>"). Catalog Raw keeps that split per ad per day, and the
+ * Daily Log puts each part on its product; whatever Meta doesn't split stays on the ad's own product (Ad Map).
+ * Products are named by their Shopify title, the same name orders carry, so spend and orders meet on one row.
+ */
+const CATALOG_HEADERS = ['Date', 'Platform', 'Account ID', 'Ad ID', 'Product', 'Spend', 'Purchases', 'Purchase value'];
+const CATALOG = { MIN_SPEND: 1, OTHER: 'منتجات تانية من الكتالوج (صرف صغير)' };
+
+/* Per ad per day per product, from Meta. Rows under CATALOG.MIN_SPEND are summed into one "other" row per ad and day. */
+function fetchMetaCatalog_(since, until, onlyId) {
+  const out = [], range = JSON.stringify({ since: since, until: until });
+  accounts_('META').filter(a => !onlyId || a.id === onlyId).forEach(acc => {
+    const small = {};
+    metaAll_('act_' + acc.id + '/insights', { level: 'ad', breakdowns: 'product_id', time_range: range, time_increment: 1,
+      fields: 'date_start,ad_id,spend,actions,action_values' }).forEach(r => {
+      const spend = num_(r.spend), raw = String(r.product_id || ''), name = raw.indexOf(', ') > 0 ? raw.slice(raw.indexOf(', ') + 2).trim() : '';
+      if (spend <= 0 || !name || raw === 'null') return;
+      const row = [r.date_start, 'META', acc.id, String(r.ad_id || ''), name, spend, metaPick_(r.actions), metaPick_(r.action_values)];
+      if (spend >= CATALOG.MIN_SPEND) { out.push(row.map((v, i) => (i === 5 || i === 7 ? round2_(v) : v))); return; }
+      const k = row[0] + '|' + row[3];
+      const s = small[k] = small[k] || [row[0], 'META', acc.id, row[3], CATALOG.OTHER, 0, 0, 0];
+      s[5] += spend; s[6] += row[6]; s[7] += row[7];
+    });
+    Object.keys(small).forEach(k => out.push(small[k].map((v, i) => (i === 5 || i === 7 ? round2_(v) : v))));
+  });
+  return out;
+}
+function mergeCatalog_(rows, since, until, accountKeys) {
+  const isNew = !ss_().getSheetByName(APP.T.CATALOG);
+  const n = mergeRaw_(APP.T.CATALOG, CATALOG_HEADERS, rows, since, until, accountKeys, [0, 1, 2, 3, 4], [2, 3]);
+  if (isNew) tab_(APP.T.CATALOG).hideSheet();
+  return n;
+}
+/* Catalog rows for the synced days; a failure leaves Catalog Raw as it was (status in Health). */
+function syncCatalog_(since, until, onlyId) {
+  try {
+    const rows = fetchMetaCatalog_(since, until, onlyId);
+    return { rows: rows, keys: accounts_('META').filter(a => !onlyId || a.id === onlyId).map(a => 'META|' + a.id) };
+  } catch (e) { setStatus_('CATALOG', '✗ ' + errText_(e)); return null; }
+}
+
+/* Product names the sheet knows: Products tab names and aliases, and the product of every order (Shopify titles). */
+let KNOWN_PRODUCTS_ = null;
+function knownProducts_() {
+  if (KNOWN_PRODUCTS_) return KNOWN_PRODUCTS_;
+  const known = new Map();
+  products_().forEach(p => { known.set(norm_(p.name), p.name); p.aliases.forEach(a => { if (!known.has(a)) known.set(a, p.name); }); });
+  const osh = ss_().getSheetByName(APP.T.ORDERS);
+  if (osh) readRows_(osh, ORDERS_HEADERS.length).forEach(o => {
+    lineItems_(o[6]).forEach(li => { const n = norm_(li.title); if (n && !known.has(n)) known.set(n, li.title.trim()); });
+  });
+  KNOWN_PRODUCTS_ = known;
+  return known;
+}
+
+/*
+ * A catalog name → a product name. "Title - Variant" → "Title" when the title is a known product.
+ * Collection pages and names the sheet has never seen (no order, no Products row) stay as they are.
+ */
+function catalogProduct_(name) {
+  if (name === CATALOG.OTHER) return name;
+  const known = knownProducts_();
+  let t = String(name || '').trim();
+  for (let i = 0; i < 3 && t; i++) {
+    const hit = known.get(norm_(t));
+    if (hit) return hit;
+    const cut = t.lastIndexOf(' - ');
+    if (cut <= 0) break;
+    t = t.slice(0, cut).trim();
+  }
+  return String(name || '').trim();
+}
+
+/* key "date|platform|adId" → [{product, spend, pixel, value}] */
+function catalogIndex_() {
+  const sh = ss_().getSheetByName(APP.T.CATALOG), idx = new Map();
+  if (!sh) return idx;
+  readRows_(sh, CATALOG_HEADERS.length).forEach(r => {
+    const k = asKey_(r[0]) + '|' + r[1] + '|' + String(r[3]);
+    if (!idx.has(k)) idx.set(k, []);
+    idx.get(k).push({ product: catalogProduct_(r[4]), spend: num_(r[5]), pixel: num_(r[6]), value: num_(r[7]) });
+  });
+  return idx;
+}
+
+/*
+ * Ad links to product pages that are not in Products yet: ask the store for the page's product (public JSON,
+ * /products/<handle>.js) and add it with its Shopify title, so the ad maps by link. Misses are not retried for a day.
+ */
+function addProductsFromLinks_(slugs) {
+  const domain = cfgList_('business.store_domains').map(storeHost_).filter(Boolean)[0];
+  if (!domain || !slugs.length) return 0;
+  const props = PropertiesService.getDocumentProperties(), today = todayKey_();
+  let miss = {};
+  try { miss = JSON.parse(props.getProperty('SLUG_MISS') || '{}'); } catch (e) { miss = {}; }
+  const have = new Set(products_().map(p => norm_(p.name))), add = [];
+  const ask = slugs.filter(s => miss[s] !== today && !/\//.test(s)).slice(0, 40);
+  let res = [];
+  try {
+    res = UrlFetchApp.fetchAll(ask.map(slug => ({ url: 'https://' + domain + '/products/' + encodeURIComponent(slug) + '.js', muteHttpExceptions: true })));
+  } catch (e) { res = []; }
+  ask.forEach((slug, i) => {
+    try {
+      const r = res[i];
+      if (!r || r.getResponseCode() !== 200) { miss[slug] = today; return; }
+      const p = JSON.parse(r.getContentText()), title = String(p.title || '').trim();
+      if (!title) { miss[slug] = today; return; }
+      const price = p.price ? round2_(num_(p.price) / 100) : '';
+      if (have.has(norm_(title))) { appendSlug_(title, slug); return; }
+      have.add(norm_(title));
+      add.push([title, '', String(p.handle || slug).toLowerCase() + (p.handle && p.handle !== slug ? ', ' + slug : ''), '', title, price, '', '', '', '', '', true]);
+    } catch (e) { miss[slug] = today; }
+  });
+  props.setProperty('SLUG_MISS', JSON.stringify(miss));
+  if (add.length) {
+    const sh = ensureTab_(APP.T.PRODUCTS, PRODUCT_HEADERS);
+    sh.getRange(sh.getLastRow() + 1, 1, add.length, PRODUCT_HEADERS.length).setValues(add);
+  }
+  resetCaches_();
+  return add.length;
+}
+/* A product already in Products under the same title: add the new page name to its Landing slugs. */
+function appendSlug_(title, slug) {
+  const sh = ss_().getSheetByName(APP.T.PRODUCTS);
+  if (!sh || sh.getLastRow() < 2) return;
+  const rows = sh.getRange(2, 1, sh.getLastRow() - 1, 3).getValues();
+  const i = rows.findIndex(r => norm_(r[0]) === norm_(title));
+  if (i < 0) return;
+  const cur = String(rows[i][2] || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+  if (cur.indexOf(slug) < 0) sh.getRange(i + 2, 3).setValue(cur.concat([slug]).join(', '));
+}
+
+/* "https://www.shop.com/" → "shop.com" */
+function storeHost_(v) {
+  return String(v || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/[\/?#].*$/, '');
+}
+
 /* ======== 20_today.gs ======== */
 /*
  * Today tab = Daily Ad Closing, same shape as House of Beauty's Daily Closing, without the 14% add-on.
@@ -1903,15 +2108,29 @@ function todayBenchmark_(g, r, today, shown) {
   return r;
 }
 
-/* Product performance (Meta): spend from Ad Map, orders and sales = store orders from Meta UTMs for that product. */
-function todayProducts_(g, r, title, from, to, rows) {
+/*
+ * Product performance (Meta): spend from Ad Map and the catalog split, orders and sales = store orders from Meta for
+ * that product. RUNNING: Meta ads running now that point at the product, and "catalog" when a catalog / Advantage+
+ * ad spent on it today.
+ */
+function todayRunning_(today) {
+  const active = activeMap_(), cat = new Set(), sh = ss_().getSheetByName(APP.T.CATALOG);
+  if (sh) readRows_(sh, CATALOG_HEADERS.length).forEach(r => { if (asKey_(r[0]) === today && num_(r[5]) > 0) cat.add(catalogProduct_(r[4])); });
+  return name => {
+    const n = active[name] || 0, parts = [];
+    if (n) parts.push(n + (n === 1 ? ' إعلان' : ' إعلانات'));
+    if (cat.has(name)) parts.push('كتالوج');
+    return parts.length ? '✅ ' + parts.join(' + ') : '';
+  };
+}
+function todayProducts_(g, r, title, from, to, rows, running) {
   const S = TODAY, c = S.RIGHT_COL, meta = {}, special = [APP.MULTI, APP.UNMAPPED, APP.UNKNOWN_PRODUCT];
   rows.forEach(x => {
     if (x[0] < from || x[0] > to || x[1] !== 'META') return;
     const t = meta[x[2]] = meta[x[2]] || { spend: 0, orders: 0, revenue: 0 };
     t.spend += num_(x[3]); t.orders += num_(x[8]); t.revenue += num_(x[10]);
   });
-  r = todayHead_(g, r, c, 5, title, ['PRODUCT', 'META ORDERS', 'META SPEND', 'META CPP', 'META ROAS']);
+  r = todayHead_(g, r, c, 6, title, ['PRODUCT', 'META ORDERS', 'META SPEND', 'META CPP', 'META ROAS', 'RUNNING NOW']);
   const names = Object.keys(meta).filter(n => special.indexOf(n) < 0 && (meta[n].spend > 0 || meta[n].orders > 0))
     .sort((a, b) => (meta[b].spend - meta[a].spend) || (meta[b].orders - meta[a].orders));
   const tot = { spend: 0, orders: 0, revenue: 0 };
@@ -1921,6 +2140,7 @@ function todayProducts_(g, r, title, from, to, rows) {
     g.set(r, c + 2, Math.round(t.spend * 100) / 100, Object.assign({ nf: S.MONEY, al: 'right' }, style));
     g.set(r, c + 3, ratioOrBlank_(t.spend, t.orders, 2), Object.assign({ nf: S.MONEY, al: 'right' }, style));
     g.set(r, c + 4, ratioOrBlank_(t.revenue, t.spend, 2), Object.assign({ nf: S.RATIO, al: 'right' }, style));
+    g.set(r, c + 5, style.b ? '' : running(name), Object.assign({ fc: '#137333' }, style));
     r++;
   };
   names.forEach(n => { put(n, meta[n], {}); ['spend', 'orders', 'revenue'].forEach(k => { tot[k] += meta[n][k]; }); });
@@ -1943,8 +2163,9 @@ function writeToday_() {
   todayClosing_(g, today, sum);
   let r = todaySlots_(g, 1, today) + 1;
   r = todayBenchmark_(g, r, today, shown) + 1;
-  r = todayProducts_(g, r, 'PRODUCT PERFORMANCE — TODAY | ' + shown, today, today, rows) + 1;
-  todayProducts_(g, r, 'PRODUCT PERFORMANCE — THIS MONTH | ' + month, today.slice(0, 8) + '01', today, rows);
+  const running = todayRunning_(today);
+  r = todayProducts_(g, r, 'PRODUCT PERFORMANCE — TODAY | ' + shown, today, today, rows, running) + 1;
+  todayProducts_(g, r, 'PRODUCT PERFORMANCE — THIS MONTH | ' + month, today.slice(0, 8) + '01', today, rows, running);
   writeGrid_(sh, g);
   sh.setFrozenRows(0);
   [[1, 150], [2, 210], [3, 120], [4, 130], [5, 130], [6, 130], [7, 24], [8, 240]].forEach(w => sh.setColumnWidth(w[0], w[1]));

@@ -113,4 +113,4 @@ function errText_(e) {
   const t = String(e && e.message ? e.message : e), tok = PropertiesService.getUserProperties().getProperty('META_TOKEN');
   return tok ? t.split(tok).join('[مخفي]') : t;
 }
-function resetCaches_() { CFG_ = null; PRODUCTS_ = null; }
+function resetCaches_() { CFG_ = null; PRODUCTS_ = null; KNOWN_PRODUCTS_ = null; }

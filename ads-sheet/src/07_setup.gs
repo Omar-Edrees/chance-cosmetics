@@ -50,6 +50,7 @@ function dailySync() {
   DEADLINE_ = Date.now() + 5 * 60000;
   try {
     fullSync_(cfgNum_('sync.refresh_days') || 3);
+    PropertiesService.getDocumentProperties().setProperty('SYNCED_THROUGH', shiftKey_(todayKey_(), -1));
     withLock_(() => refreshAdMap_([], {}, true));
   } catch (e) { setStatus_('FULL', '✗ ' + errText_(e)); console.error(errText_(e)); }
 }
@@ -59,19 +60,57 @@ function dailySync() {
  */
 function backfill() {
   try {
-    const today = todayKey_(), from = cfgStr_('sync.backfill_from'), units = [];
+    const today = todayKey_(), from = cfgStr_('sync.backfill_from');
     const since = from === 'month_start' ? today.slice(0, 8) + '01' : asKey_(from) && asKey_(from) <= today ? asKey_(from)
       : shiftKey_(today, -(cfgNum_('sync.backfill_days') || 30));
-    accounts_('META').forEach(a => {
-      for (let s = since; s <= today; s = shiftKey_(s, 5)) units.push([a.id, s, shiftKey_(s, 4) > today ? today : shiftKey_(s, 4)]);
-    });
-    PropertiesService.getDocumentProperties().setProperty('BACKFILL', JSON.stringify({ units: units, done: 0, since: since, until: today }));
-    ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === 'backfillStep').forEach(t => ScriptApp.deleteTrigger(t));
-    ScriptApp.newTrigger('backfillStep').timeBased().everyMinutes(1).create();
-    setStatus_('BACKFILL', '0 / ' + units.length + ' جزء');
+    const units = startBackfill_(since, today);
     alert_('السحب بدأ ✅ من ' + since + ' لـ ' + today + '\nهيشتغل على ' + units.length + ' جزء لوحده كل دقيقة (حوالي ' + Math.ceil(units.length / 4) + ' دقايق).\n' +
       'سيب الشيت وتابع التقدم في تاب ' + APP.T.HEALTH + '. لما يخلص هتلاقي "أول سحب: خلص".');
   } catch (e) { alert_('السحب ماكملش:\n' + errText_(e)); }
+}
+function startBackfill_(since, until) {
+  const units = [];
+  accounts_('META').forEach(a => {
+    for (let s = since; s <= until; s = shiftKey_(s, 5)) units.push([a.id, s, shiftKey_(s, 4) > until ? until : shiftKey_(s, 4)]);
+  });
+  PropertiesService.getDocumentProperties().setProperty('BACKFILL', JSON.stringify({ units: units, done: 0, since: since, until: until }));
+  ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === 'backfillStep').forEach(t => ScriptApp.deleteTrigger(t));
+  ScriptApp.newTrigger('backfillStep').timeBased().everyMinutes(1).create();
+  setStatus_('BACKFILL', '0 / ' + units.length + ' جزء (' + since + ' → ' + until + ')');
+  return units;
+}
+/*
+ * Days Meta was never pulled (no daily run for a while) are pulled again in the background, in pieces.
+ * The first time (no CATALOG_FROM yet), the whole month is pulled again so catalog ads get their product split.
+ */
+function catchUpGap_() {
+  const props = PropertiesService.getDocumentProperties();
+  if (props.getProperty('BACKFILL') || !accounts_('META').length) return false;
+  const today = todayKey_(), yest = shiftKey_(today, -1), monthStart = today.slice(0, 8) + '01';
+  let through = asKey_(props.getProperty('SYNCED_THROUGH') || '');
+  if (!through) {
+    const acc = ss_().getSheetByName(APP.T.ACC_RAW);
+    const days = acc ? readRows_(acc, ACC_HEADERS.length).map(r => asKey_(r[0])).filter(d => d && d < today).sort() : [];
+    through = days.length ? shiftKey_(days.pop(), -1) : yest;
+  }
+  let since = through < yest ? shiftKey_(through, 1) : '';
+  const catalogFirst = !props.getProperty('CATALOG_FROM') && monthStart <= yest;
+  if (catalogFirst) since = since && since < monthStart ? since : monthStart;
+  if (!since) return false;
+  if (catalogFirst) props.setProperty('CATALOG_FROM', since);
+  if (since < shiftKey_(today, -60)) since = shiftKey_(today, -60);
+  startBackfill_(since, yest);
+  return true;
+}
+/* The live and daily triggers exist (unless paused from the menu). */
+function ensureTriggers_() {
+  if (PropertiesService.getDocumentProperties().getProperty('TRIGGERS_PAUSED')) return;
+  const have = ScriptApp.getProjectTriggers().map(t => t.getHandlerFunction());
+  if (have.indexOf('liveTick') >= 0 && have.indexOf('dailySync') >= 0) return;
+  let every = cfgNum_('sync.live_minutes') || 15;
+  every = [1, 5, 10, 15, 30].filter(v => v <= every).pop() || 15;
+  if (have.indexOf('liveTick') < 0) ScriptApp.newTrigger('liveTick').timeBased().everyMinutes(every).create();
+  if (have.indexOf('dailySync') < 0) ScriptApp.newTrigger('dailySync').timeBased().atHour(0).nearMinute(30).everyDays(1).inTimezone(tz_()).create();
 }
 function backfillStep() {
   const props = PropertiesService.getDocumentProperties();
@@ -86,6 +125,8 @@ function backfillStep() {
       const u = st.units[st.done], meta = fetchMetaAds_(u[1], u[2], u[0]);
       mergeRaw_(APP.T.ADS, ADS_HEADERS, meta.ads, u[1], u[2], meta.accounts, [0, 1, 2, 8], [2, 4, 6, 8]);
       mergeRaw_(APP.T.ACC_RAW, ACC_HEADERS, meta.acc, u[1], u[2], meta.accounts, [0, 1, 2], [2]);
+      const cat = syncCatalog_(u[1], u[2], u[0]);
+      if (cat) mergeCatalog_(cat.rows, u[1], u[2], cat.keys);
       refreshAdMap_(meta.ads, {}, false);
       st.done++;
       props.setProperty('BACKFILL', JSON.stringify(st));
@@ -106,6 +147,8 @@ function backfillStep() {
     runLiveExt_();
     withLock_(() => rebuildViews_());
     props.deleteProperty('BACKFILL');
+    const through = asKey_(props.getProperty('SYNCED_THROUGH') || ''), done = st.until < todayKey_() ? st.until : shiftKey_(todayKey_(), -1);
+    if (!through || through < done) props.setProperty('SYNCED_THROUGH', done);
     stopTrigger();
     setStatus_('BACKFILL', 'خلص ✅');
     setStatus_('FULL', '✓ ' + st.since + ' → ' + st.until);
@@ -122,6 +165,7 @@ function liveTick() {
     runLiveExt_();
     const r = tryLock_(() => rebuildViews_());
     setStatus_('LIVE', r.skipped ? 'اتأجل (تحديث تاني شغال)' : '✓ OK');
+    try { ensureTriggers_(); catchUpGap_(); } catch (e) { console.error('catch-up: ' + errText_(e)); }
   } catch (e) { setStatus_('LIVE', '✗ ' + errText_(e)); console.error(errText_(e)); }
 }
 function runLiveExt_() { EXT.live.forEach(f => { try { f(); } catch (e) { console.error('ext live: ' + errText_(e)); } }); }
@@ -137,10 +181,12 @@ function installTriggers() {
   every = [1, 5, 10, 15, 30].filter(v => v <= every).pop() || 15;
   ScriptApp.newTrigger('liveTick').timeBased().everyMinutes(every).create();
   ScriptApp.newTrigger('dailySync').timeBased().atHour(0).nearMinute(30).everyDays(1).inTimezone(tz_()).create();
+  PropertiesService.getDocumentProperties().deleteProperty('TRIGGERS_PAUSED');
   alert_('التحديث التلقائي شغال ✅\nكل ' + every + ' دقيقة خلال اليوم، ومزامنة كاملة الساعة 12:30 بالليل.');
 }
 function pauseTriggers() {
   ScriptApp.getProjectTriggers().filter(t => ['liveTick', 'dailySync'].indexOf(t.getHandlerFunction()) >= 0).forEach(t => ScriptApp.deleteTrigger(t));
+  PropertiesService.getDocumentProperties().setProperty('TRIGGERS_PAUSED', nowText_());
   alert_('التحديث التلقائي اتوقف ⏸');
 }
 

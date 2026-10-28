@@ -5,12 +5,12 @@
  * Ad accounts and stores are read-only from here: no writes to Meta, TikTok or order sources.
  */
 const APP = {
-  VERSION: '1.5.0',
+  VERSION: '1.6.0',
   T: {
     SETTINGS: 'Settings', ACCOUNTS: 'Accounts', PRODUCTS: 'Products', ADMAP: 'Ad Map',
     ADS: 'Ads Raw', ACC_RAW: 'Account Raw', ORDERS: 'Orders Raw', DAILY: 'Daily Log',
     TODAY: 'Today', PERF: 'Product Performance', CLOSING: 'Closing', INTRA: 'Intraday',
-    TESTS: 'Tests', BENCH: 'Benchmarks', HEALTH: 'Health'
+    TESTS: 'Tests', BENCH: 'Benchmarks', HEALTH: 'Health', CATALOG: 'Catalog Raw'
   },
   UNMAPPED: '❌ صرف مش مربوط بمنتج',
   MULTI: 'صفحة كل المنتجات (MULTI)',
