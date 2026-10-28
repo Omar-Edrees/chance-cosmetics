@@ -55,7 +55,7 @@ function dailySync() {
   } catch (e) { setStatus_('FULL', '✗ ' + errText_(e)); console.error(errText_(e)); }
 }
 /*
- * First pull in small pieces (one Meta account × 5 days per piece) so no run hits the 6-minute limit.
+ * First pull in small pieces (one Meta account × 3 days per piece) so no run hits the 6-minute limit.
  * A 1-minute trigger keeps calling backfillStep until every piece is done, then deletes itself.
  */
 function backfill() {
@@ -71,7 +71,7 @@ function backfill() {
 function startBackfill_(since, until) {
   const units = [];
   accounts_('META').forEach(a => {
-    for (let s = since; s <= until; s = shiftKey_(s, 5)) units.push([a.id, s, shiftKey_(s, 4) > until ? until : shiftKey_(s, 4)]);
+    for (let s = since; s <= until; s = shiftKey_(s, 3)) units.push([a.id, s, shiftKey_(s, 2) > until ? until : shiftKey_(s, 2)]);
   });
   PropertiesService.getDocumentProperties().setProperty('BACKFILL', JSON.stringify({ units: units, done: 0, since: since, until: until }));
   ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === 'backfillStep').forEach(t => ScriptApp.deleteTrigger(t));
@@ -121,16 +121,34 @@ function backfillStep() {
   DEADLINE_ = start + 4.5 * 60000;
   const r = tryLock_(() => {
     resetCaches_();
-    while (st.done < st.units.length && Date.now() - start < 3 * 60000) {
-      const u = st.units[st.done], meta = fetchMetaAds_(u[1], u[2], u[0]);
-      mergeRaw_(APP.T.ADS, ADS_HEADERS, meta.ads, u[1], u[2], meta.accounts, [0, 1, 2, 8], [2, 4, 6, 8]);
-      mergeRaw_(APP.T.ACC_RAW, ACC_HEADERS, meta.acc, u[1], u[2], meta.accounts, [0, 1, 2], [2]);
-      const cat = syncCatalog_(u[1], u[2], u[0]);
-      if (cat) mergeCatalog_(cat.rows, u[1], u[2], cat.keys);
-      refreshAdMap_(meta.ads, {}, false);
-      st.done++;
-      props.setProperty('BACKFILL', JSON.stringify(st));
-      setStatus_('BACKFILL', st.done + ' / ' + st.units.length + ' جزء');
+    const save = () => props.setProperty('BACKFILL', JSON.stringify(st));
+    while (st.done < st.units.length && Date.now() - start < 2 * 60000) {
+      const u = st.units[st.done];
+      // A piece that keeps dying (6-minute limit, Meta error) is split into single days, then skipped, never repeated forever.
+      st.tries = (st.tries || 0) + 1; save();
+      if (st.tries > 3) {
+        st.tries = 0;
+        if (u[1] < u[2]) {
+          const days = [];
+          for (let s = u[1]; s <= u[2]; s = shiftKey_(s, 1)) days.push([u[0], s, s]);
+          st.units.splice(st.done, 1, ...days);
+        } else { (st.skipped = st.skipped || []).push(u); st.done++; }
+        save();
+        continue;
+      }
+      try {
+        const meta = fetchMetaAds_(u[1], u[2], u[0]);
+        mergeRaw_(APP.T.ADS, ADS_HEADERS, meta.ads, u[1], u[2], meta.accounts, [0, 1, 2, 8], [2, 4, 6, 8]);
+        mergeRaw_(APP.T.ACC_RAW, ACC_HEADERS, meta.acc, u[1], u[2], meta.accounts, [0, 1, 2], [2]);
+        const cat = syncCatalog_(u[1], u[2], u[0]);
+        if (cat) mergeCatalog_(cat.rows, u[1], u[2], cat.keys);
+        st.done++; st.tries = 0; save();
+        setStatus_('BACKFILL', st.done + ' / ' + st.units.length + ' جزء' + (st.skipped ? ' (اتساب ' + st.skipped.length + ')' : ''));
+        refreshAdMap_(meta.ads, {}, false);
+      } catch (e) {
+        setStatus_('BACKFILL', st.done + ' / ' + st.units.length + ' جزء — ✗ ' + u[1] + ' → ' + u[2] + ': ' + errText_(e));
+        break;
+      }
     }
     try { writeHealth_(); } catch (e) {}
     if (st.done < st.units.length || Date.now() - start > 3.5 * 60000) return;

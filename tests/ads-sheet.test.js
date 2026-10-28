@@ -391,3 +391,16 @@ test('أيام ناقصة في الصرف بتتسحب لوحدها، والتح
   e.c.liveTick();
   assert.deepEqual(e.triggers.map(t => t.getHandlerFunction()), [], 'اتوقف من المنيو: مايتشغلش لوحده');
 });
+
+test('أول سحب: الجزء اللي بيقع كل مرة بيتقسم أيام، وبعدين بيتساب، ومابيقفش السحب', () => {
+  const probe = env(), today = probe.c.todayKey_(), d = n => probe.c.shiftKey_(today, -n);
+  const e = env({ ads: { [A1]: [adRow(d(3), '111', 100)] } });
+  e.c.setupAll();
+  e.doc.BACKFILL = JSON.stringify({ units: [[A1, d(4), d(2)]], done: 0, tries: 3, since: d(4), until: d(2) });
+  e.c.backfillStep(); // المحاولة الرابعة: الجزء بيتقسم 3 أيام، وبعدين بيكمل عادي
+  assert.equal(e.doc.BACKFILL, undefined, 'خلص');
+  assert.ok(e.ss.getSheetByName('Ads Raw').getDataRange().getValues().some(r => r[0] === d(3) && r[10] === 100));
+  e.doc.BACKFILL = JSON.stringify({ units: [[A1, d(4), d(4)], [A1, d(3), d(3)]], done: 0, tries: 3, since: d(4), until: d(3) });
+  e.c.backfillStep(); // يوم واحد بيقع للمرة الرابعة: بيتساب والباقي بيكمل
+  assert.equal(e.doc.BACKFILL, undefined);
+});

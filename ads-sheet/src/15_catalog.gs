@@ -5,7 +5,7 @@
  * Products are named by their Shopify title, the same name orders carry, so spend and orders meet on one row.
  */
 const CATALOG_HEADERS = ['Date', 'Platform', 'Account ID', 'Ad ID', 'Product', 'Spend', 'Purchases', 'Purchase value'];
-const CATALOG = { MIN_SPEND: 1, OTHER: 'منتجات تانية من الكتالوج (صرف صغير)' };
+const CATALOG = { MIN_SPEND: 5, OTHER: 'منتجات تانية من الكتالوج (صرف صغير)' };
 
 /* Per ad per day per product, from Meta. Rows under CATALOG.MIN_SPEND are summed into one "other" row per ad and day. */
 function fetchMetaCatalog_(since, until, onlyId) {
