@@ -531,3 +531,22 @@ test('⚡ التحديث السريع: الصرف والأوردرات في Toda
   assert.match(e.alerts.pop(), /اتحدث الصرف والأوردرات ✅/);
   assert.match(e.c.getStatus_('QUICK'), /✓/);
 });
+
+test('أوردرات قبل تعديل Flow: المصدر والمنتجات من ORDER_PATCH', () => {
+  const probe = env(), today = probe.c.todayKey_(), B = '(blank)';
+  const at = ' ' + today + 'T10:00:00+03:00';
+  const e = env({ orderHead: FLOW_HEAD, orders: [
+    ['gid://shopify/Order/7318352855330', ' #41878', ' N', B, 434, at, B, B, B, B, B, '', '', '', '', '', ''], // صف قديم: الأعمدة الجديدة فاضية
+    ['gid://shopify/Order/7318361276706', ' #41880', ' N', B, 500, at, B, B, B, B, B, '', '', '', '', '', ''],
+    ['gid://shopify/Order/7318469673250', ' #41885', ' N', B, 900, at, B, B, B, B, B, 'x', '', '', '', 'Lip Oil x1', '4655075'], // عنده بيانات: مايتغيرش
+  ] });
+  e.c.setupAll();
+  e.c.liveTick();
+  const raw = e.ss.getSheetByName('Orders Raw').getDataRange().getValues().slice(1), o = id => raw.find(r => r[0] === id);
+  assert.deepEqual(o('gid://shopify/Order/7318352855330').slice(3, 6), ['META', 'utm', 'Sheglam Marshmallow Puff Lip Blur Pen']);
+  assert.deepEqual(o('gid://shopify/Order/7318361276706').slice(3, 6), ['MANUAL', 'draft_order', 'SHEGLAM Camera On Blurring Setting Powder Balm']);
+  assert.equal(o('gid://shopify/Order/7318469673250')[5], 'Lip Oil');
+  const v = e.ss.getSheetByName('Today').getDataRange().getValues();
+  assert.equal(v.find(r => r[0] === 'META (حساب مش معانا)')[3], 1);
+  assert.ok(!v.some(r => r[0] === 'NO SOURCE'));
+});

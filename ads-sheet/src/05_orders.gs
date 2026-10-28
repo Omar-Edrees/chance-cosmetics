@@ -165,9 +165,13 @@ function readOrderSource_(full) {
   const cancelWords = cfgList_('orders.cancelled_words').map(norm_);
   const byId = new Map();
   let noDate = 0;
-  rows.forEach(r => {
-    const id = String(get(r, 'order_id') === null ? '' : get(r, 'order_id')).trim();
+  rows.forEach(r0 => {
+    const id = String(get(r0, 'order_id') === null ? '' : get(r0, 'order_id')).trim();
     if (!id) return;
+    // A row from before Flow wrote the form columns: those columns from ORDER_PATCH (16_orders_patch.gs).
+    const fix = ORDER_PATCH[id] && !ORDER_PATCH_COLS.some(k => k !== 'product' && get(r0, k)) ? ORDER_PATCH[id] : null;
+    const r = !fix ? r0 : r0.slice();
+    if (fix) ORDER_PATCH_COLS.forEach((k, i) => { if (c[k] >= 0) r[c[k]] = fix[i]; });
     const dt = parseOrderDate_(get(r, 'date'), fmt, src.tz);
     if (!dt) { noDate++; return; }
     const utms = ['utm_source', 'utm_campaign', 'utm_content'].map(k => String(get(r, 'attr_' + k) || get(r, k) || '').trim());
