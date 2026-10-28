@@ -8,7 +8,7 @@
  * > MANUAL (draft order typed in the admin) > UNKNOWN (no source data at all). Never guessed.
  */
 const ORDERS_HEADERS = ['Order ID', 'Created at', 'Date', 'Platform', 'Signal', 'Product', 'Products raw', 'Total',
-  'City', 'Phone', 'Alt phone', 'UTM source', 'UTM campaign', 'UTM content', 'Ad ID', 'Cancelled'];
+  'City', 'Phone', 'Alt phone', 'UTM source', 'UTM campaign', 'UTM content', 'Ad ID', 'Cancelled', 'Campaign ID (UTM)', 'Ad set ID (UTM)'];
 
 const COL_ALTS = {
   order_id: ['Order ID', 'Order Number', 'Name', 'Order', 'id'],
@@ -23,6 +23,8 @@ const COL_ALTS = {
   // Shopify Flow columns from the COD form's order attributes (the visit UTMs are empty for form orders).
   attr_utm_source: ['Attr UTM Source'], attr_utm_campaign: ['Attr UTM Campaign'], attr_utm_content: ['Attr UTM Content'],
   source_name: ['Source Name'],
+  // utm_id = campaign ID, utm_term = ad set ID: they stay the same when a campaign or ad is renamed (names in UTMs don't).
+  utm_id: ['UTM ID', 'utm_id'], utm_term: ['UTM Term', 'utm_term'], attr_utm_id: ['Attr UTM ID'], attr_utm_term: ['Attr UTM Term'],
   metadata: ['Order Metadata'], status: ['Status', 'Financial Status', 'Cancelled At']
 };
 
@@ -37,7 +39,8 @@ function orderCell_(v) {
  * Shopify Flow adds values, not headers. The Flow row ends with the COD form columns right after "UTM Term",
  * so their headers are written once here (the only write to the orders sheet).
  */
-const FLOW_EXTRA_HEADERS = ['Attr UTM Source', 'Attr UTM Campaign', 'Attr UTM Content', 'Order Referrer', 'Products', 'Source Name'];
+const FLOW_EXTRA_HEADERS = ['Attr UTM Source', 'Attr UTM Campaign', 'Attr UTM Content', 'Order Referrer', 'Products', 'Source Name',
+  'Attr UTM ID', 'Attr UTM Term'];
 function ensureFlowHeaders_(sheet, head) {
   const at = head.indexOf('UTM Term') + 1;
   if (cfgStr_('orders.method') !== 'shopify_flow_sheet' || !at) return head;
@@ -163,45 +166,57 @@ function readOrderSource_(full) {
   const adIds = new Set();
   rawRows_(APP.T.ADMAP, ADMAP_HEADERS.length).forEach(r => adIds.add(String(r[0])));
   // UTMs with names instead of IDs (utm_source = campaign name, utm_campaign = ad name): the ad from Ads Raw.
-  const byName = new Map();
+  // Renamed campaigns / ads: the ad set ID (utm_term) is exact; in it, the ad with the UTM's ad name, else the one that spent most.
+  const byName = new Map(), bySet = new Map();
   (full ? rawRows_(APP.T.ADS, ADS_HEADERS.length) : recentRows_(APP.T.ADS, ADS_HEADERS.length, 1, asKey_, shiftKey_(todayKey_(), -60))).forEach(a => {
     const k = norm_(a[5]) + '|' + norm_(a[9]);
     if (a[8] && !byName.has(k)) byName.set(k, String(a[8]));
+    if (!a[6] || !a[8]) return;
+    const set = bySet.get(String(a[6])) || new Map(), ad = set.get(String(a[8])) || { name: norm_(a[9]), spend: 0 };
+    ad.spend += num_(a[10]); set.set(String(a[8]), ad); bySet.set(String(a[6]), set);
   });
+  const adOfSet = (setId, adName) => {
+    const set = bySet.get(String(setId || ''));
+    if (!set) return '';
+    let best = '', top = -1;
+    set.forEach((ad, id) => { if (ad.name === norm_(adName)) top = Infinity, best = id; else if (ad.spend > top) { top = ad.spend; best = id; } });
+    return best;
+  };
   const cancelWords = cfgList_('orders.cancelled_words').map(norm_);
   const byId = new Map();
   let noDate = 0;
   rows.forEach(r0 => {
     const id = String(get(r0, 'order_id') === null ? '' : get(r0, 'order_id')).trim();
     if (!id) return;
-    // A row from before Flow wrote the form columns: those columns from ORDER_PATCH (16_orders_patch.gs).
-    const fix = !ORDER_PATCH_COLS.some(k => k !== 'product' && get(r0, k)) ? orderPatch_(id) : null;
-    const r = !fix ? r0 : r0.slice();
-    if (fix) ORDER_PATCH_COLS.forEach((k, i) => { if (c[k] >= 0) r[c[k]] = fix[i]; });
+    // Columns Flow didn't write yet for this order (older rows): from ORDER_PATCH (16_orders_patch.gs), read from Shopify.
+    const fix = orderPatch_(id), r = fix ? r0.slice() : r0;
+    if (fix) ORDER_PATCH_COLS.forEach((k, i) => { if (c[k] >= 0 && fix[i] && !get(r0, k)) r[c[k]] = fix[i]; });
     const dt = parseOrderDate_(get(r, 'date'), fmt, src.tz);
     if (!dt) { noDate++; return; }
     const utms = ['utm_source', 'utm_campaign', 'utm_content'].map(k => String(get(r, 'attr_' + k) || get(r, k) || '').trim());
     const meta = String(get(r, 'metadata') || ''), refM = meta.match(/referrer\s*:\s*([^\s\]]+)/i);
     const referrer = String(get(r, 'referrer') || '') || (refM ? refM[1] : '');
-    const total = num_(get(r, 'total'));
+    const total = num_(get(r, 'total')), ids = ['utm_id', 'utm_term'].map(k => String(get(r, 'attr_' + k) || get(r, k) || '').trim());
     const o = byId.get(id);
     if (o) { // duplicate rows of one order (cross-sell lines): earliest date, highest total
       if (dt < o.dt) o.dt = dt;
       o.total = Math.max(o.total, total);
       utms.forEach((u, i) => { if (!o.utms[i] && u) o.utms[i] = u; });
+      ids.forEach((u, i) => { if (!o.ids[i] && u) o.ids[i] = u; });
       return;
     }
-    byId.set(id, { id: id, dt: dt, utms: utms, referrer: referrer, source: String(get(r, 'source_name') || ''), total: total, raw: String(get(r, 'product') || ''),
+    byId.set(id, { id: id, dt: dt, utms: utms, ids: ids, referrer: referrer, source: String(get(r, 'source_name') || ''), total: total, raw: String(get(r, 'product') || ''),
       city: String(get(r, 'city') || '').trim(), phone: phone10_(get(r, 'phone')), alt: phone10_(get(r, 'alt_phone')),
       cancelled: cancelWords.some(w => w && hasToken_(norm_(get(r, 'status')), w)) });
   });
   if (noDate && full) setStatus_('ORDERS_NODATE', noDate + ' صف من غير تاريخ مفهوم');
   const out = Array.from(byId.values()).map(o => {
     const pl = platformOf_(o.utms, o.referrer, o.source);
-    const adId = (o.utms.join(' ').match(/\d{10,}/g) || []).find(x => adIds.has(x)) || byName.get(norm_(o.utms[0]) + '|' + norm_(o.utms[1])) || '';
+    const adId = (o.utms.join(' ').match(/\d{10,}/g) || []).find(x => adIds.has(x)) || byName.get(norm_(o.utms[0]) + '|' + norm_(o.utms[1])) ||
+      (pl.p === 'META' ? adOfSet(o.ids[1], o.utms[1]) : '') || '';
     return [o.id, Utilities.formatDate(o.dt, tz_(), 'yyyy-MM-dd HH:mm'), dayKey_(o.dt), pl.p, pl.s, productOfOrder_(o.raw),
       o.raw.replace(/\s+/g, ' ').slice(0, 1000), o.total, o.city, o.phone ? '0' + o.phone : '', o.alt ? '0' + o.alt : '',
-      o.utms[0], o.utms[1], o.utms[2], adId, o.cancelled];
+      o.utms[0], o.utms[1], o.utms[2], adId, o.cancelled, o.ids[0], o.ids[1]];
   }).sort((a, b) => (a[1] < b[1] ? 1 : -1));
   return { rows: out, full: full, state: { id: src.id, head: head.join('|'), fmt: fmt, rows: L, patch: patch } };
 }
@@ -219,7 +234,10 @@ function syncOrders_(full) {
   if (props.getProperty(key) === hash && ss_().getSheetByName(APP.T.ORDERS)) { save(); return { orders: res.rows.length, changed: false }; }
   let total = res.rows.length;
   withLock_(() => {
-    const sh = ensureTab_(APP.T.ORDERS, ORDERS_HEADERS), text = [1, 2, 3, 10, 11, 15], byCreated = (a, b) => (sortKey_(a[1]) < sortKey_(b[1]) ? 1 : -1);
+    const sh = ensureTab_(APP.T.ORDERS, ORDERS_HEADERS), text = [1, 2, 3, 10, 11, 15, 17, 18];
+    const hr = sh.getRange(1, 1, 1, ORDERS_HEADERS.length);
+    if (hr.getValues()[0].join('|') !== ORDERS_HEADERS.join('|')) hr.setValues([ORDERS_HEADERS]); // new columns (older tabs)
+    const byCreated = (a, b) => (sortKey_(a[1]) < sortKey_(b[1]) ? 1 : -1);
     if (res.full) ORDERS_REREAD_ = writeRows_(sh, res.rows, ORDERS_HEADERS.length, text) || ORDERS_REREAD_;
     else if (res.rows.length) {
       const fresh = new Map(res.rows.map(r => [String(r[0]), r]));

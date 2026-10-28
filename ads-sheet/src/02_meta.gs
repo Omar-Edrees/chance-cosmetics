@@ -117,7 +117,7 @@ function discoverAccounts_() {
   const ids = new Set();
   recentRows_(APP.T.ORDERS, ORDERS_HEADERS.length, 2, sortKey_, weekAgo).forEach(o => {
     if (o[3] !== 'META' || o[14] || asKey_(o[2]) < weekAgo) return;
-    ([o[11], o[12], o[13]].join(' ').match(/\d{15,}/g) || []).forEach(x => { if (!known.has(x)) ids.add(x); });
+    ([o[11], o[12], o[13], o[16], o[17]].join(' ').match(/\d{15,}/g) || []).forEach(x => { if (!known.has(x)) ids.add(x); });
   });
   let tried = {};
   try { tried = JSON.parse(props.getProperty('ACC_DISCOVER_TRIED') || '{}'); } catch (e) { tried = {}; }

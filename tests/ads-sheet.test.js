@@ -219,7 +219,7 @@ test('Today: أداء المنتجات بالـ ROAS، والأوردر على �
   const lip = values.find(r => r[7] === 'Lip Oil'), blush = values.find(r => r[7] === 'Blush');
   assert.deepEqual(lip.slice(7, 13), ['Lip Oil', 0, 600, '', 0, 2]);
   assert.deepEqual(blush.slice(7, 12), ['Blush', 0, 100, '', 0]);
-  assert.deepEqual(values.find(r => r[7] === 'أوردرات Meta من إعلان مش في الشيت').slice(7, 10), ['أوردرات Meta من إعلان مش في الشيت', 2, 0]);
+  assert.deepEqual(values.find(r => r[7] === 'أوردرات Meta من غير إعلان معروف (مفيش UTM)').slice(7, 10), ['أوردرات Meta من غير إعلان معروف (مفيش UTM)', 2, 0]);
   const unmapped = values.find(r => r[7] === '❌ صرف مش مربوط بمنتج');
   assert.deepEqual(unmapped.slice(7, 10), ['❌ صرف مش مربوط بمنتج', 0, 400]);
   const total = values.find(r => r[7] === 'TOTAL META PRODUCT PERFORMANCE');
@@ -296,7 +296,8 @@ test('أسامي الحسابات من Meta، والاسم اللي اتكتب �
 
 /* شيت الأوردرات زي ما Shopify Flow بيكتبه، ومعاه أعمدة فورم الكاش أون ديليفري */
 const FLOW_HEAD = ['Order ID', 'Order Number', 'Customer Name', 'Customer Email', 'Total Price', 'Created At', 'UTM Source', 'UTM Medium',
-  'UTM Campaign', 'UTM Content', 'UTM Term', 'Attr UTM Source', 'Attr UTM Campaign', 'Attr UTM Content', 'Order Referrer', 'Products', 'Source Name'];
+  'UTM Campaign', 'UTM Content', 'UTM Term', 'Attr UTM Source', 'Attr UTM Campaign', 'Attr UTM Content', 'Order Referrer', 'Products', 'Source Name',
+  'Attr UTM ID', 'Attr UTM Term'];
 
 test('أوردرات Flow: "(blank)" فاضي، والمصدر من بيانات الفورم، والمنتجات من عمود Products، وعناوين الأعمدة بتتكتب لوحدها', () => {
   const AD = '120256366885940102', probe = env(), today = probe.c.todayKey_(), at = hm => ' ' + today + 'T' + hm + ':00+03:00';
@@ -315,7 +316,7 @@ test('أوردرات Flow: "(blank)" فاضي، والمصدر من بيانات
   e.c.setupAll();
   e.c.liveTick();
   e.c.liveTick();
-  assert.deepEqual(e.source.getSheetByName('orders').getRange(1, 1, 1, 17).getValues()[0], FLOW_HEAD);
+  assert.deepEqual(e.source.getSheetByName('orders').getRange(1, 1, 1, 19).getValues()[0], FLOW_HEAD);
   const raw = e.ss.getSheetByName('Orders Raw').getDataRange().getValues().slice(1);
   const by = id => raw.find(r => r[0] === 'gid://shopify/Order/' + id);
   assert.deepEqual([1, 2, 3, 4, 5].map(id => by(id)[3]), ['META', 'META', 'DIRECT', 'MANUAL', 'UNKNOWN']);
@@ -565,4 +566,24 @@ test('لينك البايو و ChatGPT مش إعلانات: DIRECT', () => {
   assert.deepEqual(p(1), ['DIRECT', 'organic']);
   assert.deepEqual(p(2), ['DIRECT', 'referrer']);
   assert.deepEqual(p(3), ['META', 'utm']);
+});
+
+test('كامبين اسمها اتغير: الأوردر بيتربط بالإعلان من رقم الـ Ad set (utm_term)', () => {
+  const probe = env(), today = probe.c.todayKey_(), at = ' ' + today + 'T10:00:00+03:00', B = '(blank)';
+  const ad = (id, set, name, spend) => Object.assign(adRow(today, id, spend, name), { campaign_id: 'C9', campaign_name: 'Scaling | Sheglam page', adset_id: set });
+  const e = env({ orderHead: FLOW_HEAD,
+    ads: { [A1]: [ad('901', '777000111222333', 'Renamed ad', 300), ad('902', '777000111222333', 'Other', 100), ad('903', '888000111222333', 'New Sales Ad - Copy 3', 50)] },
+    creatives: { 901: 'https://chance-cosmetics.com/products/lip-oil', 902: 'https://chance-cosmetics.com/products/lip-oil', 903: 'https://chance-cosmetics.com/products/lip-oil' },
+    orders: [
+      ['gid://shopify/Order/1', ' #1', ' N', B, 300, at, B, B, B, B, B, 'All Aug | Sheglam page', 'New Sales Ad - Copy 3', 'fb', 'Facebook', 'Lip Oil x1', '4655075', 'C9', '777000111222333'],
+      ['gid://shopify/Order/2', ' #2', ' N', B, 300, at, B, B, B, B, B, 'All Aug | Sheglam page', 'New Sales Ad - Copy 3', 'fb', 'Facebook', 'Lip Oil x1', '4655075', 'C9', '888000111222333'],
+      ['gid://shopify/Order/3', ' #3', ' N', B, 300, at, B, B, B, B, B, '', '', '', 'Facebook', 'Lip Oil x1', '4655075', '', ''],
+    ] });
+  e.c.setupAll();
+  e.c.liveTick(); e.c.liveTick();
+  const raw = e.ss.getSheetByName('Orders Raw').getDataRange().getValues(), ad14 = id => raw.find(r => r[0] === 'gid://shopify/Order/' + id)[14];
+  assert.equal(raw[0][17], 'Ad set ID (UTM)');
+  assert.equal(ad14(1), '901', 'الاسم مش موجود: الإعلان اللي صرف أكتر في الـ Ad set');
+  assert.equal(ad14(2), '903', 'اسم الإعلان موجود في الـ Ad set');
+  assert.equal(ad14(3), '', 'مفيش UTM خالص');
 });
