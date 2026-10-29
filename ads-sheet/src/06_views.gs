@@ -74,7 +74,10 @@ function outsideMeta_(o, known) {
   const arch = archiveAccOf_(o[0]); // an old order: its account came with the archive (its campaigns are no longer in Ads Raw)
   if (arch) return arch === 'OUT';
   const ids = [o[11], o[12], o[13], o[16], o[17]].join(' ').match(/\d{15,}/g) || [];
-  return ids.length > 0 && !ids.some(x => known.has(x));
+  // Meta IDs end with the same 4 digits per ad account (0125, 0297, 0793 here; 0102 = the account not in the sheet), so an
+  // older campaign of an account in the sheet (no longer in Ads Raw's 60 days) still counts as ours.
+  const tails = known.tails || (known.tails = new Set(Array.from(known, x => String(x).slice(-4))));
+  return ids.length > 0 && !ids.some(x => known.has(x) || tails.has(x.slice(-4)));
 }
 
 function dailyRows_() { return rawRows_(APP.T.DAILY, DAILY_HEADERS.length).map(r => { r[0] = asKey_(r[0]); return r; }); }

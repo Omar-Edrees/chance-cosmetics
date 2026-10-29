@@ -329,11 +329,12 @@ test('أوردرات Flow: "(blank)" فاضي، والمصدر من بيانات
   assert.equal(by(1)[14], AD);
   assert.equal(by(2)[5], 'Lip Oil');
   const meta = todayRow(e, 'META TOTAL'), grand = todayRow(e, 'GRAND TOTAL');
-  assert.deepEqual(meta.slice(2, 6), [600, 2, 300, 2.24]);
-  assert.deepEqual(['DIRECT', 'MANUAL (DRAFT)', 'NO SOURCE'].map(l => todayRow(e, l)[3]), [1, 1, 1]);
+  assert.deepEqual(meta.slice(2, 6), [600, 3, 200, 4.76], 'META TOTAL فيه أوردر DIRECT كمان');
+  assert.match(meta[1], /DIRECT.*: 1$/);
+  assert.deepEqual(['MANUAL (DRAFT)', 'NO SOURCE'].map(l => todayRow(e, l)[3]), [1, 1]);
   const labels = e.ss.getSheetByName('Today').getDataRange().getValues().map(r => r[0]);
   assert.deepEqual(labels.slice(labels.indexOf('TIKTOK TOTAL'), labels.indexOf('GRAND TOTAL') + 1),
-    ['TIKTOK TOTAL', 'DIRECT', 'MANUAL (DRAFT)', 'NO SOURCE', 'GRAND TOTAL']);
+    ['TIKTOK TOTAL', 'MANUAL (DRAFT)', 'NO SOURCE', 'GRAND TOTAL'], 'مفيش صف DIRECT لوحده');
   assert.equal(grand[3], 5);
 });
 
@@ -672,4 +673,11 @@ test('ملف الأرشيف الحقيقي بيتقري صح ومافيهوش ب
   const text = require('vm').runInContext('ORDER_ARCHIVE_DATA + JSON.stringify(ORDER_ARCHIVE_SRC) + JSON.stringify(ORDER_ARCHIVE_PROD)', c);
   assert.ok(text.length > 400000);
   assert.ok(!/(^|\D)01[0125]\d{8}(\D|$)/.test(text), 'مفيش أرقام تليفونات');
+});
+
+test('أوردر Meta من كامبين قديمة لحساب معانا مش META OUT (آخر 4 أرقام في الـ ID)', () => {
+  const c = env().c, known = new Set(['120250000000010297', '23860000000000793']);
+  const o = (camp, set) => ['x', '', '', 'META', '', '', '', '', '', '', '', 'facebook', camp, '', '', false, camp, set];
+  assert.equal(c.outsideMeta_(o('120240000000020297', '120240000000030297'), known), false, 'حساب egy3 بكامبين مش في Ads Raw');
+  assert.equal(c.outsideMeta_(o('120256366878570102', '120256366881430102'), known), true, 'الحساب اللي مش معانا');
 });

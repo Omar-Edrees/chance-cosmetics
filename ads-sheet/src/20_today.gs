@@ -186,25 +186,27 @@ function todayClosing_(g, today, sum, rows) {
     g.set(row, 5, ratioOrBlank_(spend, orders, 2), Object.assign({ nf: S.MONEY, al: 'right' }, style, style.bg ? {} : { bg: S.METRIC }));
     g.set(row, 6, hasValue ? ratioOrBlank_(value, spend, 2) : '', Object.assign({ nf: S.RATIO, al: 'right' }, style, style.bg ? {} : { bg: S.METRIC }));
   };
-  const platform = (label, color, list, totalLabel, totalStyle, key) => {
+  const platform = (label, color, list, totalLabel, totalStyle, key, plus) => {
     const first = r, items = list.length ? list : [{ name: '', spend: 0, orders: 0, value: 0 }];
     items.forEach(a => { line(r, a.name, a.spend, a.orders, a.value, {}, key === 'META'); r++; });
     g.set(first, 1, label, { bg: color, fc: '#ffffff', b: 'bold', al: 'center' });
     for (let i = first + 1; i < r; i++) g.cell(i, 1).bg = color;
     if (items.length > 1) g.merge(first, 1, items.length, 1);
-    const t = sum.byPlatform[key] || { spend: 0, orders: 0, revenue: 0 };
+    const t = Object.assign({ spend: 0, orders: 0, revenue: 0 }, sum.byPlatform[key]), add = plus && sum.byPlatform[plus];
+    if (add) { t.orders += add.orders; t.revenue += add.revenue; } // orders with no ad (DIRECT) count with Meta's spend
     g.set(r, 1, totalLabel, totalStyle);
-    line(r, '', t.spend, t.orders, t.revenue, totalStyle, true);
+    line(r, add && add.orders ? 'شامل DIRECT (مباشر أو البايو): ' + add.orders : '', t.spend, t.orders, t.revenue, totalStyle, true);
     r++;
   };
-  platform('META', S.META, accs.META, 'META TOTAL', { bg: S.META_TOTAL, b: 'bold', fc: '#1d4ed8' }, 'META');
+  platform('META', S.META, accs.META, 'META TOTAL', { bg: S.META_TOTAL, b: 'bold', fc: '#1d4ed8' }, 'META', APP.DIRECT);
   platform('TIKTOK', S.TIKTOK, accs.TIKTOK, 'TIKTOK TOTAL', { bg: S.TT_TOTAL, b: 'bold' }, 'TIKTOK');
-  // Store orders with no ad source: no spend, so orders only. NO SOURCE shows only when some orders carry no data at all.
+  // Store orders with no ad source but DIRECT: no spend, so orders only. NO SOURCE shows only when some orders carry no data at all.
   // META OUT: orders from a Meta ad account that isn't in the sheet (no spend here), named by what they bought.
   const out = {};
   rows.forEach(x => { if (x[0] === today && x[1] === APP.META_OUT) out[x[2]] = (out[x[2]] || 0) + num_(x[8]); });
   const outNames = Object.keys(out).sort((a, b) => out[b] - out[a]).slice(0, 2).join(' / ');
-  [[APP.META_OUT, 'META (حساب مش معانا)', 'مش داخل في التوتال: ' + outNames], [APP.DIRECT, 'DIRECT', 'مباشر أو لينك البايو (من غير إعلان)'],
+  // DIRECT has no row of its own: it is in META TOTAL.
+  [[APP.META_OUT, 'META (حساب مش معانا)', 'مش داخل في التوتال: ' + outNames],
     [APP.MANUAL, 'MANUAL (DRAFT)', 'أوردرات يدوي'], [APP.UNKNOWN_PLATFORM, 'NO SOURCE', 'من غير بيانات مصدر']].forEach(x => {
     const t = sum.byPlatform[x[0]] || { orders: 0 };
     if ((x[0] === APP.UNKNOWN_PLATFORM || x[0] === APP.META_OUT) && !t.orders) return;
