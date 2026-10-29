@@ -122,8 +122,67 @@ function writeCatalogTab_() {
   };
   let r = table(1, 'CATALOG — TODAY | ' + Utilities.formatDate(noon, 'UTC', 'dd-MMM-yyyy'), today, today) + 1;
   table(r, 'CATALOG — THIS MONTH | ' + Utilities.formatDate(noon, 'UTC', 'MMM-yyyy'), today.slice(0, 8) + '01', today);
+  const ordersAll = todayOrders_(month0);
+  r = campaignOrders_(g, 1, 'CAMPAIGNS — TODAY | ' + Utilities.formatDate(noon, 'UTC', 'dd-MMM-yyyy'), today, today, ordersAll) + 1;
+  campaignOrders_(g, r, 'CAMPAIGNS — THIS MONTH | ' + Utilities.formatDate(noon, 'UTC', 'MMM-yyyy'), month0, today, ordersAll);
   if (!writeGrid_(sh, g)) return;
-  [[1, 360], [2, 90], [3, 120], [4, 100], [5, 90], [6, 160]].forEach(w => sh.setColumnWidth(w[0], w[1]));
+  [[1, 360], [2, 90], [3, 120], [4, 100], [5, 90], [6, 160], [7, 24], [8, 360], [9, 260], [10, 110], [11, 90], [12, 380], [13, 90]]
+    .forEach(w => sh.setColumnWidth(w[0], w[1]));
+}
+
+/*
+ * Right side of الكتالوج: every Meta campaign that spent or brought orders in the period, running ones first.
+ * CAMPAIGN | PRODUCT (its ads' products, by spend) | ADS RUNNING NOW | ORDERS | ORDERED PRODUCT | ORDERS: one line per
+ * product the orders bought (each order once, on the ad's product when it has it), so the last column adds up to ORDERS.
+ */
+function campaignOrders_(g, r, title, from, to, orders) {
+  const S = TODAY, c = 8, idx = adMapIndex_(), catAds = catalogAdIds_(), running = activeCampaigns_(), camps = new Map(), adCamp = {};
+  const camp = (id, name) => { if (!camps.has(id)) camps.set(id, { id: id, name: name, spend: {}, total: 0, orders: [] }); return camps.get(id); };
+  recentRows_(APP.T.ADS, ADS_HEADERS.length, 1, asKey_, shiftKey_(from, -60)).forEach(a => {
+    if (a[1] !== 'META' || !a[8]) return;
+    const id = String(a[4] || a[5]);
+    if (!adCamp[String(a[8])]) adCamp[String(a[8])] = { id: id, name: a[5] };
+    const d = asKey_(a[0]);
+    if (d < from || d > to || num_(a[10]) <= 0) return;
+    const m = idx.get(adKey_('META', String(a[8]), '', '', '')), p = catAds.has('META|' + String(a[8])) ? APP.CATALOG : m ? m.product : APP.UNMAPPED;
+    const x = camp(id, a[5]);
+    x.spend[p] = (x.spend[p] || 0) + num_(a[10]); x.total += num_(a[10]);
+  });
+  const none = { id: '', name: APP.META_NO_AD, spend: {}, total: 0, orders: [] };
+  orders.forEach(o => {
+    if (o.d < from || o.d > to) return;
+    const k = adCamp[o.ad];
+    (k ? camp(k.id, k.name) : none).orders.push(o);
+  });
+  const list = Array.from(camps.values()).filter(x => x.total > 0 || x.orders.length)
+    .sort((a, b) => ((running[b.id] ? 1 : 0) - (running[a.id] ? 1 : 0)) || (b.orders.length - a.orders.length) || (b.total - a.total));
+  if (none.orders.length) list.push(none);
+  r = todayHead_(g, r, c, 6, title, ['CAMPAIGN', 'PRODUCT', 'ADS RUNNING NOW', 'ORDERS', 'ORDERED PRODUCT (اللي اتطلب)', 'ORDERS']);
+  let total = 0;
+  list.forEach(x => {
+    const prods = Object.keys(x.spend).sort((a, b) => x.spend[b] - x.spend[a]);
+    const main = prods[0] || (x.orders[0] ? x.orders[0].key : '');
+    const lines = orderedList_(x.orders, main), k = Math.max(lines.length, 1);
+    const style = x === none ? { bg: S.SPECIAL } : running[x.id] ? {} : { fc: '#6b7280' };
+    g.set(r, c, x.name, style);
+    g.set(r, c + 1, prods.length > 2 ? prods.slice(0, 2).join(' / ') + ' + ' + (prods.length - 2) : prods.join(' / '), style);
+    g.set(r, c + 2, running[x.id] || '', Object.assign({ nf: S.COUNT, al: 'center' }, style, running[x.id] ? { fc: '#137333' } : {}));
+    g.set(r, c + 3, x.orders.length, Object.assign({ nf: S.COUNT, al: 'right', b: 'bold' }, style));
+    for (let i = 0; i < k; i++) {
+      if (i) g.fill(r + i, c, 4, Object.assign({}, style));
+      g.set(r + i, c + 4, (lines[i] || [''])[0], style);
+      g.set(r + i, c + 5, (lines[i] || ['', ''])[1], Object.assign({ nf: S.COUNT, al: 'right' }, style));
+    }
+    if (k > 1) for (let col = c; col < c + 4; col++) g.merge(r, col, k, 1);
+    total += x.orders.length;
+    r += k;
+  });
+  if (!list.length) { g.set(r, c, 'مفيش كامبينات صرفت في الفترة دي', { fc: '#6b7280' }); r++; }
+  const tot = { bg: S.TOTAL, b: 'bold' };
+  g.set(r, c, 'TOTAL', tot); g.fill(r, c + 1, 2, tot);
+  g.set(r, c + 3, total, Object.assign({ nf: S.COUNT, al: 'right' }, tot)); g.fill(r, c + 4, 1, tot);
+  g.set(r, c + 5, total, Object.assign({ nf: S.COUNT, al: 'right' }, tot));
+  return r + 1;
 }
 
 /*

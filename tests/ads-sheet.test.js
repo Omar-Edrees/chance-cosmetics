@@ -55,7 +55,7 @@ function env(options) {
       (ads[id] || []).forEach(r => { byDay[r.date_start] = (byDay[r.date_start] || 0) + Number(r.spend); });
       return { data: Object.keys(byDay).map(d => ({ date_start: d, spend: String(byDay[d]) })) };
     }
-    if (/\/ads\?/.test(url)) return { data: (activeAds[id] || []).map(x => ({ id: x })) };
+    if (/\/ads\?/.test(url)) return { data: (activeAds[id] || []).map(x => ({ id: x, campaign_id: 'C1' })) };
     const adId = (url.match(/\/v[\d.]+\/(\d+)\?/) || [])[1];
     if (adId && creatives[adId]) return { creative: { object_story_spec: { link_data: { link: creatives[adId] } } } };
     const obj = (url.match(/\/v[\d.]+\/(\d+)\?/) || [])[1];
@@ -214,22 +214,22 @@ test('Today: أداء المنتجات بالـ ROAS، والأوردر على �
   const titles = values.map(r => String(r[7])).filter(t => /^PRODUCT PERFORMANCE/.test(t));
   assert.equal(titles.length, 2);
   const heads = values.filter(r => r[7] === 'PRODUCT');
-  heads.forEach(h => assert.deepEqual(h.slice(7, 14), ['PRODUCT', 'META ORDERS', 'META SPEND', 'META CPP', 'META ROAS', 'PIXEL PURCHASES', 'RUNNING NOW']));
+  heads.forEach(h => assert.deepEqual(h.slice(7, 14), ['PRODUCT', 'META ORDERS', 'PIXEL PURCHASES', 'META SPEND', 'META CPP', 'META ROAS', 'ADS RUNNING NOW']));
   // الـ UTM هنا (fb / Camp) مش بيشاور على إعلان في الشيت: الأوردرات في صف لوحدها مش على Lip Oil
   const lip = values.find(r => r[7] === 'Lip Oil'), blush = values.find(r => r[7] === 'Blush');
-  assert.deepEqual(lip.slice(7, 13), ['Lip Oil', 0, 600, '', 0, 2]);
-  assert.deepEqual(blush.slice(7, 12), ['Blush', 0, 100, '', 0]);
-  assert.deepEqual(values.find(r => r[7] === 'أوردرات Meta من غير إعلان معروف (مفيش UTM)').slice(7, 10), ['أوردرات Meta من غير إعلان معروف (مفيش UTM)', 2, 0]);
+  assert.deepEqual(lip.slice(7, 14), ['Lip Oil', 0, 2, 600, '', 0, 1]);
+  assert.deepEqual(blush.slice(7, 14), ['Blush', 0, 2, 100, '', 0, '']);
+  assert.deepEqual(values.find(r => r[7] === 'أوردرات Meta من غير إعلان معروف (مفيش UTM)').slice(7, 11), ['أوردرات Meta من غير إعلان معروف (مفيش UTM)', 2, 0, 0]);
   const unmapped = values.find(r => r[7] === '❌ صرف مش مربوط بمنتج');
-  assert.deepEqual(unmapped.slice(7, 10), ['❌ صرف مش مربوط بمنتج', 0, 400]);
-  const total = values.find(r => r[7] === 'TOTAL META PRODUCT PERFORMANCE');
-  assert.deepEqual(total.slice(7, 12), ['TOTAL META PRODUCT PERFORMANCE', 2, 1100, 550, 0.95]);
+  assert.deepEqual(unmapped.slice(7, 11), ['❌ صرف مش مربوط بمنتج', 0, 2, 400]);
+  const total = values.find(r => r[7] === 'TOTAL META');
+  assert.deepEqual(total.slice(7, 14), ['TOTAL META', 2, 6, 1100, 550, 0.95, 1]);
 });
 
 test('ربط الإعلانات بالمنتجات من لينك صفحة المنتج، والكوليكشن مش مربوط طول ما دومين المتجر فاضي', () => {
   const e = scenario();
   const prods = e.ss.getSheetByName('Today').getDataRange().getValues();
-  const spend = n => (prods.find(r => r[7] === n) || [])[9];
+  const spend = n => (prods.find(r => r[7] === n) || [])[10];
   assert.equal(spend('Lip Oil'), 600);
   assert.equal(spend('Blush'), 100);
   // business.store_domains فاضي في البروفايل، فلينك الكوليكشن مابيتعرفش MULTI
@@ -361,14 +361,20 @@ test('الكتالوج: Today فيه صف CATALOG واحد بصرفه وأورد
 
   const between = (v, col, from, to) => { const i = v.findIndex(r => r[col] === from); return v.slice(i + 1, v.findIndex((r, j) => j > i && r[col] === to) + 1); };
   const v = e.ss.getSheetByName('Today').getDataRange().getValues();
-  assert.deepEqual(v.find(r => r[7] === 'PRODUCT').slice(14, 16), ['ORDERED PRODUCT (اللي اتطلب)', 'ORDERS']);
-  // إعلان Lip Oil جاب أوردر فيه Lip Oil و Blush: الأوردر بيتعد مرة واحدة على منتج الإعلان، والمنتج التاني جنبه
-  assert.deepEqual(between(v, 7, 'PRODUCT', 'TOTAL META PRODUCT PERFORMANCE').map(r => r.slice(7, 16)), [
-    ['CATALOG (كل إعلانات الكتالوج)', 1, 400, 400, 0.63, 2, '✅ 1 إعلان', 'Blush', 1],
-    ['Lip Oil', 1, 600, 600, 0.5, 2, '✅ 1 إعلان', 'Lip Oil + Blush', 1],
-    ['TOTAL META PRODUCT PERFORMANCE', 2, 1000, 500, 0.55, 4, '', '', 2],
+  // Today بسيط: سطر لكل منتج، من غير المنتجات اللي اتطلبت
+  assert.deepEqual(between(v, 7, 'PRODUCT', 'TOTAL META').map(r => r.slice(7, 16)), [
+    ['CATALOG (كل إعلانات الكتالوج)', 1, 2, 400, 400, 0.63, 1, '', ''],
+    ['Lip Oil', 1, 2, 600, 600, 0.5, 1, '', ''],
+    ['TOTAL META', 2, 4, 1000, 500, 0.55, 2, '', ''],
   ]);
   const t = e.ss.getSheetByName('الكتالوج').getDataRange().getValues();
+  // تاب الكتالوج: كل كامبين، وأوردراتها رايحة على أنهي منتجات. الأوردر بيتعد مرة واحدة، على منتج الإعلان لو فيه.
+  assert.deepEqual(between(t, 7, 'CAMPAIGN', 'TOTAL').map(r => r.slice(7, 13)), [
+    ['Camp', 'Lip Oil / CATALOG (كل إعلانات الكتالوج)', 2, 2, 'Lip Oil + Blush', 1],
+    ['', '', '', '', 'Blush', 1],
+    ['TOTAL', '', '', 2, '', 2],
+  ]);
+  assert.ok(t.some(r => /^CAMPAIGNS — THIS MONTH/.test(String(r[7]))));
   assert.deepEqual(between(t, 0, 'PRODUCT', 'TOTAL CATALOG').map(r => r.slice(0, 6)), [
     ['Blush', 1, 200, 200, 1.25, 0],
     ['Lip Oil', 0, 150, '', 0, 1],
@@ -456,10 +462,12 @@ test('أوردرات من حساب Meta مش معانا: صف لوحدها بر�
   assert.deepEqual(row('META (حساب مش معانا)').slice(1, 4), ['مش داخل في التوتال: Marshmallow', '', 1]);
   assert.equal(row('GRAND TOTAL')[3], 2, 'أوردرات الحساب التاني برا GRAND TOTAL');
   const i = v.findIndex(r => r[7] === 'PRODUCT');
-  assert.deepEqual(v.slice(i + 1, i + 4).map(r => [r[7], r[8], r[14], r[15]]), [
-    ['Lip Oil', 2, 'Lip Oil', 1],
+  assert.deepEqual(v.slice(i + 1, i + 3).map(r => [r[7], r[8]]), [['Lip Oil', 2], ['TOTAL META', 2]]);
+  const t = e.ss.getSheetByName('الكتالوج').getDataRange().getValues(), j = t.findIndex(r => r[7] === 'CAMPAIGN');
+  assert.deepEqual(t.slice(j + 1, j + 4).map(r => [r[7], r[10], r[11], r[12]]), [
+    ['Camp', 2, 'Lip Oil', 1],
     ['', '', 'Blush + منتجين تانيين', 1], // مفيش Lip Oil في الأوردر: على المنتج اللي فيه قطع أكتر
-    ['TOTAL META PRODUCT PERFORMANCE', 2, '', 2],
+    ['TOTAL', 2, '', 2],
   ]);
 });
 
