@@ -782,3 +782,27 @@ test('ملف الستوك الثابت الحقيقي بيتقري صح', () => 
   assert.equal(snap['Sheglam Marshmallow Puff Lip Blur Pen'], 759);
   assert.ok(Object.values(snap).every(v => Number.isInteger(v) && v >= 0));
 });
+
+test('المحافظات: الأوردرات والإلغاء والتوصيل والمرتجع لكل محافظة، من غير الأكاونت اللي مش معانا', () => {
+  const probe = env(), today = probe.c.todayKey_(), B = '(blank)', at = ' ' + today + 'T10:00:00+03:00';
+  const flow = id => ['gid://shopify/Order/' + id, ' #' + id, ' N', B, 500, at, B, B, B, B, B, B, B, B, 'Direct(Chancestoreegy)', 'Lip Oil x1', '4655075'];
+  const old = (n, acc) => c => ({ id: 'gid://shopify/Order/' + n, dt: c.makeDate(probe.c.shiftKey_(today, -10) + 'T12:00:00Z'), utms: ['fb', '120247502496020297', '1'],
+    ids: ['120247502496020297', '120247502496010297'], referrer: 'https://facebook.com/', source: 'web', total: 400, raw: 'Lip Oil x1', cancelled: false, acc: acc });
+  const arch = [1, 2, 3, 4, 5, 6].map(n => old(n, A1)).concat([old(7, 'OUT')]);
+  const e = env({ archive: c => arch.map(f => f(c)), orderHead: FLOW_HEAD, orders: [flow(9)] });
+  const st = { 1: 'C', 2: 'D', 3: 'D', 4: 'R', 5: 'S', 6: 'D', 7: 'D' }, gov = { 1: 'الجيزة', 2: 'الجيزة', 3: 'الجيزة', 4: 'الجيزة', 5: 'القاهرة', 6: 'القاهرة', 7: 'القاهرة' };
+  e.c.orderStatus_ = id => (st[String(id).split('/').pop()] ? { code: st[String(id).split('/').pop()], revenue: null } : null);
+  e.c.orderGov_ = id => gov[String(id).split('/').pop()] || '';
+  e.c.setupAll();
+  e.c.liveTick();
+  const sh = e.ss.getSheetByName('المحافظات'), rows = t => block(sh, t);
+  assert.equal(sh.getRange('B2').getValue(), e.c.shiftKey_(today, -89), 'الفترة: آخر 90 يوم');
+  assert.deepEqual(rows('1) الأوردرات').map(r => [r[0], r[1], r[5]]), [['الجيزة', 0, 4], ['القاهرة', 0, 2], ['مش معروفة', 1, 1], ['الإجمالي', 1, 7]],
+    'أوردر 7 من الأكاونت اللي مش معانا مش محسوب، وأوردر 9 الجديد مالوش محافظة');
+  assert.deepEqual(rows('2) نسبة الإلغاء').map(r => r.slice(0, 6)), [['الجيزة', 4, 1, 0.25, 0, 0], ['القاهرة', 2, 0, 0, 0, 0], ['مش معروفة', 1, 0, '', 0, 1], ['الإجمالي', 7, 1, 1 / 6, 0, 1]]);
+  assert.deepEqual(rows('3) نسبة التوصيل').map(r => r.slice(0, 6)), [['الجيزة', 3, 2, 2 / 3, 0, 0.5], ['القاهرة', 2, 1, 1, 1, 0.5], ['مش معروفة', 0, 0, '', 0, ''], ['الإجمالي', 5, 3, 0.75, 1, 0.5]]);
+  assert.deepEqual(rows('4) نسبة المرتجع').map(r => r.slice(0, 4)), [['الجيزة', 3, 1, 1 / 3], ['القاهرة', 2, 0, 0], ['مش معروفة', 0, 0, ''], ['الإجمالي', 5, 1, 0.25]]);
+  // عمود المحافظة في شيت الأوردرات بيتقري لو الأوردر مش في الملف
+  assert.equal(e.c.govOf_(['x', '', '', '', '', '', '', '', 'Giza']), 'الجيزة');
+  assert.equal(e.c.govOf_(['x', '', '', '', '', '', '', '', 'محافظة الاسكندرية']), 'الإسكندرية');
+});
