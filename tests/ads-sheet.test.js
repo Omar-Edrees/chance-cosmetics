@@ -656,6 +656,7 @@ test('أرشيف الأوردرات القديمة: بيدخل Orders Raw ثاب
   assert.ok(Math.abs(month1[5] - 1 / 3) < 0.001, 'ROAS');
   const k = v.findIndex(r => r[0] === 'كل الحسابات (البيزنس كله)');
   assert.ok(k > 0);
+  assert.equal(v[k + 1][2], 1, 'الشهر ده: أوردر Flow مش من Meta (DIRECT) داخل في البيزنس كله');
   assert.equal(v[k + 2][2], 2, 'البيزنس كله: أوردرات Meta القديمة (من غير اللي حسابها مش معانا)');
 });
 

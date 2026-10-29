@@ -4,8 +4,8 @@
  * then its days for the last 30 days (newest first). SPEND and ORDERS are totals; the rates come from the summed numbers
  * (not an average of daily rates). A step rate over 100% (more purchases than checkouts: the COD form sends no checkout)
  * says the earlier event isn't tracked, so it gets no color.
- * SHOPIFY ORDERS = store orders from the account's ads (UTM → ad → account; the business row: every Meta order, like
- * META TOTAL in Today). CPP, AOV and ROAS come from them and their sales, against the spend of the days the orders sheet
+ * SHOPIFY ORDERS = store orders from the account's ads (UTM → ad → account; the business row: every store order, from any
+ * source, but those from an ad account not in the sheet, like GRAND TOTAL in Today; the benchmark: the Meta ones). CPP, AOV and ROAS come from them and their sales, against the spend of the days the orders sheet
  * covers (from 1 Jul 2026 with the archive of older orders; before that they're blank). META ORDERS = Meta's pixel purchases, for the funnel rates.
  * Colors: each cell against the BENCHMARK row (row 4): green = as good or better, yellow = worse by up to B2 (20%),
  * red = worse by more. The benchmark is all accounts together over the last 3 months; a number typed in row 4 by hand stays,
@@ -96,10 +96,11 @@ function funnelMonthName_(ym) {
 
 /*
  * Store orders per account and per day since `from`: {first (first day the orders sheet covers), acc: {id: {day: {orders,
- * revenue}}}, all: {day: ...}, spend: {id: {day: spend}}} (spend from Ads Raw, to match the covered days).
+ * revenue}}}, all: {day: ...} (every store order but those from an ad account not in the sheet), meta: {day: ...} (the Meta
+ * ones), spend: {id: {day: spend}}} (spend from Ads Raw, to match the covered days).
  */
 function funnelShop_(from) {
-  const out = { first: '', acc: {}, all: {}, spend: {} }, osh = ss_().getSheetByName(APP.T.ORDERS);
+  const out = { first: '', acc: {}, all: {}, meta: {}, spend: {} }, osh = ss_().getSheetByName(APP.T.ORDERS);
   if (!osh || osh.getLastRow() < 2) return out;
   out.first = asKey_(osh.getRange(osh.getLastRow(), 3).getValue()) || sortKey_(osh.getRange(osh.getLastRow(), 2).getValue()).slice(0, 10);
   const adAcc = {}, add = (map, d, rev) => { const x = map[d] = map[d] || { orders: 0, revenue: 0 }; x.orders++; x.revenue += rev; };
@@ -112,8 +113,10 @@ function funnelShop_(from) {
   const known = metaIdsOf_();
   recentRows_(APP.T.ORDERS, ORDERS_HEADERS.length, 2, sortKey_, from).forEach(o => {
     const d = asKey_(o[2]);
-    if (!d || d < from || o[3] !== 'META' || outsideMeta_(o, known)) return;
+    if (!d || d < from || outsideMeta_(o, known)) return;
     add(out.all, d, num_(o[7]));
+    if (o[3] !== 'META') return;
+    add(out.meta, d, num_(o[7]));
     const arch = archiveAccOf_(o[0]), acc = adAcc[String(o[14] || '')] || (arch !== 'OUT' ? arch : '');
     if (acc) add(out.acc[acc] = out.acc[acc] || {}, d, num_(o[7]));
   });
@@ -157,7 +160,7 @@ function writeFunnel_(data) {
   const shopFrom = shop.first && shop.first > pastFrom ? shop.first : pastFrom, shopTo = shop.first && shop.first > pastTo ? (shop.first > yest ? today : yest) : pastTo;
   const allSpend = {};
   Object.keys(shop.spend).forEach(acc => Object.keys(shop.spend[acc]).forEach(d => { allSpend[d] = (allSpend[d] || 0) + shop.spend[acc][d]; }));
-  funnelShopAdd_(all, shop.all, allSpend, shop, shopFrom, shopTo, shopFrom === pastFrom && shopTo === pastTo);
+  funnelShopAdd_(all, shop.meta, allSpend, shop, shopFrom, shopTo, shopFrom === pastFrom && shopTo === pastTo);
   const auto = {}, bench = F.METRICS.map(m => {
     const v = funnelValue_(all, m), a = v === '' ? '' : Math.round(v * 10000) / 10000, p = prev[m[0]];
     auto[m[0]] = a;
@@ -174,7 +177,7 @@ function writeFunnel_(data) {
   const pct = Math.round(yellow * 100) + '%';
   g.set(2, 3, '🟢 أحسن من البنشمارك أو زيه   🟡 أسوأ لحد ' + pct + '   🔴 أسوأ بأكتر من ' + pct +
     ' — البنشمارك = كل الحسابات مع بعض في ' + range3 + (shopFrom !== pastFrom ? ' (CPP و ROAS من ' + shopFrom + ' لـ ' + shopTo + ': شيت الأوردرات بادئ ' + shop.first + ')' : '') +
-    '. SHOPIFY ORDERS = أوردرات المتجر من إعلانات الحساب (UTM)، وعليها CPP و AOV و ROAS. META ORDERS = مشتريات البيكسل.' +
+    '. SHOPIFY ORDERS = أوردرات المتجر من إعلانات الحساب (UTM)، وفي البيزنس كله: كل أوردرات شوبيفاي من أي مصدر ماعدا الأكاونت اللي مش معانا. وعليها CPP و AOV و ROAS. META ORDERS = مشتريات البيكسل.' +
     ' صفوف الشهور: الصرف والأوردرات مجموع الشهر، والنسب من مجموع الأرقام.' +
     ' نسبة خطوة فوق 100% (زي Pur/Chk) رمادي من غير لون: الخطوة اللي قبلها مش بتتسجل كلها (فورم الكاش مابيبعتش Checkout).');
   g.merge(2, 3, 1, W - 2);
