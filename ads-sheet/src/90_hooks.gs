@@ -4,12 +4,13 @@
  *  - Products tab auto-filled from the stock sheet (title + handle + price) so ad landing pages map exactly.
  *  - "المنتجات": products from best seller to least, live stock, running ✅, key numbers.
  *  - "تعادل الحسابات": each ad account day by day vs break-even, to see where the month drops.
+ *  - "توب 100": best sellers, highest ROAS, most stock, selling without ads and dead stock (22_top.gs).
  *  - Running ✅ = the product has at least one ACTIVE Meta ad now (or TikTok spend today/yesterday).
  * Read-only on Meta and Shopify.
  */
 
 function chanceSetup_() {
-  ensureTab_(X.PRODUCTS); ensureTab_(X.ACC_BE); ensureTab_(X.CATALOG); ensureTab_(X.FUNNEL); ensureTab_(X.ACTUAL);
+  ensureTab_(X.PRODUCTS); ensureTab_(X.ACC_BE); ensureTab_(X.CATALOG); ensureTab_(X.FUNNEL); ensureTab_(X.ACTUAL); ensureTab_(X.TOP);
   const tk = ['date', 'account_id', 'campaign', 'adgroup', 'ad_id', 'ad', 'spend', 'impressions', 'clicks', 'purchases', 'landing']
     .map(k => cfgStr_('tiktok.col.' + k)).filter(Boolean);
   ensureTab_(cfgStr_('tiktok.tab') || 'TikTok Data', tk);
@@ -23,10 +24,11 @@ function chanceLive_() {
   }
   try { refreshActive_(); } catch (e) { setStatus_('ACTIVE', '✗ ' + errText_(e)); }
 }
-function chanceViews_(slow) { writeCatalogTab_(); if (slow) { writeProductsTab_(); writeAccountsBE_(); } }
+function chanceViews_(slow) { writeCatalogTab_(); if (slow) { writeProductsTab_(); writeAccountsBE_(); writeTopTab_(); } }
 function chanceEdit_(name, a1) {
   if (name === X.PRODUCTS && (a1 === 'B2' || a1 === 'B3')) writeProductsTab_();
   if (name === X.ACC_BE && a1 === 'B2') writeAccountsBE_();
+  if (name === X.TOP && (a1 === 'B2' || a1 === 'B3')) writeTopTab_();
 }
 function refreshProductsNow() {
   try {
@@ -45,5 +47,5 @@ const EXT = {
   edit: [(name, a1) => chanceEdit_(name, a1)],
   setup: [() => chanceSetup_()],
   live: [() => refreshAccountNames_(), () => discoverAccounts_(), () => chanceLive_(), () => refreshTodayFunnel_(), () => refreshFunnel_(false)],
-  menu: [['📦 تحديث المنتجات والستوك', 'refreshProductsNow'], ['📈 تحديث Daily Account Funnel و Actual ROAS', 'refreshFunnelNow']]
+  menu: [['📦 تحديث المنتجات والستوك وتوب 100', 'refreshProductsNow'], ['📈 تحديث Daily Account Funnel و Actual ROAS', 'refreshFunnelNow']]
 };

@@ -23,7 +23,7 @@ function writeProductsTab_() {
   const p = periodFromCells_(sh), today = todayKey_(), week = shiftKey_(today, -6);
   const daily = dailyRows_(), sum = summarize_(daily, p.from, p.to), tkRecent = {};
   daily.forEach(r => { if (r[1] === 'TIKTOK' && r[0] >= shiftKey_(today, -1) && num_(r[3]) > 0) tkRecent[r[2]] = true; });
-  const st = readStock_(), active = activeMap_(), prods = products_(), lowDays = cfgNum_('stock.low_days') || 7;
+  const stock0 = stockByName_(), stockOf = stock0.by, active = activeMap_(), prods = products_(), lowDays = cfgNum_('stock.low_days') || 7;
 
   // Units and orders per product from Orders Raw.
   const units = {}, ordersWith = {}, units7 = {};
@@ -37,13 +37,6 @@ function writeProductsTab_() {
       if (d >= p.from && d <= p.to) { units[n] = (units[n] || 0) + li.qty; if (!seen.has(n)) { ordersWith[n] = (ordersWith[n] || 0) + 1; seen.add(n); } }
       if (d >= week && d <= today) units7[n] = (units7[n] || 0) + li.qty;
     });
-  });
-
-  // Stock per product name (by handle → Products slug, else title).
-  const stockOf = {};
-  Object.keys(st.byHandle).forEach(h => {
-    const s = st.byHandle[h], pr = prods.find(x => x.slugs.indexOf(h) >= 0), n = pr ? pr.name : productNameOf_(s.title);
-    stockOf[n] = (stockOf[n] || 0) + s.stock;
   });
 
   const special = [APP.MULTI, APP.UNMAPPED, APP.UNKNOWN_PRODUCT];
@@ -70,7 +63,7 @@ function writeProductsTab_() {
     if (t && (t.spend > 0 || t.orders > 0)) rows.push([(active[n] || 0) > 0 ? '✅' : '', n, '', '', '', '', round2_(t.spend), round2_(t.notExact),
       t.orders, '', round2_(t.revenue), '', '', '', '', active[n] || '', '']);
   });
-  sh.getRange('C2:D3').setValues([['الستوك', st.error ? '✗ ' + st.error : '✓ ' + Object.keys(st.byHandle).length + ' منتج'],
+  sh.getRange('C2:D3').setValues([['الستوك', stock0.status],
     ['الإعلانات الشغالة', getStatus_('ACTIVE')]]);
   writeBlocks_(sh, 5, [{ title: 'المنتجات من ' + p.from + ' لـ ' + p.to + ' (✅ = عليه إعلان شغال دلوقتي)', headers: XP_HEADERS, rows: rows }], XP_HEADERS.length);
   const n = Math.max(rows.length, 1), colA = sh.getRange(7, 1, n, 1), colD = sh.getRange(7, 4, n, 1);

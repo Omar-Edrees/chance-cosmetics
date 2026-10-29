@@ -727,3 +727,35 @@ test('Actual ROAS: الإلغاء والتأكيد والمرتجع والمتس
   const i = v.findIndex(r => /Chance 26/.test(String(r[0])));
   assert.deepEqual(v[i + 2].slice(1, 8), [3000, 3, 1, 2, 0, 0, 2], 'Chance 26: أوردراته بس');
 });
+
+test('توب 100: الأكثر مبيعًا والأعلى ROAS والستوك واللي بيتباع من غير إعلانات والرواكد، والمتلغي والمرتجع مش محسوبين', () => {
+  const AD = '120256366885940102', probe = env(), today = probe.c.todayKey_(), at = ' ' + today + 'T10:00:00+03:00', B = '(blank)';
+  const flow = (id, a, products) => ['gid://shopify/Order/' + id, ' #' + id, ' N', B, 500, at, B, B, B, B, B].concat(a, [products, '4655075']);
+  const fb = ['facebook', '120256366878570102', AD, 'Facebook'], direct = [B, B, B, 'Direct(Chancestoreegy)'];
+  const e = env({ orderHead: FLOW_HEAD.slice(0, 17), ads: { [A1]: [adRow(today, AD, 600)] },
+    creatives: { [AD]: 'https://chance-cosmetics.com/products/lip-oil' },
+    stock: [['P1', 'V1', 'Lip Oil', 'Default Title', 'LO', 'lip-oil', 40, 300], ['P2', 'V2', 'Blush', 'Default Title', 'BL', 'blush', 5, 250],
+      ['P3', 'V3', 'Serum', 'Default Title', 'SE', 'serum', 70, 400], ['P4', 'V4', 'Mask', 'Default Title', 'MA', 'mask', 9, 200]],
+    orders: [flow(1, fb, 'Lip Oil x2'), flow(2, fb, 'Lip Oil x1 | Blush x1'), flow(3, direct, 'Blush x2'), flow(4, direct, 'Blush x5'),
+      flow(5, direct, 'Mask x1'), flow(6, direct, 'Serum x9')] });
+  e.c.orderStatus_ = id => ({ 4: { code: 'C', revenue: null }, 6: { code: 'R', revenue: null } })[String(id).split('/').pop()] || null;
+  e.c.setupAll();
+  e.c.liveTick(); e.c.liveTick();
+  e.c.writeTopTab_();
+  const sh = e.ss.getSheetByName('توب 100'), cols = (t, n) => block(sh, t).map(r => r.slice(0, n));
+  assert.deepEqual(cols('1) الأكثر مبيعًا', 5), [[1, 'Lip Oil', 3, 2, 40], [2, 'Blush', 3, 2, 5], [3, 'Mask', 1, 1, 9]], 'أوردر 4 اتلغى و 6 رجع');
+  assert.deepEqual(cols('2) الأعلى ROAS', 8), [[1, 'Lip Oil', 600, 2, 1000, 1.67, 300, 40]], 'أوردرين Meta (أوردرات DIRECT كانت لمنتجات تانية)');
+  assert.deepEqual(cols('3) أعلى ستوك', 4), [[1, 'Serum', 70, 0], [2, 'Lip Oil', 40, 3], [3, 'Mask', 9, 1], [4, 'Blush', 5, 3]]);
+  assert.deepEqual(cols('4) بيتباع من غير إعلانات', 5), [[1, 'Blush', 3, 2, 5], [2, 'Mask', 1, 1, 9]]);
+  assert.deepEqual(cols('5) الرواكد', 4), [[1, 'Serum', 70, 0], [2, 'Mask', 9, 1], [3, 'Lip Oil', 40, 3], [4, 'Blush', 5, 3]]);
+  assert.deepEqual(block(sh, '5) الرواكد').map(r => r[4]), ['مااتباعش', today, today, today], 'أوردر Serum الوحيد رجع: مااتباعش');
+  // تغيير الفترة بيشتغل في onEdit، ومن غير إذن مايقدرش يفتح شيت الستوك: بياخد آخر ستوك اتقرا
+  e.c.readStock_ = () => ({ byHandle: {}, rows: 0, error: 'مفيش إذن' });
+  sh.getRange('B2').setValue(today);
+  e.c.onEdit({ range: { getSheet: () => sh, getA1Notation: () => 'B2' } });
+  assert.match(String(sh.getRange('D2').getValue()), /^✓ من آخر قراية/);
+  assert.deepEqual(cols('3) أعلى ستوك', 3), [[1, 'Serum', 70], [2, 'Lip Oil', 40], [3, 'Mask', 9], [4, 'Blush', 5]]);
+  assert.match(String(block(sh, '1) الأكثر مبيعًا')[0]), /Lip Oil/);
+  e.c.writeProductsTab_();
+  assert.equal(block(e.ss.getSheetByName('المنتجات'), 'المنتجات من ').find(r => r[1] === 'Lip Oil')[2], 40, 'وتاب المنتجات كمان');
+});

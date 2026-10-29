@@ -11,7 +11,7 @@
  * Ad accounts and stores are read-only from here: no writes to Meta, TikTok or order sources.
  */
 const APP = {
-  VERSION: '1.26.1',
+  VERSION: '1.27.0',
   T: {
     SETTINGS: 'Settings', ACCOUNTS: 'Accounts', PRODUCTS: 'Products', ADMAP: 'Ad Map',
     ADS: 'Ads Raw', ACC_RAW: 'Account Raw', ORDERS: 'Orders Raw', DAILY: 'Daily Log',
@@ -29,7 +29,7 @@ const APP = {
 };
 
 /* Chance tabs (90_hooks.gs plugs them into the engine through EXT). */
-const X = { PRODUCTS: 'المنتجات', ACC_BE: 'تعادل الحسابات', CATALOG: 'الكتالوج', FUNNEL: 'Daily Account Funnel', ACTUAL: 'Actual ROAS' };
+const X = { PRODUCTS: 'المنتجات', ACC_BE: 'تعادل الحسابات', CATALOG: 'الكتالوج', FUNNEL: 'Daily Account Funnel', ACTUAL: 'Actual ROAS', TOP: 'توب 100' };
 
 /* [key, default, Arabic description]. Empty default = must be filled or stays "ناقص". */
 const SETTINGS_SPEC = [
@@ -1870,6 +1870,35 @@ function readStock_() {
   return out;
 }
 
+/*
+ * Stock per product name (handle → Products slug, else the stock title): {by, status}. Saved after each good read, because
+ * changing a period cell runs in onEdit, which can't open the stock sheet: the tabs then show the last stock read.
+ */
+function stockByName_() {
+  const st = readStock_(), props = PropertiesService.getDocumentProperties(), n = Number(props.getProperty('STOCK_SNAP_N') || 0);
+  let saved = '';
+  for (let i = 0; i < n; i++) saved += props.getProperty('STOCK_SNAP_' + i) || '';
+  if (st.error) {
+    try { if (saved) return { by: JSON.parse(saved), status: '✓ من آخر قراية ' + props.getProperty('STOCK_SNAP_AT') }; } catch (e) { /* no usable copy */ }
+    return { by: {}, status: '✗ ' + st.error };
+  }
+  const prods = products_(), by = {};
+  Object.keys(st.byHandle).forEach(h => {
+    const x = st.byHandle[h], pr = prods.find(p => p.slugs.indexOf(h) >= 0), name = pr ? pr.name : productNameOf_(x.title);
+    by[name] = (by[name] || 0) + x.stock;
+  });
+  // Values are capped at 9KB each: save in parts.
+  const json = JSON.stringify(by), parts = [];
+  if (json !== saved) {
+    for (let i = 0; i < json.length; i += 2000) parts.push(json.slice(i, i + 2000));
+    parts.forEach((x, i) => props.setProperty('STOCK_SNAP_' + i, x));
+    for (let i = parts.length; i < n; i++) props.deleteProperty('STOCK_SNAP_' + i);
+    props.setProperty('STOCK_SNAP_N', String(parts.length));
+  }
+  props.setProperty('STOCK_SNAP_AT', nowText_());
+  return { by: by, status: '✓ ' + Object.keys(st.byHandle).length + ' منتج' };
+}
+
 /* New stock handles → new rows in Products (never edits existing rows). */
 function autoAddProducts_() {
   if (!cfgBool_('products.auto_add')) return 0;
@@ -1942,7 +1971,7 @@ function writeProductsTab_() {
   const p = periodFromCells_(sh), today = todayKey_(), week = shiftKey_(today, -6);
   const daily = dailyRows_(), sum = summarize_(daily, p.from, p.to), tkRecent = {};
   daily.forEach(r => { if (r[1] === 'TIKTOK' && r[0] >= shiftKey_(today, -1) && num_(r[3]) > 0) tkRecent[r[2]] = true; });
-  const st = readStock_(), active = activeMap_(), prods = products_(), lowDays = cfgNum_('stock.low_days') || 7;
+  const stock0 = stockByName_(), stockOf = stock0.by, active = activeMap_(), prods = products_(), lowDays = cfgNum_('stock.low_days') || 7;
 
   // Units and orders per product from Orders Raw.
   const units = {}, ordersWith = {}, units7 = {};
@@ -1956,13 +1985,6 @@ function writeProductsTab_() {
       if (d >= p.from && d <= p.to) { units[n] = (units[n] || 0) + li.qty; if (!seen.has(n)) { ordersWith[n] = (ordersWith[n] || 0) + 1; seen.add(n); } }
       if (d >= week && d <= today) units7[n] = (units7[n] || 0) + li.qty;
     });
-  });
-
-  // Stock per product name (by handle → Products slug, else title).
-  const stockOf = {};
-  Object.keys(st.byHandle).forEach(h => {
-    const s = st.byHandle[h], pr = prods.find(x => x.slugs.indexOf(h) >= 0), n = pr ? pr.name : productNameOf_(s.title);
-    stockOf[n] = (stockOf[n] || 0) + s.stock;
   });
 
   const special = [APP.MULTI, APP.UNMAPPED, APP.UNKNOWN_PRODUCT];
@@ -1989,7 +2011,7 @@ function writeProductsTab_() {
     if (t && (t.spend > 0 || t.orders > 0)) rows.push([(active[n] || 0) > 0 ? '✅' : '', n, '', '', '', '', round2_(t.spend), round2_(t.notExact),
       t.orders, '', round2_(t.revenue), '', '', '', '', active[n] || '', '']);
   });
-  sh.getRange('C2:D3').setValues([['الستوك', st.error ? '✗ ' + st.error : '✓ ' + Object.keys(st.byHandle).length + ' منتج'],
+  sh.getRange('C2:D3').setValues([['الستوك', stock0.status],
     ['الإعلانات الشغالة', getStatus_('ACTIVE')]]);
   writeBlocks_(sh, 5, [{ title: 'المنتجات من ' + p.from + ' لـ ' + p.to + ' (✅ = عليه إعلان شغال دلوقتي)', headers: XP_HEADERS, rows: rows }], XP_HEADERS.length);
   const n = Math.max(rows.length, 1), colA = sh.getRange(7, 1, n, 1), colD = sh.getRange(7, 4, n, 1);
@@ -3200,6 +3222,93 @@ function writeActual_(data) {
   sh.getRange(3, 1, 1, W).setWrap(true);
 }
 
+/* ======== 22_top.gs ======== */
+/*
+ * Tab "توب 100": five lists of up to 100 products for the period in B2:B3 (this month by default), each with its live stock:
+ * best sellers (units sold), highest ROAS (spend on the product's ads vs its orders' sales, like the product table in Today,
+ * for products with at least TOP.MIN_SPEND spend), most stock, selling without ads (no spend on its own ads and no share of
+ * catalog ads), and dead stock (stock with the fewest sales). Units: the line items of store orders that weren't cancelled
+ * or returned (19_order_status.gs). Refreshed with the slow views and when B2 / B3 change.
+ */
+const TOP = { N: 100, MIN_SPEND: 500, WIDTH: 8 };
+
+function writeTopTab_() {
+  const sh = ensureTab_(X.TOP), today = todayKey_(), week = shiftKey_(today, -6);
+  sh.getRange('A1:A3').setValues([['توب 100 — اختار الفترة'], ['من'], ['إلى']]);
+  sh.getRange('A1').setFontWeight('bold').setFontSize(13);
+  sh.getRange('B2:B3').setNumberFormat('@').setBackground('#fff2cc');
+  const p = periodFromCells_(sh), special = [APP.CATALOG, APP.MULTI, APP.UNMAPPED, APP.META_NO_AD, APP.UNKNOWN_PRODUCT, ''];
+  const stock0 = stockByName_(), stockOf = stock0.by, active = activeMap_();
+
+  // Units sold, orders and last sale per product (every line item, not only the first one).
+  const units = {}, ordersWith = {}, units7 = {}, last = {}, nameOf = {};
+  rawRows_(APP.T.ORDERS, ORDERS_HEADERS.length).forEach(o => {
+    const d = asKey_(o[2]), s = orderStatus_(o[0]);
+    if (!d || (s && (s.code === 'C' || s.code === 'R')) || o[15] === true || String(o[15]).toUpperCase() === 'TRUE') return;
+    const seen = new Set();
+    lineItems_(o[6]).forEach(li => {
+      const n = nameOf[li.title] = nameOf[li.title] || productNameOf_(li.title);
+      if (!last[n] || d > last[n]) last[n] = d;
+      if (d >= week && d <= today) units7[n] = (units7[n] || 0) + li.qty;
+      if (d < p.from || d > p.to) return;
+      units[n] = (units[n] || 0) + li.qty;
+      if (!seen.has(n)) { ordersWith[n] = (ordersWith[n] || 0) + 1; seen.add(n); }
+    });
+  });
+  // Spend (every platform) and ad orders (Meta, TikTok and DIRECT, like the product table in Today) per product.
+  const ad = {};
+  dailyRows_().forEach(r => {
+    if (r[0] < p.from || r[0] > p.to) return;
+    const t = ad[r[2]] = ad[r[2]] || { spend: 0, orders: 0, revenue: 0 };
+    if (r[1] === 'META' || r[1] === 'TIKTOK') t.spend += num_(r[3]);
+    if (r[1] === 'META' || r[1] === 'TIKTOK' || r[1] === APP.DIRECT) { t.orders += num_(r[8]); t.revenue += num_(r[10]); }
+  });
+  // The product's share of catalog ads (الكتالوج tab): not in its ROAS, but a product shown there isn't "without ads".
+  const cat = {};
+  if (ss_().getSheetByName(APP.T.CATALOG)) recentRows_(APP.T.CATALOG, CATALOG_HEADERS.length, 1, asKey_, p.from).forEach(r => {
+    const d = asKey_(r[0]), n = catalogProduct_(r[4]);
+    if (d <= p.to) cat[n] = (cat[n] || 0) + num_(r[5]);
+  });
+
+  const names = Array.from(new Set(Object.keys(units).concat(Object.keys(stockOf), Object.keys(ad)))).filter(n => special.indexOf(n) < 0);
+  const stock = n => (stockOf[n] === undefined ? '' : stockOf[n]);
+  const cover = n => {
+    const s = stockOf[n], perDay = (units7[n] || 0) / 7;
+    return s === undefined ? '' : s <= 0 ? 'نفد' : perDay > 0 ? Math.floor(s / perDay) : '—';
+  };
+  const spend = n => (ad[n] ? ad[n].spend : 0);
+  const top = list => (list.length ? list.slice(0, TOP.N).map((r, i) => [i + 1].concat(r)) : [['', 'مفيش منتجات هنا في الفترة دي']]);
+
+  const best = top(names.filter(n => units[n] > 0).sort((a, b) => (units[b] - units[a]) || (ordersWith[b] - ordersWith[a]))
+    .map(n => [n, units[n], ordersWith[n], stock(n), cover(n), active[n] || '']));
+  const roas = top(names.filter(n => spend(n) >= TOP.MIN_SPEND).map(n => ({ n: n, t: ad[n], r: ad[n].revenue / ad[n].spend }))
+    .sort((a, b) => (b.r - a.r) || (b.t.spend - a.t.spend))
+    .map(x => [x.n, round2_(x.t.spend), x.t.orders, round2_(x.t.revenue), round2_(x.r), x.t.orders ? round2_(x.t.spend / x.t.orders) : '', stock(x.n)]));
+  const most = top(names.filter(n => stockOf[n] > 0).sort((a, b) => stockOf[b] - stockOf[a])
+    .map(n => [n, stockOf[n], units[n] || 0, cover(n), last[n] || 'مااتباعش']));
+  const noAds = top(names.filter(n => units[n] > 0 && spend(n) <= 0 && !(cat[n] > 0)).sort((a, b) => (units[b] - units[a]) || (ordersWith[b] - ordersWith[a]))
+    .map(n => [n, units[n], ordersWith[n], stock(n), last[n]]));
+  const dead = top(names.filter(n => stockOf[n] > 0).sort((a, b) => ((units[a] || 0) - (units[b] || 0)) || (stockOf[b] - stockOf[a]))
+    .map(n => [n, stockOf[n], units[n] || 0, last[n] || 'مااتباعش', cover(n)]));
+
+  const period = ' (' + p.from + ' لـ ' + p.to + ')';
+  sh.getRange('C2:D2').setValues([['الستوك', stock0.status]]);
+  writeBlocks_(sh, 5, [
+    { title: '1) الأكثر مبيعًا' + period + ' — قطع اتباعت في أوردرات مااتلغتش ولا رجعت', rows: best,
+      headers: ['#', 'المنتج', 'قطع اتباعت', 'أوردرات فيها المنتج', 'الستوك', 'الستوك يكفي كام يوم', 'إعلانات Meta شغالة'] },
+    { title: '2) الأعلى ROAS' + period + ' — مبيعات أوردرات إعلانات المنتج (و DIRECT) ÷ الصرف عليه، للي اتصرف عليه ' + TOP.MIN_SPEND + ' أو أكتر', rows: roas,
+      headers: ['#', 'المنتج', 'الصرف', 'الأوردرات', 'المبيعات', 'ROAS', 'CPP', 'الستوك'] },
+    { title: '3) أعلى ستوك — الستوك دلوقتي، والمبيعات في الفترة', rows: most,
+      headers: ['#', 'المنتج', 'الستوك', 'قطع اتباعت', 'الستوك يكفي كام يوم', 'آخر مرة اتباع'] },
+    { title: '4) بيتباع من غير إعلانات' + period + ' — مفيش صرف على إعلانات المنتج ولا ظهر في إعلانات الكتالوج في الفترة', rows: noAds,
+      headers: ['#', 'المنتج', 'قطع اتباعت', 'أوردرات فيها المنتج', 'الستوك', 'آخر مرة اتباع'] },
+    { title: '5) الرواكد' + period + ' — عنده ستوك، والأقل مبيعًا الأول (وبعدين الأكتر ستوك)', rows: dead,
+      headers: ['#', 'المنتج', 'الستوك', 'قطع اتباعت', 'آخر مرة اتباع', 'الستوك يكفي كام يوم'] }
+  ], TOP.WIDTH);
+  sh.setColumnWidth(2, 320);
+  sh.setFrozenRows(3);
+}
+
 /* ======== 90_hooks.gs ======== */
 /*
  * Extension for Shopify stores:
@@ -3207,12 +3316,13 @@ function writeActual_(data) {
  *  - Products tab auto-filled from the stock sheet (title + handle + price) so ad landing pages map exactly.
  *  - "المنتجات": products from best seller to least, live stock, running ✅, key numbers.
  *  - "تعادل الحسابات": each ad account day by day vs break-even, to see where the month drops.
+ *  - "توب 100": best sellers, highest ROAS, most stock, selling without ads and dead stock (22_top.gs).
  *  - Running ✅ = the product has at least one ACTIVE Meta ad now (or TikTok spend today/yesterday).
  * Read-only on Meta and Shopify.
  */
 
 function chanceSetup_() {
-  ensureTab_(X.PRODUCTS); ensureTab_(X.ACC_BE); ensureTab_(X.CATALOG); ensureTab_(X.FUNNEL); ensureTab_(X.ACTUAL);
+  ensureTab_(X.PRODUCTS); ensureTab_(X.ACC_BE); ensureTab_(X.CATALOG); ensureTab_(X.FUNNEL); ensureTab_(X.ACTUAL); ensureTab_(X.TOP);
   const tk = ['date', 'account_id', 'campaign', 'adgroup', 'ad_id', 'ad', 'spend', 'impressions', 'clicks', 'purchases', 'landing']
     .map(k => cfgStr_('tiktok.col.' + k)).filter(Boolean);
   ensureTab_(cfgStr_('tiktok.tab') || 'TikTok Data', tk);
@@ -3226,10 +3336,11 @@ function chanceLive_() {
   }
   try { refreshActive_(); } catch (e) { setStatus_('ACTIVE', '✗ ' + errText_(e)); }
 }
-function chanceViews_(slow) { writeCatalogTab_(); if (slow) { writeProductsTab_(); writeAccountsBE_(); } }
+function chanceViews_(slow) { writeCatalogTab_(); if (slow) { writeProductsTab_(); writeAccountsBE_(); writeTopTab_(); } }
 function chanceEdit_(name, a1) {
   if (name === X.PRODUCTS && (a1 === 'B2' || a1 === 'B3')) writeProductsTab_();
   if (name === X.ACC_BE && a1 === 'B2') writeAccountsBE_();
+  if (name === X.TOP && (a1 === 'B2' || a1 === 'B3')) writeTopTab_();
 }
 function refreshProductsNow() {
   try {
@@ -3248,5 +3359,5 @@ const EXT = {
   edit: [(name, a1) => chanceEdit_(name, a1)],
   setup: [() => chanceSetup_()],
   live: [() => refreshAccountNames_(), () => discoverAccounts_(), () => chanceLive_(), () => refreshTodayFunnel_(), () => refreshFunnel_(false)],
-  menu: [['📦 تحديث المنتجات والستوك', 'refreshProductsNow'], ['📈 تحديث Daily Account Funnel و Actual ROAS', 'refreshFunnelNow']]
+  menu: [['📦 تحديث المنتجات والستوك وتوب 100', 'refreshProductsNow'], ['📈 تحديث Daily Account Funnel و Actual ROAS', 'refreshFunnelNow']]
 };

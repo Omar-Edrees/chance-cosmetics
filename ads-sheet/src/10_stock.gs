@@ -51,6 +51,35 @@ function readStock_() {
   return out;
 }
 
+/*
+ * Stock per product name (handle → Products slug, else the stock title): {by, status}. Saved after each good read, because
+ * changing a period cell runs in onEdit, which can't open the stock sheet: the tabs then show the last stock read.
+ */
+function stockByName_() {
+  const st = readStock_(), props = PropertiesService.getDocumentProperties(), n = Number(props.getProperty('STOCK_SNAP_N') || 0);
+  let saved = '';
+  for (let i = 0; i < n; i++) saved += props.getProperty('STOCK_SNAP_' + i) || '';
+  if (st.error) {
+    try { if (saved) return { by: JSON.parse(saved), status: '✓ من آخر قراية ' + props.getProperty('STOCK_SNAP_AT') }; } catch (e) { /* no usable copy */ }
+    return { by: {}, status: '✗ ' + st.error };
+  }
+  const prods = products_(), by = {};
+  Object.keys(st.byHandle).forEach(h => {
+    const x = st.byHandle[h], pr = prods.find(p => p.slugs.indexOf(h) >= 0), name = pr ? pr.name : productNameOf_(x.title);
+    by[name] = (by[name] || 0) + x.stock;
+  });
+  // Values are capped at 9KB each: save in parts.
+  const json = JSON.stringify(by), parts = [];
+  if (json !== saved) {
+    for (let i = 0; i < json.length; i += 2000) parts.push(json.slice(i, i + 2000));
+    parts.forEach((x, i) => props.setProperty('STOCK_SNAP_' + i, x));
+    for (let i = parts.length; i < n; i++) props.deleteProperty('STOCK_SNAP_' + i);
+    props.setProperty('STOCK_SNAP_N', String(parts.length));
+  }
+  props.setProperty('STOCK_SNAP_AT', nowText_());
+  return { by: by, status: '✓ ' + Object.keys(st.byHandle).length + ' منتج' };
+}
+
 /* New stock handles → new rows in Products (never edits existing rows). */
 function autoAddProducts_() {
   if (!cfgBool_('products.auto_add')) return 0;
