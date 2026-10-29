@@ -52,32 +52,39 @@ function readStock_() {
 }
 
 /*
- * Stock per product name (handle → Products slug, else the stock title): {by, status}. Saved after each good read, because
- * changing a period cell runs in onEdit, which can't open the stock sheet: the tabs then show the last stock read.
+ * Stock per product name: {by, status}. The Flow stock tab wins product by product; any other product takes the stock read
+ * once from Shopify (23_stock_snapshot.gs) until the Flow / the Shopify app covers it. The Flow part is saved after each good
+ * read, because changing a period cell runs in onEdit, which can't open the stock sheet: then the last read is used.
  */
 function stockByName_() {
   const st = readStock_(), props = PropertiesService.getDocumentProperties(), n = Number(props.getProperty('STOCK_SNAP_N') || 0);
-  let saved = '';
+  let saved = '', flow = {};
   for (let i = 0; i < n; i++) saved += props.getProperty('STOCK_SNAP_' + i) || '';
   if (st.error) {
-    try { if (saved) return { by: JSON.parse(saved), status: '✓ من آخر قراية ' + props.getProperty('STOCK_SNAP_AT') }; } catch (e) { /* no usable copy */ }
-    return { by: {}, status: '✗ ' + st.error };
+    try { flow = saved ? JSON.parse(saved) : {}; } catch (e) { flow = {}; }
+  } else {
+    const prods = products_();
+    Object.keys(st.byHandle).forEach(h => {
+      const x = st.byHandle[h], pr = prods.find(p => p.slugs.indexOf(h) >= 0), name = pr ? pr.name : productNameOf_(x.title);
+      flow[name] = (flow[name] || 0) + x.stock;
+    });
+    // Values are capped at 9KB each: save in parts.
+    const json = JSON.stringify(flow), parts = [];
+    if (json !== saved) {
+      for (let i = 0; i < json.length; i += 2000) parts.push(json.slice(i, i + 2000));
+      parts.forEach((x, i) => props.setProperty('STOCK_SNAP_' + i, x));
+      for (let i = parts.length; i < n; i++) props.deleteProperty('STOCK_SNAP_' + i);
+      props.setProperty('STOCK_SNAP_N', String(parts.length));
+    }
+    props.setProperty('STOCK_SNAP_AT', nowText_());
   }
-  const prods = products_(), by = {};
-  Object.keys(st.byHandle).forEach(h => {
-    const x = st.byHandle[h], pr = prods.find(p => p.slugs.indexOf(h) >= 0), name = pr ? pr.name : productNameOf_(x.title);
-    by[name] = (by[name] || 0) + x.stock;
-  });
-  // Values are capped at 9KB each: save in parts.
-  const json = JSON.stringify(by), parts = [];
-  if (json !== saved) {
-    for (let i = 0; i < json.length; i += 2000) parts.push(json.slice(i, i + 2000));
-    parts.forEach((x, i) => props.setProperty('STOCK_SNAP_' + i, x));
-    for (let i = parts.length; i < n; i++) props.deleteProperty('STOCK_SNAP_' + i);
-    props.setProperty('STOCK_SNAP_N', String(parts.length));
-  }
-  props.setProperty('STOCK_SNAP_AT', nowText_());
-  return { by: by, status: '✓ ' + Object.keys(st.byHandle).length + ' منتج' };
+  const by = {}, snap = stockSnapshot_();
+  Object.keys(snap).forEach(t => { const name = productNameOf_(t); by[name] = (by[name] || 0) + snap[t]; });
+  Object.keys(flow).forEach(name => { by[name] = flow[name]; });
+  const k = Object.keys(flow).length, fixed = 'ستوك ثابت من شوبيفاي لحد ' + STOCK_SNAPSHOT_AT;
+  const status = k ? '✓ ' + k + ' منتج من فلو الستوك' + (st.error ? ' (آخر قراية ' + props.getProperty('STOCK_SNAP_AT') + ')' : '') + '، والباقي ' + fixed
+    : '⚠️ ' + fixed + ' — مابيتحدثش لوحده' + (st.error ? ' (' + st.error + ')' : ' (مفيش صفوف في تاب ' + cfgStr_('stock.sheet_tab') + ')');
+  return { by: by, status: status };
 }
 
 /* New stock handles → new rows in Products (never edits existing rows). */
@@ -85,7 +92,7 @@ function autoAddProducts_() {
   if (!cfgBool_('products.auto_add')) return 0;
   const st = readStock_();
   if (st.error) { setStatus_('STOCK', '✗ ' + st.error); return 0; }
-  setStatus_('STOCK', '✓ ' + Object.keys(st.byHandle).length + ' منتج');
+  setStatus_('STOCK', st.rows ? '✓ ' + Object.keys(st.byHandle).length + ' منتج' : '⚠️ مفيش صفوف في تاب ' + cfgStr_('stock.sheet_tab') + ' — الستوك ثابت من شوبيفاي لحد ' + STOCK_SNAPSHOT_AT);
   return withLock_(() => {
     const sh = ensureTab_(APP.T.PRODUCTS, PRODUCT_HEADERS), have = readRows_(sh, PRODUCT_HEADERS.length);
     const slugs = new Set(), names = new Set();

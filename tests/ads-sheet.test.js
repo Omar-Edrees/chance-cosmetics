@@ -91,6 +91,8 @@ function env(options) {
   });
   // The real archive (12k old orders) only where a test asks for it; opt.archive = [orders] gives a small one.
   if (opt.archive !== true) { const arch = typeof opt.archive === 'function' ? opt.archive(c) : opt.archive || []; c.archiveOrders_ = () => arch; }
+  // The real stock read from Shopify (23_stock_snapshot.gs) only where a test asks for it; opt.snapshot = {title: units} gives a small one.
+  if (opt.snapshot !== true) { const snap = opt.snapshot || {}; c.stockSnapshot_ = () => Object.assign({}, snap); }
   return { c, ss: active, source, doc, alerts, requests, triggers };
 }
 
@@ -753,9 +755,30 @@ test('توب 100: الأكثر مبيعًا والأعلى ROAS والستوك �
   e.c.readStock_ = () => ({ byHandle: {}, rows: 0, error: 'مفيش إذن' });
   sh.getRange('B2').setValue(today);
   e.c.onEdit({ range: { getSheet: () => sh, getA1Notation: () => 'B2' } });
-  assert.match(String(sh.getRange('D2').getValue()), /^✓ من آخر قراية/);
+  assert.match(String(sh.getRange('D2').getValue()), /^✓ 4 منتج من فلو الستوك \(آخر قراية /);
   assert.deepEqual(cols('3) أعلى ستوك', 3), [[1, 'Serum', 70], [2, 'Lip Oil', 40], [3, 'Mask', 9], [4, 'Blush', 5]]);
   assert.match(String(block(sh, '1) الأكثر مبيعًا')[0]), /Lip Oil/);
   e.c.writeProductsTab_();
   assert.equal(block(e.ss.getSheetByName('المنتجات'), 'المنتجات من ').find(r => r[1] === 'Lip Oil')[2], 40, 'وتاب المنتجات كمان');
+});
+
+test('الستوك الثابت من شوبيفاي: بيملا اللي فلو الستوك ماكتبهوش، والفلو بيكسب، والتحذير ظاهر', () => {
+  const e = env({ snapshot: { 'Lip Oil': 999, 'Serum': 70, 'Old Mask': 0 },
+    stock: [['P1', 'V1', 'Lip Oil', 'Default Title', 'LO', 'lip-oil', 40, 300], ['P2', 'V2', 'Blush', 'Default Title', 'BL', 'blush', 5, 250]] });
+  e.c.setupAll();
+  const s = e.c.stockByName_();
+  assert.deepEqual([s.by['Lip Oil'], s.by.Blush, s.by.Serum, s.by['Old Mask']], [40, 5, 70, 0], 'Lip Oil و Blush من الفلو، والباقي من الصورة');
+  assert.match(s.status, /^✓ 2 منتج من فلو الستوك، والباقي ستوك ثابت من شوبيفاي لحد /);
+  const none = env({ stock: [], snapshot: { 'Lip Oil': 12 } });
+  none.c.setupAll();
+  const t = none.c.stockByName_();
+  assert.equal(t.by['Lip Oil'], 12);
+  assert.match(t.status, /^⚠️ ستوك ثابت من شوبيفاي لحد .* مابيتحدثش لوحده \(مفيش صفوف في تاب stock\)$/);
+});
+
+test('ملف الستوك الثابت الحقيقي بيتقري صح', () => {
+  const c = load('ads-sheet'), snap = c.stockSnapshot_();
+  assert.ok(Object.keys(snap).length > 2000);
+  assert.equal(snap['Sheglam Marshmallow Puff Lip Blur Pen'], 759);
+  assert.ok(Object.values(snap).every(v => Number.isInteger(v) && v >= 0));
 });
