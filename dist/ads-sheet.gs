@@ -2389,7 +2389,8 @@ function orderPatch_(id) {
  * (not an average of daily rates). A step rate over 100% (more purchases than checkouts: the COD form sends no checkout)
  * says the earlier event isn't tracked, so it gets no color.
  * SHOPIFY ORDERS = store orders from the account's ads (UTM → ad → account; the business row: every store order, from any
- * source, but those from an ad account not in the sheet, like GRAND TOTAL in Today; the benchmark: the Meta ones). CPP, AOV and ROAS come from them and their sales, against the spend of the days the orders sheet
+ * source, but those from an ad account not in the sheet, like GRAND TOTAL in Today). CPP, AOV and ROAS come from them
+ * and their sales, against the spend of the days the orders sheet
  * covers (from 1 Jul 2026 with the archive of older orders; before that they're blank). META ORDERS = Meta's pixel
  * purchases, for the funnel rates.
  * Colors: each cell against the BENCHMARK row (row 4): green = as good or better, yellow = worse by up to B2 (20%),
