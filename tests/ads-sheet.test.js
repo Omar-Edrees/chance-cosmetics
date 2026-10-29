@@ -710,19 +710,20 @@ test('Actual ROAS: الإلغاء والتأكيد والمرتجع والمتس
   const old = (n, day, acc, extra) => c => Object.assign({ id: 'gid://shopify/Order/' + n, dt: c.makeDate(day + 'T12:00:00Z'), utms: ['fb', '120247502496020297', '1'],
     ids: ['120247502496020297', '120247502496010297'], referrer: 'https://facebook.com/', source: 'web', total: 1000, raw: 'Lip Oil x1', cancelled: false, acc: acc }, extra || {});
   const arch = [old(1, ym(1) + '-01', A1), old(2, ym(1) + '-02', 'OUT'), old(3, ym(1) + '-03', '', { utms: ['ig', 'Lip Oil | CBO', 'Ad'], ids: ['', ''] }),
+    old(7, ym(1) + '-06', '', { utms: ['ig', 'Lip Oil | CBO', 'Ad'], ids: ['', ''] }),
     old(5, ym(1) + '-04', A1), old(6, ym(1) + '-05', A1, { total: 400 })];
   const e = env({ archive: c => arch.map(f => f(c)), ads: { [A1]: [adRow(today, '111', 300), adRow(ym(1) + '-10', '111', 3000)], [A2]: [adRow(today, '222', 100)] },
     orderHead: FLOW_HEAD, orders: [['gid://shopify/Order/9', ' #9', ' N', '(blank)', 700, ' ' + today + 'T10:00:00+03:00', '(blank)', '(blank)', '(blank)', '(blank)', '(blank)', '', '', '', '', 'Lip Oil x1', '4655075']] });
-  const st = { 1: { code: 'D', revenue: null }, 3: { code: 'R', revenue: null }, 5: { code: 'C', revenue: null }, 6: { code: 'D', revenue: 350 } };
+  const st = { 1: { code: 'D', revenue: null }, 3: { code: 'R', revenue: null }, 5: { code: 'C', revenue: null }, 6: { code: 'D', revenue: 350 }, 7: { code: 'S', revenue: null } };
   e.c.orderStatus_ = id => st[String(id).split('/').pop()] || null;
   e.c.setupAll();
   e.c.liveTick(); e.c.liveTick();
   e.c.refreshFunnelNow();
   const v = e.ss.getSheetByName('Actual ROAS').getDataRange().getValues();
-  assert.deepEqual(v[2], ['DATE', 'SPEND', 'TOTAL ORDERS', 'CANCELLED', 'CONFIRMED', 'RETURNED', 'DELIVERED', 'AOV', 'REVENUE', 'ROAS', 'CPO']);
+  assert.deepEqual(v[2], ['DATE', 'SPEND', 'TOTAL ORDERS', 'CANCELLED', 'CONFIRMED', 'RETURNED', 'IN SHIPPING', 'DELIVERED', 'AOV', 'REVENUE', 'ROAS', 'CPO']);
   const k = v.findIndex(r => r[0] === 'كل الحسابات (البيزنس كله)');
   assert.ok(k > 0);
-  assert.deepEqual(v[k + 2].slice(1), [3000, 4, 1, 3, 1, 2, 675, 1350, 0.45, 1500], 'الشهر اللي فات للبيزنس: 4 أوردرات (من غير الأكاونت اللي مش معانا)');
+  assert.deepEqual(v[k + 2].slice(1), [3000, 5, 1, 4, 1, 1, 2, 675, 1350, 0.45, 1500], 'الشهر اللي فات للبيزنس: 5 أوردرات (من غير الأكاونت اللي مش معانا)، منهم 1 في الشحن');
   const i = v.findIndex(r => /Chance 26/.test(String(r[0])));
-  assert.deepEqual(v[i + 2].slice(1, 7), [3000, 3, 1, 2, 0, 2], 'Chance 26: أوردراته بس');
+  assert.deepEqual(v[i + 2].slice(1, 8), [3000, 3, 1, 2, 0, 0, 2], 'Chance 26: أوردراته بس');
 });

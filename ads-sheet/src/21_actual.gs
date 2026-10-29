@@ -2,7 +2,7 @@
  * Tab "Actual ROAS": the same sections as the Daily Account Funnel (the whole business first, then each account; this month,
  * each of the 3 months before it, those 3 together, then the last 30 days), with what really happened to the store orders
  * instead of Meta's funnel: SPEND, TOTAL ORDERS, CANCELLED (before shipping), CONFIRMED (shipped), RETURNED (shipped and came
- * back), DELIVERED (delivered and paid), then AOV, REVENUE (delivered orders only), ROAS and CPO (spend per delivered order).
+ * back), IN SHIPPING (shipped, not delivered or back yet), DELIVERED (delivered and paid), then AOV, REVENUE (delivered orders only), ROAS and CPO (spend per delivered order).
  * Orders: the same as the funnel's SHOPIFY ORDERS (the business: every store order but those from an ad account not in the
  * sheet; an account: the orders from its ads). Where each order stands comes from 19_order_status.gs (read once from Shopify);
  * a newer order counts in TOTAL ORDERS only. Spend: Meta's, from the funnel's reads. Written with the funnel, every 3 hours.
@@ -12,14 +12,14 @@ const ACTUAL = {
   /* [column, field or [numerator, denominator], number format] */
   COLS: [
     ['TOTAL ORDERS', 'orders', '0'], ['CANCELLED', 'cancelled', '0'], ['CONFIRMED', 'confirmed', '0'], ['RETURNED', 'returned', '0'],
-    ['DELIVERED', 'delivered', '0'], ['AOV', ['revenue', 'delivered'], '#,##0.00'], ['REVENUE', 'revenue', '#,##0.00'],
+    ['IN SHIPPING', 'shipping', '0'], ['DELIVERED', 'delivered', '0'], ['AOV', ['revenue', 'delivered'], '#,##0.00'], ['REVENUE', 'revenue', '#,##0.00'],
     ['ROAS', ['revenue', 'spend'], '0.00"x"'], ['CPO', ['spend', 'delivered'], '#,##0.00']
   ]
 };
 
 /* Store orders by day since `from`, for the whole business and each account: {all: {day: counts}, acc: {id: {day: counts}}}. */
 function actualShop_(from) {
-  const out = { all: {}, acc: {} }, z = () => ({ orders: 0, cancelled: 0, confirmed: 0, returned: 0, delivered: 0, revenue: 0 });
+  const out = { all: {}, acc: {} }, z = () => ({ orders: 0, cancelled: 0, confirmed: 0, returned: 0, shipping: 0, delivered: 0, revenue: 0 });
   const add = (map, d, o, st) => {
     const x = map[d] = map[d] || z();
     x.orders++;
@@ -27,6 +27,7 @@ function actualShop_(from) {
     if (st.code === 'C') x.cancelled++;
     if ('RDS'.indexOf(st.code) >= 0) x.confirmed++;
     if (st.code === 'R') x.returned++;
+    if (st.code === 'S') x.shipping++;
     if (st.code === 'D') { x.delivered++; x.revenue += st.revenue === null ? num_(o[7]) : st.revenue; }
   };
   funnelShop_(from, (o, d, acc) => {
@@ -37,7 +38,7 @@ function actualShop_(from) {
   return out;
 }
 function actualSum_(days, from, to, spend) {
-  const t = { spend: spend || 0, orders: 0, cancelled: 0, confirmed: 0, returned: 0, delivered: 0, revenue: 0 };
+  const t = { spend: spend || 0, orders: 0, cancelled: 0, confirmed: 0, returned: 0, shipping: 0, delivered: 0, revenue: 0 };
   Object.keys(days || {}).forEach(d => { if (d >= from && d <= to) Object.keys(days[d]).forEach(k => { t[k] += days[d][k]; }); });
   return t;
 }
@@ -53,8 +54,8 @@ function writeActual_(data) {
   g.fill(1, 2, W - 1, { bg: A.BAND });
   g.merge(1, 1, 1, W);
   g.set(2, 1, 'TOTAL ORDERS = أوردرات شوبيفاي (البيزنس كله: كلها ماعدا الأكاونت اللي مش معانا؛ الأكاونت: اللي جت من إعلاناته). ' +
-    'CANCELLED = اتلغى قبل الشحن. CONFIRMED = اتشحن (RETURNED + DELIVERED + اللي لسه في الطريق). RETURNED = اتشحن ورجع أو اتلغى بعد الشحن. ' +
-    'DELIVERED = اتسلم واتحصّل. REVENUE = مبيعات المتسلم بس، و AOV عليه. ROAS = REVENUE ÷ SPEND. CPO = SPEND ÷ DELIVERED. ' +
+    'CANCELLED = اتلغى قبل الشحن. CONFIRMED = اتشحن (RETURNED + IN SHIPPING + DELIVERED). RETURNED = اتشحن ورجع أو اتلغى بعد الشحن. ' +
+    'IN SHIPPING = في الشحن ولسه ماتسلمش ولا رجع. DELIVERED = اتسلم واتحصّل. REVENUE = مبيعات المتسلم بس، و AOV عليه. ROAS = REVENUE ÷ SPEND. CPO = SPEND ÷ DELIVERED. ' +
     'حالة الأوردرات من شوبيفاي لحد ' + ORDER_STATUS_AT + '، والأوردر الأحدث محسوب في TOTAL ORDERS بس.', { al: 'left' });
   g.merge(2, 1, 1, W);
   ['DATE', 'SPEND'].concat(A.COLS.map(c => c[0])).forEach((h, i) => g.set(3, 1 + i, h, { bg: '#fff200', b: 'bold', al: 'center' }));
