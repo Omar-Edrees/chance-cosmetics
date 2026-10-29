@@ -97,9 +97,9 @@ function funnelMonthName_(ym) {
 /*
  * Store orders per account and per day since `from`: {first (first day the orders sheet covers), acc: {id: {day: {orders,
  * revenue}}}, all: {day: ...} (every store order but those from an ad account not in the sheet), spend: {id: {day: spend}}}
- * (spend from Ads Raw, to match the covered days).
+ * (spend from Ads Raw, to match the covered days). each(o, day, account or ''), if given, is called for every order counted.
  */
-function funnelShop_(from) {
+function funnelShop_(from, each) {
   const out = { first: '', acc: {}, all: {}, spend: {} }, osh = ss_().getSheetByName(APP.T.ORDERS);
   if (!osh || osh.getLastRow() < 2) return out;
   out.first = asKey_(osh.getRange(osh.getLastRow(), 3).getValue()) || sortKey_(osh.getRange(osh.getLastRow(), 2).getValue()).slice(0, 10);
@@ -115,9 +115,9 @@ function funnelShop_(from) {
     const d = asKey_(o[2]);
     if (!d || d < from || outsideMeta_(o, known)) return;
     add(out.all, d, num_(o[7]));
-    if (o[3] !== 'META') return;
-    const arch = archiveAccOf_(o[0]), acc = adAcc[String(o[14] || '')] || (arch !== 'OUT' ? arch : '');
+    const arch = o[3] === 'META' ? archiveAccOf_(o[0]) : '', acc = o[3] !== 'META' ? '' : adAcc[String(o[14] || '')] || (arch !== 'OUT' ? arch : '');
     if (acc) add(out.acc[acc] = out.acc[acc] || {}, d, num_(o[7]));
+    if (each) each(o, d, acc);
   });
   return out;
 }
@@ -241,7 +241,7 @@ function refreshFunnel_(force) {
   if (!force && (Date.now() - at < FUNNEL.EVERY_MS || (hour >= FUNNEL.QUIET_FROM && hour < FUNNEL.QUIET_TO))) return false;
   if (!accounts_('META').length) return false;
   const data = time_('Account Funnel — Meta', () => fetchFunnel_());
-  withLock_(() => writeFunnel_(data));
+  withLock_(() => { writeFunnel_(data); writeActual_(data); });
   props.setProperty(FUNNEL.AT_KEY, String(Date.now()));
   const failed = data.accounts.filter(a => a.error).map(a => a.name);
   setStatus_('FUNNEL', (failed.length ? '⚠️ ماقدرتش أقرا: ' + failed.join('، ') : '✓') + ' — ' + data.accounts.length + ' حساب');
@@ -251,7 +251,7 @@ function refreshFunnelNow() {
   try {
     resetCaches_();
     refreshFunnel_(true);
-    alert_('اتحدث تاب ' + X.FUNNEL + ' ✅\n' + getStatus_('FUNNEL'));
+    alert_('اتحدث تاب ' + X.FUNNEL + ' وتاب ' + X.ACTUAL + ' ✅\n' + getStatus_('FUNNEL'));
     ss_().setActiveSheet(tab_(X.FUNNEL));
   } catch (e) { alert_('تاب ' + X.FUNNEL + ' ماتحدثش:\n' + errText_(e)); }
 }
