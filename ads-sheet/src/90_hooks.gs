@@ -6,6 +6,7 @@
  *  - "تعادل الحسابات": each ad account day by day vs break-even, to see where the month drops.
  *  - "توب 100": best sellers, highest ROAS, most stock, selling without ads and dead stock (22_top.gs).
  *  - "المحافظات": orders, cancellation, delivery and return by governorate (25_governorates.gs).
+ *  - Today: what's left in each Meta ad account, read every 15 minutes (26_balances.gs).
  *  - Running ✅ = the product has at least one ACTIVE Meta ad now (or TikTok spend today/yesterday).
  * Read-only on Meta and Shopify.
  */
@@ -24,6 +25,7 @@ function chanceLive_() {
     try { if (autoAddProducts_()) withLock_(() => refreshAdMap_([], {}, false)); } catch (e) { setStatus_('STOCK', '✗ ' + errText_(e)); }
   }
   try { refreshActive_(); } catch (e) { setStatus_('ACTIVE', '✗ ' + errText_(e)); }
+  try { refreshBalances_(); } catch (e) { setStatus_('BALANCE', '✗ ' + errText_(e)); }
 }
 function chanceViews_(slow) { writeCatalogTab_(); writeGovTab_(); if (slow) { writeProductsTab_(); writeAccountsBE_(); writeTopTab_(); } }
 function chanceEdit_(name, a1) {

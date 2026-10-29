@@ -65,6 +65,11 @@ function env(options) {
     const obj = (url.match(/\/v[\d.]+\/(\d+)\?/) || [])[1];
     if (obj && (opt.objects || {})[obj]) return opt.objects[obj];
     if (obj && !id) throw new Error('Meta code 100: Unsupported get request');
+    if (id && /fields=account_status/.test(url)) { // رصيد الحساب
+      const x = (opt.accInfo || {})[id] || {};
+      if (x.noFunding && /funding_source_details/.test(url)) return { error: { code: 200, message: 'Permissions error' } };
+      return Object.assign({ id: 'act_' + id, account_status: 1 }, x);
+    }
     return { id: 'act_' + id, name: (opt.names || NAMES)[id] };
   };
   const shop = url => { // صفحة منتج في المتجر: /products/<handle>.js
@@ -805,4 +810,26 @@ test('المحافظات: الأوردرات والإلغاء والتوصيل �
   // عمود المحافظة في شيت الأوردرات بيتقري لو الأوردر مش في الملف
   assert.equal(e.c.govOf_(['x', '', '', '', '', '', '', '', 'Giza']), 'الجيزة');
   assert.equal(e.c.govOf_(['x', '', '', '', '', '', '', '', 'محافظة الاسكندرية']), 'الإسكندرية');
+});
+
+test('رصيد الأكاونتات في Today: المشحون ويكفي كام يوم، والكارت وحد الصرف، والتوكن اللي مايشوفش طريقة الدفع', () => {
+  const probe = env(), today = probe.c.todayKey_(), d = n => probe.c.shiftKey_(today, -n);
+  const e = env({
+    ads: { [A1]: [adRow(d(1), '111', 300), adRow(d(2), '111', 300), adRow(d(3), '111', 300)], [A2]: [adRow(d(1), '222', 600)] },
+    accInfo: {
+      [A1]: { is_prepay_account: true, balance: '0', amount_spent: '5000000', spend_cap: '0', currency: 'EGP',
+        funding_source_details: { id: '1', type: 20, display_string: 'Available balance (EGP1,250.50)' } },
+      [A2]: { is_prepay_account: false, balance: '35000', amount_spent: '60000', spend_cap: '100000', account_status: 3,
+        funding_source_details: { id: '2', type: 1, display_string: 'Visa *4242' } },
+      [A3]: { is_prepay_account: true, noFunding: true }
+    } });
+  e.c.setupAll();
+  e.c.liveTick();
+  const v = e.ss.getSheetByName('Today').getDataRange().getValues(), i = v.findIndex(r => /^رصيد الأكاونتات من Meta — آخر قراية /.test(String(r[0])));
+  assert.ok(i > 0, 'الجدول تحت GRAND TOTAL');
+  const rows = v.slice(i + 2, i + 5).map(r => r.slice(0, 6));
+  assert.deepEqual(rows[0], ['Chance 26', 1250.5, 4.1, '', 'مفيش حد', 'شغال'], 'مشحون: 1250.5 ÷ 300 في اليوم');
+  assert.deepEqual(rows[1], ['Chance Golden Era', 'كارت (بيتخصم لوحده)', 2, 350, 400, '⚠️ عليه فلوس ماتدفعتش'], 'كارت: فاضل 400 على حد الصرف ÷ 200 في اليوم');
+  assert.deepEqual(rows[2].slice(1, 6), ['Meta مابتدّيش رصيد الشحن للتوكن ده', '', '', 'مفيش حد', 'شغال']);
+  e.requests.filter(u => /fields=account_status/.test(u)).forEach(u => assert.match(u, /^https:\/\/graph\.facebook\.com\/v[\d.]+\/act_\d+\?fields=/));
 });
