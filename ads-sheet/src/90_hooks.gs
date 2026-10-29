@@ -9,7 +9,7 @@
  */
 
 function chanceSetup_() {
-  ensureTab_(X.PRODUCTS); ensureTab_(X.ACC_BE); ensureTab_(X.CATALOG);
+  ensureTab_(X.PRODUCTS); ensureTab_(X.ACC_BE); ensureTab_(X.CATALOG); ensureTab_(X.FUNNEL);
   const tk = ['date', 'account_id', 'campaign', 'adgroup', 'ad_id', 'ad', 'spend', 'impressions', 'clicks', 'purchases', 'landing']
     .map(k => cfgStr_('tiktok.col.' + k)).filter(Boolean);
   ensureTab_(cfgStr_('tiktok.tab') || 'TikTok Data', tk);
@@ -44,6 +44,6 @@ const EXT = {
   views: [slow => chanceViews_(slow)],
   edit: [(name, a1) => chanceEdit_(name, a1)],
   setup: [() => chanceSetup_()],
-  live: [() => refreshAccountNames_(), () => discoverAccounts_(), () => chanceLive_(), () => refreshTodayFunnel_()],
-  menu: [['📦 تحديث المنتجات والستوك', 'refreshProductsNow']]
+  live: [() => refreshAccountNames_(), () => discoverAccounts_(), () => chanceLive_(), () => refreshTodayFunnel_(), () => refreshFunnel_(false)],
+  menu: [['📦 تحديث المنتجات والستوك', 'refreshProductsNow'], ['📈 تحديث Daily Account Funnel', 'refreshFunnelNow']]
 };

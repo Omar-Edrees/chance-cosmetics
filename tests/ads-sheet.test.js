@@ -50,10 +50,14 @@ function env(options) {
           act('offsite_conversion.fb_pixel_purchase', 2), act('offsite_conversion.fb_pixel_add_to_cart', 4),
           act('offsite_conversion.fb_pixel_initiate_checkout', 3)], action_values: [act('offsite_conversion.fb_pixel_purchase', 900)] }] };
     }
-    if (/\/insights\?/.test(url)) {
-      const byDay = {};
-      (ads[id] || []).forEach(r => { byDay[r.date_start] = (byDay[r.date_start] || 0) + Number(r.spend); });
-      return { data: Object.keys(byDay).map(d => ({ date_start: d, spend: String(byDay[d]) })) };
+    if (/\/insights\?/.test(url)) { // مستوى الحساب يوم بيوم، أو شهر بشهر (time_increment=monthly)
+      const byDay = {}, monthly = /time_increment=monthly/.test(url);
+      (ads[id] || []).forEach(r => {
+        const k = monthly ? r.date_start.slice(0, 8) + '01' : r.date_start, x = byDay[k] = byDay[k] || { spend: 0, buys: 0, imp: 0 };
+        x.spend += Number(r.spend); x.buys += 2; x.imp += 1000;
+      });
+      return { data: Object.keys(byDay).map(d => ({ date_start: d, spend: String(byDay[d].spend), impressions: String(byDay[d].imp),
+        actions: [{ action_type: 'offsite_conversion.fb_pixel_purchase', value: String(byDay[d].buys) }] })) };
     }
     if (/\/ads\?/.test(url)) return { data: (activeAds[id] || []).map(x => ({ id: x, campaign_id: 'C1' })) };
     const adId = (url.match(/\/v[\d.]+\/(\d+)\?/) || [])[1];
@@ -594,4 +598,26 @@ test('كامبين اسمها اتغير: الأوردر بيتربط بالإع
   assert.equal(ad14(1), '901', 'الاسم مش موجود: الإعلان اللي صرف أكتر في الـ Ad set');
   assert.equal(ad14(2), '903', 'اسم الإعلان موجود في الـ Ad set');
   assert.equal(ad14(3), '', 'مفيش UTM خالص');
+});
+
+test('Daily Account Funnel: متوسط الشهر ده واللي قبله وآخر 3 شهور، وتحتها الأيام', () => {
+  const probe = env(), today = probe.c.todayKey_(), p = today.split('-').map(Number);
+  const ym = i => new Date(Date.UTC(p[0], p[1] - 1 - i, 1)).toISOString().slice(0, 7);
+  const e = env({ ads: { [A1]: [adRow(today, '111', 300), adRow(ym(1) + '-10', '111', 3000), adRow(ym(2) + '-10', '111', 600)] } });
+  e.c.setupAll();
+  e.c.refreshFunnelNow();
+  const v = e.ss.getSheetByName('Daily Account Funnel').getDataRange().getValues();
+  assert.match(String(v[0][0]), /^DAILY ACCOUNT FUNNEL/);
+  assert.deepEqual(v[2].slice(0, 5), ['DATE', 'SPEND', 'ORDERS', 'CPP', 'AOV']);
+  const i = v.findIndex(r => /4660|Chance 26/.test(String(r[0]))), rows = v.slice(i + 1, i + 7);
+  assert.match(rows[0][0], /^متوسط الشهر ده/);
+  assert.equal(rows[0][1], Math.round(300 / Number(today.slice(8, 10)) * 100) / 100, 'الصرف في اليوم');
+  const days1 = new Date(Date.UTC(p[0], p[1] - 1, 0)).getUTCDate();
+  assert.equal(rows[1][1], Math.round(3000 / days1 * 100) / 100);
+  assert.equal(rows[1][3], 1500, 'CPP = الصرف ÷ المشتريات من مجموع الشهر');
+  assert.equal(rows[4][0], 'متوسط آخر 3 شهور');
+  assert.equal(rows[4][3], 900, '3600 ÷ 4 مشتريات');
+  assert.equal(rows[5][1], 300, 'أول يوم تحت المتوسطات = النهارده');
+  assert.equal(v[3][3], 900, 'البنشمارك = آخر 3 شهور لكل الحسابات');
+  assert.match(e.c.getStatus_('FUNNEL'), /✓/);
 });

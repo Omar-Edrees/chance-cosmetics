@@ -112,7 +112,7 @@ function todayGrid_() {
  * Returns true when the page was redrawn.
  */
 function writeGrid_(sh, g) {
-  const R = Math.max(g.rows.length, 1), W = TODAY.WIDTH, props = PropertiesService.getDocumentProperties(), name = sh.getName();
+  const R = Math.max(g.rows.length, 1), W = g.width || TODAY.WIDTH, props = PropertiesService.getDocumentProperties(), name = sh.getName();
   const pick = k => { const out = []; for (let r = 0; r < R; r++) { const line = []; for (let c = 0; c < W; c++) { const x = (g.rows[r] || [])[c]; line.push(x ? x[k] : (k === 'v' ? '' : k === 'fc' ? '#000000' : k === 'b' ? 'normal' : k === 'nf' ? 'General' : k === 'al' ? 'left' : null)); } out.push(line); } return out; };
   const v = pick('v'), live = (g.live || []).filter(x => x[0] <= R), still = v.map(r => r.slice());
   live.forEach(x => { still[x[0] - 1][x[1] - 1] = ''; });
