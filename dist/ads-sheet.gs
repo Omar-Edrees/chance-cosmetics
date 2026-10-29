@@ -11,7 +11,7 @@
  * Ad accounts and stores are read-only from here: no writes to Meta, TikTok or order sources.
  */
 const APP = {
-  VERSION: '1.25.0',
+  VERSION: '1.25.1',
   T: {
     SETTINGS: 'Settings', ACCOUNTS: 'Accounts', PRODUCTS: 'Products', ADMAP: 'Ad Map',
     ADS: 'Ads Raw', ACC_RAW: 'Account Raw', ORDERS: 'Orders Raw', DAILY: 'Daily Log',
@@ -3023,7 +3023,7 @@ function todayProducts_(g, r, title, from, to, rows) {
     const x = camps[p] || {}, n = Object.keys(x).sort((a, b) => x[b] - x[a]);
     return n.length > 2 ? n[0] + ' + ' + (n.length - 1) + ' كامبين' : n.join(' / ');
   };
-  r = todayHead_(g, r, c, 8, title, ['CAMPAIGN', 'PRODUCT', 'META ORDERS', 'PIXEL PURCHASES', 'META SPEND', 'META CPP', 'META ROAS', 'ADS RUNNING NOW']);
+  r = todayHead_(g, r, c, 8, title, ['CAMPAIGN', 'PRODUCT', 'SHOPIFY ORDERS', 'PIXEL PURCHASES', 'META SPEND', 'META CPP', 'META ROAS', 'ADS RUNNING NOW']);
   const names = Object.keys(meta).filter(n => special.indexOf(n) < 0 && (meta[n].spend > 0 || meta[n].orders > 0))
     .sort((a, b) => (meta[b].spend - meta[a].spend) || (meta[b].orders - meta[a].orders));
   const tot = { spend: 0, orders: 0, revenue: 0, pixel: 0, ads: 0 };

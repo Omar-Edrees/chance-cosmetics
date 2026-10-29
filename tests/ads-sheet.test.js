@@ -220,7 +220,7 @@ test('Today: أداء المنتجات بالـ ROAS، والأوردر على �
   const titles = values.map(r => String(r[7])).filter(t => /^PRODUCT PERFORMANCE/.test(t));
   assert.equal(titles.length, 2);
   const heads = values.filter(r => r[8] === 'PRODUCT');
-  heads.forEach(h => assert.deepEqual(h.slice(7, 15), ['CAMPAIGN', 'PRODUCT', 'META ORDERS', 'PIXEL PURCHASES', 'META SPEND', 'META CPP', 'META ROAS', 'ADS RUNNING NOW']));
+  heads.forEach(h => assert.deepEqual(h.slice(7, 15), ['CAMPAIGN', 'PRODUCT', 'SHOPIFY ORDERS', 'PIXEL PURCHASES', 'META SPEND', 'META CPP', 'META ROAS', 'ADS RUNNING NOW']));
   // الـ UTM هنا (fb / Camp) مش بيشاور على إعلان في الشيت: الأوردرات في صف لوحدها مش على Lip Oil
   const lip = values.find(r => r[8] === 'Lip Oil'), blush = values.find(r => r[8] === 'Blush');
   assert.deepEqual(lip.slice(7, 15), ['Camp', 'Lip Oil', 0, 2, 600, '', 0, 1]);
