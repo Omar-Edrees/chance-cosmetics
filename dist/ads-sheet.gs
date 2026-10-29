@@ -11,7 +11,7 @@
  * Ad accounts and stores are read-only from here: no writes to Meta, TikTok or order sources.
  */
 const APP = {
-  VERSION: '1.24.0',
+  VERSION: '1.25.0',
   T: {
     SETTINGS: 'Settings', ACCOUNTS: 'Accounts', PRODUCTS: 'Products', ADMAP: 'Ad Map',
     ADS: 'Ads Raw', ACC_RAW: 'Account Raw', ORDERS: 'Orders Raw', DAILY: 'Daily Log',
@@ -2988,16 +2988,27 @@ function orderedList_(orders, prefer) {
   return Object.keys(n).sort((a, b) => ((b === prefer) - (a === prefer)) || (n[b] - n[a]) || (a < b ? -1 : 1)).map(i => [label(i, more[i]), n[i]]);
 }
 /*
- * One line per product of the ads: the campaigns that spent on it, store orders (UTM), Meta's pixel purchases, spend,
- * CPP, ROAS, and how many of its ads are running now. Which products those orders bought, campaign by campaign,
+ * One line per product of the ads: the campaigns that spent on it, store orders (UTM, plus the product's DIRECT orders),
+ * Meta's pixel purchases, spend, CPP, ROAS, and how many of its ads are running now. Which products those orders bought, campaign by campaign,
  * is in the الكتالوج tab.
  */
 function todayProducts_(g, r, title, from, to, rows) {
-  const S = TODAY, c = S.RIGHT_COL, meta = {}, active = activeMap_(), special = [APP.CATALOG, APP.MULTI, APP.UNMAPPED, APP.META_NO_AD, APP.UNKNOWN_PRODUCT];
+  const S = TODAY, c = S.RIGHT_COL, meta = {}, active = activeMap_(), DIRECT_ROW = 'DIRECT (مباشر أو البايو) — منتج مالوش صف';
+  const special = [APP.CATALOG, APP.MULTI, APP.UNMAPPED, APP.META_NO_AD, DIRECT_ROW, APP.UNKNOWN_PRODUCT], direct = {};
+  const z = () => ({ spend: 0, orders: 0, revenue: 0, pixel: 0 });
   rows.forEach(x => {
-    if (x[0] < from || x[0] > to || x[1] !== 'META') return;
-    const t = meta[x[2]] = meta[x[2]] || { spend: 0, orders: 0, revenue: 0, pixel: 0 };
+    if (x[0] < from || x[0] > to) return;
+    if (x[1] === APP.DIRECT) { const d = direct[x[2]] = direct[x[2]] || z(); d.orders += num_(x[8]); d.revenue += num_(x[10]); return; }
+    if (x[1] !== 'META') return;
+    const t = meta[x[2]] = meta[x[2]] || z();
     t.spend += num_(x[3]); t.orders += num_(x[8]); t.revenue += num_(x[10]); t.pixel += num_(x[7]);
+  });
+  // DIRECT orders (no ad: direct visit or link in bio) count as Meta orders, on their product's row; a product with no
+  // row here (no Meta spend or orders) goes to the DIRECT row. Like META TOTAL in the closing table.
+  let directOrders = 0;
+  Object.keys(direct).forEach(p => {
+    const d = direct[p], t = meta[p] && special.indexOf(p) < 0 ? meta[p] : (meta[DIRECT_ROW] = meta[DIRECT_ROW] || z());
+    t.orders += d.orders; t.revenue += d.revenue; directOrders += d.orders;
   });
   // Campaigns per product (same product as the Daily Log: catalog ads → CATALOG, else Ad Map), most spend first.
   const idx = adMapIndex_(), catAds = catalogAdIds_(), camps = {};
@@ -3037,7 +3048,7 @@ function todayProducts_(g, r, title, from, to, rows) {
   names.forEach(n => add(n, {}));
   special.filter(n => n !== APP.CATALOG).forEach(n => add(n, { bg: S.SPECIAL }));
   if (!names.length && !special.some(n => meta[n])) { g.set(r, c, 'مفيش صرف Meta في الفترة دي', { fc: '#6b7280' }); r++; }
-  put('', tot, tot.ads, { bg: S.TOTAL, b: 'bold' }, 'TOTAL META');
+  put('', tot, tot.ads, { bg: S.TOTAL, b: 'bold' }, 'TOTAL META' + (directOrders ? ' (شامل DIRECT: ' + directOrders + ')' : ''));
   return r;
 }
 

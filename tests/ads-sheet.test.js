@@ -685,3 +685,21 @@ test('أوردر Meta من كامبين قديمة لحساب معانا مش ME
   assert.equal(c.outsideMeta_(o('120240000000020297', '120240000000030297'), known), false, 'حساب egy3 بكامبين مش في Ads Raw');
   assert.equal(c.outsideMeta_(o('120256366878570102', '120256366881430102'), known), true, 'الحساب اللي مش معانا');
 });
+
+test('PRODUCT PERFORMANCE: أوردرات DIRECT داخلة في أوردرات Meta على صف منتجها', () => {
+  const AD = '120256366885940102', probe = env(), today = probe.c.todayKey_(), at = ' ' + today + 'T10:00:00+03:00', B = '(blank)';
+  const flow = (id, a, products) => ['gid://shopify/Order/' + id, ' #' + id, ' N', B, 500, at, B, B, B, B, B].concat(a, [products, '4655075']);
+  const e = env({ orderHead: FLOW_HEAD.slice(0, 17), ads: { [A1]: [adRow(today, AD, 600)] },
+    creatives: { [AD]: 'https://chance-cosmetics.com/products/lip-oil' },
+    stock: [['P1', 'V1', 'Lip Oil', 'Default Title', 'LO', 'lip-oil', 40, 300], ['P2', 'V2', 'Blush', 'Default Title', 'BL', 'blush', 40, 300]],
+    orders: [flow(1, ['facebook', '120256366878570102', AD, 'Facebook'], 'Lip Oil x1'),
+      flow(2, [B, B, B, 'Direct(Chancestoreegy)'], 'Lip Oil x1'), flow(3, [B, B, B, 'Direct(Chancestoreegy)'], 'Blush x1')] });
+  e.c.setupAll();
+  e.c.liveTick(); e.c.liveTick();
+  const v = e.ss.getSheetByName('Today').getDataRange().getValues(), i = v.findIndex(r => /^PRODUCT PERFORMANCE — TODAY/.test(String(r[7])));
+  const rows = v.slice(i + 2).map(r => r.slice(7, 13)), until = rows.findIndex(r => /^TOTAL META/.test(String(r[0])));
+  const body = rows.slice(0, until + 1);
+  assert.deepEqual(body.find(r => r[1] === 'Lip Oil').slice(2, 6), [2, 2, 600, 300], 'أوردر Meta + أوردر DIRECT لنفس المنتج');
+  assert.equal(body.find(r => /^DIRECT/.test(String(r[1])))[2], 1, 'Blush مالوش صف: صف DIRECT');
+  assert.deepEqual([body[until][0], body[until][2]], ['TOTAL META (شامل DIRECT: 2)', 3]);
+});
