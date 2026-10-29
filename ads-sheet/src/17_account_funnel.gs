@@ -8,7 +8,7 @@
  * source, but those from an ad account not in the sheet, like GRAND TOTAL in Today; the benchmark: the Meta ones). CPP, AOV and ROAS come from them and their sales, against the spend of the days the orders sheet
  * covers (from 1 Jul 2026 with the archive of older orders; before that they're blank). META ORDERS = Meta's pixel purchases, for the funnel rates.
  * Colors: each cell against the BENCHMARK row (row 4): green = as good or better, yellow = worse by up to B2 (20%),
- * red = worse by more. The benchmark is all accounts together over the last 3 months; a number typed in row 4 by hand stays,
+ * red = worse by more. The benchmark is each column's best month of the last 3 (the whole business, month totals); a number typed in row 4 by hand stays,
  * and clearing it brings the average back. Read-only on Meta. Refreshed every 3 hours (not 3–9 AM Cairo) and from the menu.
  */
 const FUNNEL = {
@@ -96,11 +96,11 @@ function funnelMonthName_(ym) {
 
 /*
  * Store orders per account and per day since `from`: {first (first day the orders sheet covers), acc: {id: {day: {orders,
- * revenue}}}, all: {day: ...} (every store order but those from an ad account not in the sheet), meta: {day: ...} (the Meta
- * ones), spend: {id: {day: spend}}} (spend from Ads Raw, to match the covered days).
+ * revenue}}}, all: {day: ...} (every store order but those from an ad account not in the sheet), spend: {id: {day: spend}}}
+ * (spend from Ads Raw, to match the covered days).
  */
 function funnelShop_(from) {
-  const out = { first: '', acc: {}, all: {}, meta: {}, spend: {} }, osh = ss_().getSheetByName(APP.T.ORDERS);
+  const out = { first: '', acc: {}, all: {}, spend: {} }, osh = ss_().getSheetByName(APP.T.ORDERS);
   if (!osh || osh.getLastRow() < 2) return out;
   out.first = asKey_(osh.getRange(osh.getLastRow(), 3).getValue()) || sortKey_(osh.getRange(osh.getLastRow(), 2).getValue()).slice(0, 10);
   const adAcc = {}, add = (map, d, rev) => { const x = map[d] = map[d] || { orders: 0, revenue: 0 }; x.orders++; x.revenue += rev; };
@@ -116,7 +116,6 @@ function funnelShop_(from) {
     if (!d || d < from || outsideMeta_(o, known)) return;
     add(out.all, d, num_(o[7]));
     if (o[3] !== 'META') return;
-    add(out.meta, d, num_(o[7]));
     const arch = archiveAccOf_(o[0]), acc = adAcc[String(o[14] || '')] || (arch !== 'OUT' ? arch : '');
     if (acc) add(out.acc[acc] = out.acc[acc] || {}, d, num_(o[7]));
   });
@@ -153,16 +152,22 @@ function writeFunnel_(data) {
   let lastAuto = {};
   try { lastAuto = JSON.parse(props.getProperty(F.BENCH_KEY) || '{}'); } catch (e) { lastAuto = {}; }
   const old = Array.isArray(lastAuto); // before columns had names here: take the automatic numbers once
-  const shop = funnelShop_(data.months[F.MONTHS] + '-01'), yest = shiftKey_(today, -1), past = data.months.slice(1);
+  const shop = funnelShop_(data.months[F.MONTHS] + '-01'), past = data.months.slice(1);
   const pastFrom = past[past.length - 1] + '-01', pastTo = shiftKey_(data.months[0] + '-01', -1);
-  const all = funnelSum_(data.accounts.map(a => funnelSum_(past.map(m => a.months[m] || {}))));
-  // The store side of the benchmark: the last 3 months if the orders sheet covers them, else the days it covers up to yesterday.
-  const shopFrom = shop.first && shop.first > pastFrom ? shop.first : pastFrom, shopTo = shop.first && shop.first > pastTo ? (shop.first > yest ? today : yest) : pastTo;
+  const monthEnd = ym => { const p = ym.split('-').map(Number); return new Date(Date.UTC(p[0], p[1], 0)).toISOString().slice(0, 10); };
   const allSpend = {};
   Object.keys(shop.spend).forEach(acc => Object.keys(shop.spend[acc]).forEach(d => { allSpend[d] = (allSpend[d] || 0) + shop.spend[acc][d]; }));
-  funnelShopAdd_(all, shop.meta, allSpend, shop, shopFrom, shopTo, shopFrom === pastFrom && shopTo === pastTo);
+  const metricOf = (raw, m) => (m[2] === 'one' ? (m[1] in raw ? raw[m[1]] : '') : funnelValue_(raw, m));
+  // The benchmark: each column's best month of the 3 before this one, the whole business (all accounts' month totals, not an
+  // average; SHOPIFY ORDERS = every store order but those from an ad account not in the sheet). Lower is better for costs;
+  // a step rate over 100% (an event not fully tracked) is used only if no month is at or under 100%.
+  const pastRaws = past.map(ym => funnelShopAdd_(funnelSum_(data.accounts.filter(a => !a.error).map(a => a.months[ym] || {})),
+    shop.all, allSpend, shop, ym + '-01', monthEnd(ym), true));
   const auto = {}, bench = F.METRICS.map(m => {
-    const v = funnelValue_(all, m), a = v === '' ? '' : Math.round(v * 10000) / 10000, p = prev[m[0]];
+    let vals = pastRaws.map(raw => metricOf(raw, m)).filter(v => typeof v === 'number' && isFinite(v) && v > 0);
+    if (m[7] && vals.some(v => v <= 1)) vals = vals.filter(v => v <= 1);
+    const v = vals.length ? (m[5] ? Math.min.apply(null, vals) : Math.max.apply(null, vals)) : '';
+    const a = v === '' ? '' : Math.round(v * 10000) / 10000, p = prev[m[0]];
     auto[m[0]] = a;
     return !old && typeof p === 'number' && p > 0 && p !== lastAuto[m[0]] ? p : a;
   });
@@ -176,14 +181,14 @@ function writeFunnel_(data) {
   g.set(2, 2, yellow, { nf: '0%', bg: F.AMBER, b: 'bold', al: 'center' });
   const pct = Math.round(yellow * 100) + '%';
   g.set(2, 3, '🟢 أحسن من البنشمارك أو زيه   🟡 أسوأ لحد ' + pct + '   🔴 أسوأ بأكتر من ' + pct +
-    ' — البنشمارك = كل الحسابات مع بعض في ' + range3 + (shopFrom !== pastFrom ? ' (CPP و ROAS من ' + shopFrom + ' لـ ' + shopTo + ': شيت الأوردرات بادئ ' + shop.first + ')' : '') +
+    ' — البنشمارك = أحسن شهر في ' + range3 + ' لكل عمود، للبيزنس كله (مجموع الشهر مش متوسط؛ أقل تكلفة وأعلى نسبة وأكتر أوردرات)' +
     '. SHOPIFY ORDERS = أوردرات المتجر من إعلانات الحساب (UTM)، وفي البيزنس كله: كل أوردرات شوبيفاي من أي مصدر ماعدا الأكاونت اللي مش معانا. وعليها CPP و AOV و ROAS. META ORDERS = مشتريات البيكسل.' +
     ' صفوف الشهور: الصرف والأوردرات مجموع الشهر، والنسب من مجموع الأرقام.' +
     ' نسبة خطوة فوق 100% (زي Pur/Chk) رمادي من غير لون: الخطوة اللي قبلها مش بتتسجل كلها (فورم الكاش مابيبعتش Checkout).');
   g.merge(2, 3, 1, W - 2);
   ['DATE', 'SPEND'].concat(F.METRICS.map(m => m[0])).forEach((h, i) => g.set(3, 1 + i, h, { bg: '#fff200', b: 'bold', al: 'center' }));
   g.set(F.BENCH_ROW, 1, 'BENCHMARK', { bg: F.BENCH_BG, b: 'bold', al: 'center' });
-  g.set(F.BENCH_ROW, 2, range3, { bg: F.BENCH_BG, b: 'bold', al: 'center' });
+  g.set(F.BENCH_ROW, 2, 'أحسن شهر ' + range3, { bg: F.BENCH_BG, b: 'bold', al: 'center' });
   F.METRICS.forEach((m, i) => g.set(F.BENCH_ROW, 3 + i, bench[i], { nf: m[4], bg: F.BENCH_BG, b: 'bold', al: 'center' }));
 
   let r = F.BENCH_ROW + 1;
@@ -204,7 +209,6 @@ function writeFunnel_(data) {
     g.merge(r, 1, 1, W);
     r++;
     if (error) return;
-    const monthEnd = ym => { const p = ym.split('-').map(Number); return new Date(Date.UTC(p[0], p[1], 0)).toISOString().slice(0, 10); };
     data.months.forEach((ym, i) => line(funnelMonthName_(ym) + (i ? '' : ' (لحد النهارده)'),
       funnelShopAdd_(Object.assign({}, months[ym] || {}), shopDays, spendDays, shop, ym + '-01', i ? monthEnd(ym) : today, true), { bg: F.AVG_BG, b: 'bold' }));
     line('آخر 3 شهور (' + range3 + ')', funnelShopAdd_(funnelSum_(past.map(ym => months[ym] || {})), shopDays, spendDays, shop, pastFrom, pastTo, true),
