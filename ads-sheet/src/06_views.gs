@@ -71,6 +71,8 @@ function metaIdsOf_(ads) {
 /* A Meta order whose UTMs carry only IDs that no account in the sheet has: another ad account (no spend here). */
 function outsideMeta_(o, known) {
   if (o[3] !== 'META' || o[14]) return false;
+  const arch = archiveAccOf_(o[0]); // an old order: its account came with the archive (its campaigns are no longer in Ads Raw)
+  if (arch) return arch === 'OUT';
   const ids = [o[11], o[12], o[13], o[16], o[17]].join(' ').match(/\d{15,}/g) || [];
   return ids.length > 0 && !ids.some(x => known.has(x));
 }

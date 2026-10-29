@@ -6,7 +6,7 @@
  * says the earlier event isn't tracked, so it gets no color.
  * SHOPIFY ORDERS = store orders from the account's ads (UTM → ad → account; the business row: every Meta order, like
  * META TOTAL in Today). CPP, AOV and ROAS come from them and their sales, against the spend of the days the orders sheet
- * covers (it starts 13 Oct 2026; before that they're blank). META ORDERS = Meta's pixel purchases, for the funnel rates.
+ * covers (from 1 Jul 2026 with the archive of older orders; before that they're blank). META ORDERS = Meta's pixel purchases, for the funnel rates.
  * Colors: each cell against the BENCHMARK row (row 4): green = as good or better, yellow = worse by up to B2 (20%),
  * red = worse by more. The benchmark is all accounts together over the last 3 months; a number typed in row 4 by hand stays,
  * and clearing it brings the average back. Read-only on Meta. Refreshed every 3 hours (not 3–9 AM Cairo) and from the menu.
@@ -114,17 +114,22 @@ function funnelShop_(from) {
     const d = asKey_(o[2]);
     if (!d || d < from || o[3] !== 'META' || outsideMeta_(o, known)) return;
     add(out.all, d, num_(o[7]));
-    const acc = adAcc[String(o[14] || '')];
+    const arch = archiveAccOf_(o[0]), acc = adAcc[String(o[14] || '')] || (arch !== 'OUT' ? arch : '');
     if (acc) add(out.acc[acc] = out.acc[acc] || {}, d, num_(o[7]));
   });
   return out;
 }
-/* Adds shopOrders / shopRevenue / shopSpend to a raw for the days in [from..to] the orders sheet covers (none: left out). */
-function funnelShopAdd_(raw, days, spendByDay, shop, from, to) {
+/*
+ * Adds shopOrders / shopRevenue / shopSpend to a raw for the days in [from..to] the orders sheet covers (none: left out).
+ * Spend: Meta's own (raw.spend) when raw is for exactly [from..to] (same = true) and the orders cover all of it, else Ads
+ * Raw's for the covered days only (Ads Raw starts later than the orders archive).
+ */
+function funnelShopAdd_(raw, days, spendByDay, shop, from, to, same) {
   if (!shop.first || to < shop.first) return raw;
-  raw.shopOrders = 0; raw.shopRevenue = 0; raw.shopSpend = 0;
+  const whole = same && from >= shop.first;
+  raw.shopOrders = 0; raw.shopRevenue = 0; raw.shopSpend = whole ? num_(raw.spend) : 0;
   Object.keys(days || {}).forEach(d => { if (d >= from && d <= to && d >= shop.first) { raw.shopOrders += days[d].orders; raw.shopRevenue += days[d].revenue; } });
-  Object.keys(spendByDay || {}).forEach(d => { if (d >= from && d <= to && d >= shop.first) raw.shopSpend += spendByDay[d]; });
+  if (!whole) Object.keys(spendByDay || {}).forEach(d => { if (d >= from && d <= to && d >= shop.first) raw.shopSpend += spendByDay[d]; });
   return raw;
 }
 
@@ -152,7 +157,7 @@ function writeFunnel_(data) {
   const shopFrom = shop.first && shop.first > pastFrom ? shop.first : pastFrom, shopTo = shop.first && shop.first > pastTo ? (shop.first > yest ? today : yest) : pastTo;
   const allSpend = {};
   Object.keys(shop.spend).forEach(acc => Object.keys(shop.spend[acc]).forEach(d => { allSpend[d] = (allSpend[d] || 0) + shop.spend[acc][d]; }));
-  funnelShopAdd_(all, shop.all, allSpend, shop, shopFrom, shopTo);
+  funnelShopAdd_(all, shop.all, allSpend, shop, shopFrom, shopTo, shopFrom === pastFrom && shopTo === pastTo);
   const auto = {}, bench = F.METRICS.map(m => {
     const v = funnelValue_(all, m), a = v === '' ? '' : Math.round(v * 10000) / 10000, p = prev[m[0]];
     auto[m[0]] = a;
@@ -198,8 +203,8 @@ function writeFunnel_(data) {
     if (error) return;
     const monthEnd = ym => { const p = ym.split('-').map(Number); return new Date(Date.UTC(p[0], p[1], 0)).toISOString().slice(0, 10); };
     data.months.forEach((ym, i) => line(funnelMonthName_(ym) + (i ? '' : ' (لحد النهارده)'),
-      funnelShopAdd_(Object.assign({}, months[ym] || {}), shopDays, spendDays, shop, ym + '-01', i ? monthEnd(ym) : today), { bg: F.AVG_BG, b: 'bold' }));
-    line('آخر 3 شهور (' + range3 + ')', funnelShopAdd_(funnelSum_(past.map(ym => months[ym] || {})), shopDays, spendDays, shop, pastFrom, pastTo),
+      funnelShopAdd_(Object.assign({}, months[ym] || {}), shopDays, spendDays, shop, ym + '-01', i ? monthEnd(ym) : today, true), { bg: F.AVG_BG, b: 'bold' }));
+    line('آخر 3 شهور (' + range3 + ')', funnelShopAdd_(funnelSum_(past.map(ym => months[ym] || {})), shopDays, spendDays, shop, pastFrom, pastTo, true),
       { bg: F.AVG3_BG, b: 'bold' });
     days.forEach(d => {
       const p = d.date.split('-').map(Number), raw = Object.assign({}, d.raw);

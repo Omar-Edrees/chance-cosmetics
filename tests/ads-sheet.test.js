@@ -89,6 +89,8 @@ function env(options) {
     UrlFetchApp: { fetch: url => response(url), fetchAll: reqs => reqs.map(r => response(r.url)) },
     ScriptApp: { getProjectTriggers: () => triggers.slice(), deleteTrigger: t => triggers.splice(triggers.indexOf(t), 1), newTrigger: trigger },
   });
+  // The real archive (12k old orders) only where a test asks for it; opt.archive = [orders] gives a small one.
+  if (opt.archive !== true) { const arch = typeof opt.archive === 'function' ? opt.archive(c) : opt.archive || []; c.archiveOrders_ = () => arch; }
   return { c, ss: active, source, doc, alerts, requests, triggers };
 }
 
@@ -625,4 +627,48 @@ test('Daily Account Funnel: الشهور مجموع، والبيزنس كله ا
   assert.deepEqual(rows[5].slice(1, 4), [300, 2, 150], 'النهارده');
   assert.equal(v[3][3], 200, 'بنشمارك CPP من الأيام اللي فيها أوردرات');
   assert.match(e.c.getStatus_('FUNNEL'), /✓/);
+});
+
+test('أرشيف الأوردرات القديمة: بيدخل Orders Raw ثابت، و Flow بيكسب، والحساب بييجي معاه', () => {
+  const probe = env(), today = probe.c.todayKey_(), p = today.split('-').map(Number);
+  const ym = i => new Date(Date.UTC(p[0], p[1] - 1 - i, 1)).toISOString().slice(0, 7);
+  const old = (n, day, acc, extra) => c => Object.assign({ id: 'gid://shopify/Order/' + n, dt: c.makeDate(day + 'T12:00:00Z'), utms: ['fb', '120247502496020297', '120247502496080297'],
+    ids: ['120247502496020297', '120247502496010297'], referrer: 'https://facebook.com/', source: 'web', total: 1000, raw: 'Lip Oil x1', cancelled: false, acc: acc }, extra || {});
+  const arch = [old(1, ym(1) + '-01', A1), old(2, ym(1) + '-13', 'OUT'), old(3, ym(1) + '-14', '', { utms: ['ig', 'Lip Oil | CBO | 4/8', 'Ad'], ids: ['', ''] }),
+    old(4, ym(1) + '-15', A1, { total: 1 })];
+  const e = env({ archive: c => arch.map(f => f(c)), ads: { [A1]: [adRow(today, '111', 300), adRow(ym(1) + '-10', '111', 3000)], [A2]: [adRow(today, '222', 100)] },
+    orderHead: FLOW_HEAD, orders: [['gid://shopify/Order/4', ' #4', ' N', '(blank)', 700, ' ' + today + 'T10:00:00+03:00', '(blank)', '(blank)', '(blank)', '(blank)', '(blank)', '', '', '', '', 'Lip Oil x1', '4655075']] });
+  e.c.setupAll();
+  e.c.liveTick(); e.c.liveTick();
+  const raw = e.ss.getSheetByName('Orders Raw').getDataRange().getValues().slice(1), o = n => raw.find(r => r[0] === 'gid://shopify/Order/' + n);
+  assert.equal(raw.length, 4, 'التلاتة القدام + أوردر Flow');
+  assert.equal(o(1)[2], ym(1) + '-01');
+  assert.deepEqual(o(1).slice(3, 6), ['META', 'utm', 'Lip Oil']);
+  assert.equal(o(4)[7], 700, 'أوردر في Flow وفي الأرشيف: صف Flow هو اللي بيتحسب');
+  assert.equal(o(4)[2], today);
+  assert.equal(e.c.outsideMeta_(o(1), new Set()), false, 'كامبين قديمة مش في Ads Raw بس حسابها معانا');
+  assert.equal(e.c.outsideMeta_(o(2), new Set()), true, 'حساب مش معانا');
+  assert.equal(e.c.outsideMeta_(o(3), new Set()), false, 'من غير IDs');
+  e.c.refreshFunnelNow();
+  const v = e.ss.getSheetByName('Daily Account Funnel').getDataRange().getValues();
+  const i = v.findIndex(r => /Chance 26/.test(String(r[0]))), month1 = v[i + 2];
+  assert.deepEqual(month1.slice(1, 5), [3000, 1, 3000, 1000], 'الشهر اللي فات: أوردر الأرشيف بتاع الحساب، و CPP على صرف Meta بتاع الشهر كله');
+  assert.ok(Math.abs(month1[5] - 1 / 3) < 0.001, 'ROAS');
+  const k = v.findIndex(r => r[0] === 'كل الحسابات (البيزنس كله)');
+  assert.ok(k > 0);
+  assert.equal(v[k + 2][2], 2, 'البيزنس كله: أوردرات Meta القديمة (من غير اللي حسابها مش معانا)');
+});
+
+test('ملف الأرشيف الحقيقي بيتقري صح ومافيهوش بيانات عملاء', () => {
+  const c = load('ads-sheet'), a = c.archiveOrders_();
+  assert.equal(a.length, 12349);
+  assert.ok(a.every((o, i) => /^gid:\/\/shopify\/Order\/\d{13}$/.test(o.id) && (!i || o.id > a[i - 1].id)), 'IDs مترتبة ومن غير تكرار');
+  assert.ok(a.every(o => o.dt.toISOString() >= '2026-06-30T21:00' && o.dt.toISOString() <= '2026-10-13T09:48'));
+  assert.ok(a.every(o => o.total >= 0 && isFinite(o.total)));
+  assert.ok(a.filter(o => o.raw).length > 12300, 'المنتجات');
+  assert.ok(a.filter(o => o.acc && o.acc !== 'OUT').length > 4000, 'حساب الإعلان من رقم الكامبين');
+  assert.equal(c.archiveAccOf_(a[0].id), a[0].acc);
+  const text = require('vm').runInContext('ORDER_ARCHIVE_DATA + JSON.stringify(ORDER_ARCHIVE_SRC) + JSON.stringify(ORDER_ARCHIVE_PROD)', c);
+  assert.ok(text.length > 400000);
+  assert.ok(!/(^|\D)01[0125]\d{8}(\D|$)/.test(text), 'مفيش أرقام تليفونات');
 });

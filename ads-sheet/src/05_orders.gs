@@ -158,7 +158,8 @@ function readOrderSource_(full) {
   if (c.order_id < 0 || c.date < 0) throw new Error('شيت الأوردرات ناقص فيه عمود رقم الأوردر أو التاريخ. راجع orders.col.* في Settings.');
   let st = null;
   try { st = JSON.parse(PropertiesService.getDocumentProperties().getProperty('ORDERS_SRC') || 'null'); } catch (e) { st = null; }
-  const patch = String(ORDER_PATCH_DATA.length); // a new ORDER_PATCH = read everything once, so old rows get it
+  // A new ORDER_PATCH / archive = read everything once, so old rows get it.
+  const patch = ORDER_PATCH_DATA.length + ':' + ORDER_ARCHIVE_DATA.length;
   if (!st || st.id !== src.id || st.head !== head.join('|') || !st.fmt || L < st.rows || st.patch !== patch) full = true;
   const from = full ? 2 : Math.max(2, Math.min(st.rows + 1, L - ORDERS.OVERLAP + 1));
   const rows = src.sheet.getRange(from, 1, L - from + 1, W).getValues(), fmt = full ? detectDateFormat_(rows, c.date) : st.fmt;
@@ -210,6 +211,8 @@ function readOrderSource_(full) {
       cancelled: cancelWords.some(w => w && hasToken_(norm_(get(r, 'status')), w)) });
   });
   if (noDate && full) setStatus_('ORDERS_NODATE', noDate + ' صف من غير تاريخ مفهوم');
+  // Orders from before the Flow sheet (18_orders_archive.gs): fixed, written on a full read; a Flow row of the same order wins.
+  if (full) archiveOrders_().forEach(a => { if (!byId.has(a.id)) byId.set(a.id, Object.assign({ city: '', phone: '', alt: '' }, a)); });
   const out = Array.from(byId.values()).map(o => {
     const pl = platformOf_(o.utms, o.referrer, o.source);
     const adId = (o.utms.join(' ').match(/\d{10,}/g) || []).find(x => adIds.has(x)) || byName.get(norm_(o.utms[0]) + '|' + norm_(o.utms[1])) ||
