@@ -2,7 +2,8 @@
  * Tab "Actual ROAS": the same sections as the Daily Account Funnel (the whole business first, then each account; this month,
  * each of the 3 months before it, those 3 together, then the last 30 days), with what really happened to the store orders
  * instead of Meta's funnel: SPEND, TOTAL ORDERS, CANCELLED (before shipping), CONFIRMED (shipped), RETURNED (shipped and came
- * back), IN SHIPPING (shipped, not delivered or back yet), DELIVERED (delivered and paid), then AOV, REVENUE (delivered orders only), ROAS and CPO (spend per delivered order).
+ * back), IN SHIPPING (shipped, not delivered or back yet), DELIVERED (delivered and paid), then AOV, REVENUE (delivered
+ * orders only), ROAS and CPO (spend per delivered order).
  * Orders: the same as the funnel's SHOPIFY ORDERS (the business: every store order but those from an ad account not in the
  * sheet; an account: the orders from its ads). Where each order stands comes from 19_order_status.gs (read once from Shopify);
  * a newer order counts in TOTAL ORDERS only. Spend: Meta's, from the funnel's reads. Written with the funnel, every 3 hours.

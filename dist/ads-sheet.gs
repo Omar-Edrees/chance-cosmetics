@@ -2390,7 +2390,8 @@ function orderPatch_(id) {
  * says the earlier event isn't tracked, so it gets no color.
  * SHOPIFY ORDERS = store orders from the account's ads (UTM → ad → account; the business row: every store order, from any
  * source, but those from an ad account not in the sheet, like GRAND TOTAL in Today; the benchmark: the Meta ones). CPP, AOV and ROAS come from them and their sales, against the spend of the days the orders sheet
- * covers (from 1 Jul 2026 with the archive of older orders; before that they're blank). META ORDERS = Meta's pixel purchases, for the funnel rates.
+ * covers (from 1 Jul 2026 with the archive of older orders; before that they're blank). META ORDERS = Meta's pixel
+ * purchases, for the funnel rates.
  * Colors: each cell against the BENCHMARK row (row 4): green = as good or better, yellow = worse by up to B2 (20%),
  * red = worse by more. The benchmark is each column's best month of the last 3 (the whole business, month totals); a number typed in row 4 by hand stays,
  * and clearing it brings the average back. Read-only on Meta. Refreshed every 3 hours (not 3–9 AM Cairo) and from the menu.
@@ -3099,7 +3100,8 @@ function writeToday_() {
  * Tab "Actual ROAS": the same sections as the Daily Account Funnel (the whole business first, then each account; this month,
  * each of the 3 months before it, those 3 together, then the last 30 days), with what really happened to the store orders
  * instead of Meta's funnel: SPEND, TOTAL ORDERS, CANCELLED (before shipping), CONFIRMED (shipped), RETURNED (shipped and came
- * back), IN SHIPPING (shipped, not delivered or back yet), DELIVERED (delivered and paid), then AOV, REVENUE (delivered orders only), ROAS and CPO (spend per delivered order).
+ * back), IN SHIPPING (shipped, not delivered or back yet), DELIVERED (delivered and paid), then AOV, REVENUE (delivered
+ * orders only), ROAS and CPO (spend per delivered order).
  * Orders: the same as the funnel's SHOPIFY ORDERS (the business: every store order but those from an ad account not in the
  * sheet; an account: the orders from its ads). Where each order stands comes from 19_order_status.gs (read once from Shopify);
  * a newer order counts in TOTAL ORDERS only. Spend: Meta's, from the funnel's reads. Written with the funnel, every 3 hours.

@@ -6,7 +6,8 @@
  * says the earlier event isn't tracked, so it gets no color.
  * SHOPIFY ORDERS = store orders from the account's ads (UTM → ad → account; the business row: every store order, from any
  * source, but those from an ad account not in the sheet, like GRAND TOTAL in Today; the benchmark: the Meta ones). CPP, AOV and ROAS come from them and their sales, against the spend of the days the orders sheet
- * covers (from 1 Jul 2026 with the archive of older orders; before that they're blank). META ORDERS = Meta's pixel purchases, for the funnel rates.
+ * covers (from 1 Jul 2026 with the archive of older orders; before that they're blank). META ORDERS = Meta's pixel
+ * purchases, for the funnel rates.
  * Colors: each cell against the BENCHMARK row (row 4): green = as good or better, yellow = worse by up to B2 (20%),
  * red = worse by more. The benchmark is each column's best month of the last 3 (the whole business, month totals); a number typed in row 4 by hand stays,
  * and clearing it brings the average back. Read-only on Meta. Refreshed every 3 hours (not 3–9 AM Cairo) and from the menu.
