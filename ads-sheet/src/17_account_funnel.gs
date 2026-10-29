@@ -1,8 +1,9 @@
 /*
- * Tab "Daily Account Funnel" (same as House of Beauty's): every Meta account's funnel, day by day for the last 30 days
- * (newest first). Under each account's name, before its days: the average of this month so far, of each of the 3 months
- * before it, and of those 3 months together. Averages come from the summed numbers (not an average of daily ratios);
- * SPEND and ORDERS on an average row are per day.
+ * Tab "Daily Account Funnel" (same as House of Beauty's): the whole business (all Meta accounts together) first, then
+ * every account, each with its totals for this month so far, each of the 3 months before it and those 3 months together,
+ * then its days for the last 30 days (newest first). SPEND and ORDERS are totals; the rates come from the summed numbers
+ * (not an average of daily rates). A step rate over 100% (more purchases than checkouts: the COD form sends no checkout)
+ * says the earlier event isn't tracked, so it gets no color.
  * Colors: each cell against the BENCHMARK row (row 4): green = as good or better, yellow = worse by up to B2 (20%),
  * red = worse by more. The benchmark is all accounts together over the last 3 months; a number typed in row 4 by hand stays,
  * and clearing it brings the average back. Read-only on Meta. Refreshed every 3 hours (not 3–9 AM Cairo) and from the menu.
@@ -11,7 +12,7 @@ const FUNNEL = {
   TITLE: 'DAILY ACCOUNT FUNNEL', DAYS: 30, MONTHS: 3, EVERY_MS: 3 * 3600000, QUIET_FROM: 3, QUIET_TO: 9, YELLOW: 0.2,
   BENCH_ROW: 4, BENCH_KEY: 'FUNNEL_BENCH', AT_KEY: 'FUNNEL_AT',
   GREEN: '#d9ead3', AMBER: '#fff2cc', RED: '#f4cccc', BAND: '#1f2937', BENCH_BG: '#eaf0ff', AVG_BG: '#f3f4f6', AVG3_BG: '#e8eefc',
-  /* [column, numerator, denominator, times, number format, lower is better?, no color?] — 'one' = 1 per day. */
+  /* [column, numerator, denominator, times, number format, lower is better?, no color?, a funnel step (at most 100%)?] */
   METRICS: [
     ['ORDERS', 'purchases', 'one', 1, '0', false, true],
     ['CPP', 'spend', 'purchases', 1, '#,##0.00', true],
@@ -22,13 +23,13 @@ const FUNNEL = {
     ['CTR', 'clicks', 'impressions', 1, '0.00%', false],
     ['Out CTR', 'outboundClicks', 'impressions', 1, '0.00%', false],
     ['Hook', 'videoPlays3s', 'impressions', 1, '0.00%', false],
-    ['Hold', 'thruPlays', 'videoPlays3s', 1, '0.00%', false],
+    ['Hold', 'thruPlays', 'videoPlays3s', 1, '0.00%', false, false, true],
     ['Out CPC', 'spend', 'outboundClicks', 1, '#,##0.00', true],
     ['Cost/CV', 'spend', 'contentViews', 1, '#,##0.00', true],
-    ['CV/Out', 'contentViews', 'outboundClicks', 1, '0.00%', false],
-    ['ATC/CV', 'addsToCart', 'contentViews', 1, '0.00%', false],
-    ['Chk/ATC', 'checkouts', 'addsToCart', 1, '0.00%', false],
-    ['Pur/Chk', 'purchases', 'checkouts', 1, '0.00%', false],
+    ['CV/Out', 'contentViews', 'outboundClicks', 1, '0.00%', false, false, true],
+    ['ATC/CV', 'addsToCart', 'contentViews', 1, '0.00%', false, false, true],
+    ['Chk/ATC', 'checkouts', 'addsToCart', 1, '0.00%', false, false, true],
+    ['Pur/Chk', 'purchases', 'checkouts', 1, '0.00%', false, false, true],
     ['CVR', 'purchases', 'linkClicks', 1, '0.00%', false]
   ],
   /* First type found counts, the same order as the rest of the sheet (pixel first). Purchases = meta.purchase_actions. */
@@ -84,11 +85,6 @@ function fetchFunnel_() {
   }).filter(a => a.error || a.days.length || Object.keys(a.months).length) };
 }
 
-/* Days in a month that count for its average: the whole month, or up to today for this month. */
-function funnelMonthDays_(ym, today) {
-  const p = ym.split('-').map(Number), all = new Date(Date.UTC(p[0], p[1], 0)).getUTCDate();
-  return today.slice(0, 7) === ym ? Number(today.slice(8, 10)) : all;
-}
 function funnelMonthName_(ym) {
   const p = ym.split('-').map(Number);
   return Utilities.formatDate(new Date(Date.UTC(p[0], p[1] - 1, 15)), 'UTC', 'MMM-yyyy');
@@ -118,7 +114,8 @@ function writeFunnel_(data) {
   g.set(2, 2, yellow, { nf: '0%', bg: F.AMBER, b: 'bold', al: 'center' });
   const pct = Math.round(yellow * 100) + '%';
   g.set(2, 3, '🟢 أحسن من البنشمارك أو زيه   🟡 أسوأ لحد ' + pct + '   🔴 أسوأ بأكتر من ' + pct +
-    ' — البنشمارك = كل الحسابات مع بعض في ' + range3 + '. صفوف المتوسط: الصرف والأوردرات في اليوم، والباقي من مجموع الأرقام.');
+    ' — البنشمارك = كل الحسابات مع بعض في ' + range3 + '. صفوف الشهور: الصرف والأوردرات مجموع الشهر، والنسب من مجموع الأرقام.' +
+    ' نسبة خطوة فوق 100% (زي Pur/Chk) رمادي من غير لون: الخطوة اللي قبلها مش بتتسجل كلها (فورم الكاش مابيبعتش Checkout).');
   g.merge(2, 3, 1, W - 2);
   ['DATE', 'SPEND'].concat(F.METRICS.map(m => m[0])).forEach((h, i) => g.set(3, 1 + i, h, { bg: '#fff200', b: 'bold', al: 'center' }));
   g.set(F.BENCH_ROW, 1, 'BENCHMARK', { bg: F.BENCH_BG, b: 'bold', al: 'center' });
@@ -126,37 +123,36 @@ function writeFunnel_(data) {
   F.METRICS.forEach((m, i) => g.set(F.BENCH_ROW, 3 + i, bench[i], { nf: m[4], bg: F.BENCH_BG, b: 'bold', al: 'center' }));
 
   let r = F.BENCH_ROW + 1;
-  const line = (label, spend, raw, style, perDay) => {
+  const line = (label, raw, style) => {
     g.set(r, 1, label, Object.assign({ al: 'center' }, style));
-    g.set(r, 2, Math.round(spend * 100) / 100, Object.assign({ nf: '#,##0.00', al: 'center' }, style));
+    g.set(r, 2, Math.round((raw.spend || 0) * 100) / 100, Object.assign({ nf: '#,##0.00', al: 'center' }, style));
     F.METRICS.forEach((m, i) => {
-      let v = funnelValue_(raw, m);
-      if (m[2] === 'one' && perDay) v = raw.one > 0 ? Math.round(raw[m[1]] / raw.one * 10) / 10 : '';
-      const color = m[6] ? null : funnelColor_(v, bench[i], m[5], yellow);
-      g.set(r, 3 + i, v, Object.assign({ nf: m[2] === 'one' && perDay ? '0.0' : m[4], al: 'center' }, style, color ? { bg: color } : {}));
+      const v = m[2] === 'one' ? (raw[m[1]] || 0) : funnelValue_(raw, m), odd = m[7] && typeof v === 'number' && v > 1;
+      const color = m[6] || odd ? null : funnelColor_(v, bench[i], m[5], yellow);
+      g.set(r, 3 + i, v, Object.assign({ nf: m[4], al: 'center' }, style, color ? { bg: color } : {}, odd ? { fc: '#9ca3af' } : {}));
     });
     r++;
   };
-  data.accounts.forEach(a => {
-    g.set(r, 1, a.name + (a.error ? '   ⚠️ ماقدرتش أقرا الحساب: ' + a.error : ''), { bg: F.BAND, fc: '#ffffff', b: 'bold' });
+  // A section: name bar, totals of this month and the 3 before it, those 3 together, then the days.
+  const section = (name, months, days, error) => {
+    g.set(r, 1, name + (error ? '   ⚠️ ماقدرتش أقرا الحساب: ' + error : ''), { bg: F.BAND, fc: '#ffffff', b: 'bold' });
     g.fill(r, 2, W - 1, { bg: F.BAND });
     g.merge(r, 1, 1, W);
     r++;
-    if (a.error) return;
-    // Averages: this month so far, each of the 3 months before, and those 3 together. Per day = month total ÷ its days.
-    data.months.forEach((ym, i) => {
-      const raw = Object.assign({}, a.months[ym] || {}), n = funnelMonthDays_(ym, today);
-      raw.one = n;
-      line((i ? 'متوسط ' : 'متوسط الشهر ده ') + funnelMonthName_(ym), (raw.spend || 0) / n, raw, { bg: F.AVG_BG, b: 'bold' }, true);
-    });
-    const three = funnelSum_(past.map(ym => a.months[ym] || {}));
-    three.one = past.reduce((s, ym) => s + funnelMonthDays_(ym, today), 0);
-    line('متوسط آخر 3 شهور', (three.spend || 0) / three.one, three, { bg: F.AVG3_BG, b: 'bold' }, true);
-    a.days.forEach(d => {
+    if (error) return;
+    data.months.forEach((ym, i) => line(funnelMonthName_(ym) + (i ? '' : ' (لحد النهارده)'), months[ym] || {}, { bg: F.AVG_BG, b: 'bold' }));
+    line('آخر 3 شهور (' + range3 + ')', funnelSum_(past.map(ym => months[ym] || {})), { bg: F.AVG3_BG, b: 'bold' });
+    days.forEach(d => {
       const p = d.date.split('-').map(Number);
-      line(Utilities.formatDate(new Date(Date.UTC(p[0], p[1] - 1, p[2], 12)), 'UTC', 'EEE dd-MMM'), d.raw.spend, d.raw, {}, false);
+      line(Utilities.formatDate(new Date(Date.UTC(p[0], p[1] - 1, p[2], 12)), 'UTC', 'EEE dd-MMM'), d.raw, {});
     });
-  });
+  };
+  const ok = data.accounts.filter(a => !a.error), allMonths = {}, allDays = {};
+  data.months.forEach(ym => { allMonths[ym] = funnelSum_(ok.map(a => a.months[ym] || {})); });
+  ok.forEach(a => a.days.forEach(d => { allDays[d.date] = funnelSum_([allDays[d.date] || {}, d.raw]); }));
+  if (ok.length > 1) section('كل الحسابات (البيزنس كله)', allMonths,
+    Object.keys(allDays).sort().reverse().map(d => ({ date: d, raw: allDays[d] })), '');
+  data.accounts.forEach(a => section(a.name, a.months, a.days, a.error));
   if (!data.accounts.length) g.set(r, 1, 'مفيش حساب Meta صرف في الفترة دي', { fc: '#6b7280' });
   if (!writeGrid_(sh, g)) return;
   sh.setFrozenRows(F.BENCH_ROW);

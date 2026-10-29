@@ -600,24 +600,26 @@ test('كامبين اسمها اتغير: الأوردر بيتربط بالإع
   assert.equal(ad14(3), '', 'مفيش UTM خالص');
 });
 
-test('Daily Account Funnel: متوسط الشهر ده واللي قبله وآخر 3 شهور، وتحتها الأيام', () => {
+test('Daily Account Funnel: مجموع الشهر ده واللي قبله وآخر 3 شهور، وتحتها الأيام، والبيزنس كله الأول', () => {
   const probe = env(), today = probe.c.todayKey_(), p = today.split('-').map(Number);
   const ym = i => new Date(Date.UTC(p[0], p[1] - 1 - i, 1)).toISOString().slice(0, 7);
-  const e = env({ ads: { [A1]: [adRow(today, '111', 300), adRow(ym(1) + '-10', '111', 3000), adRow(ym(2) + '-10', '111', 600)] } });
+  const e = env({ ads: { [A1]: [adRow(today, '111', 300), adRow(ym(1) + '-10', '111', 3000), adRow(ym(2) + '-10', '111', 600)],
+    [A2]: [adRow(today, '222', 100)] } });
   e.c.setupAll();
   e.c.refreshFunnelNow();
+  const all = e.ss.getSheetByName('Daily Account Funnel').getDataRange().getValues(), k = all.findIndex(r => r[0] === 'كل الحسابات (البيزنس كله)');
+  assert.equal(k, 4, 'البيزنس كله أول قسم تحت البنشمارك');
+  assert.deepEqual(all[k + 1].slice(1, 3), [400, 4], 'الشهر ده للحسابات كلها');
   const v = e.ss.getSheetByName('Daily Account Funnel').getDataRange().getValues();
   assert.match(String(v[0][0]), /^DAILY ACCOUNT FUNNEL/);
   assert.deepEqual(v[2].slice(0, 5), ['DATE', 'SPEND', 'ORDERS', 'CPP', 'AOV']);
   const i = v.findIndex(r => /4660|Chance 26/.test(String(r[0]))), rows = v.slice(i + 1, i + 7);
-  assert.match(rows[0][0], /^متوسط الشهر ده/);
-  assert.equal(rows[0][1], Math.round(300 / Number(today.slice(8, 10)) * 100) / 100, 'الصرف في اليوم');
-  const days1 = new Date(Date.UTC(p[0], p[1] - 1, 0)).getUTCDate();
-  assert.equal(rows[1][1], Math.round(3000 / days1 * 100) / 100);
-  assert.equal(rows[1][3], 1500, 'CPP = الصرف ÷ المشتريات من مجموع الشهر');
-  assert.equal(rows[4][0], 'متوسط آخر 3 شهور');
-  assert.equal(rows[4][3], 900, '3600 ÷ 4 مشتريات');
-  assert.equal(rows[5][1], 300, 'أول يوم تحت المتوسطات = النهارده');
+  assert.match(rows[0][0], /لحد النهارده/);
+  assert.deepEqual(rows[0].slice(1, 3), [300, 2], 'الشهر ده: مجموع الصرف والأوردرات');
+  assert.deepEqual(rows[1].slice(1, 4), [3000, 2, 1500], 'الشهر اللي فات: مجموع، و CPP من المجموع');
+  assert.match(rows[4][0], /^آخر 3 شهور/);
+  assert.deepEqual(rows[4].slice(1, 4), [3600, 4, 900]);
+  assert.equal(rows[5][1], 300, 'أول يوم تحت الشهور = النهارده');
   assert.equal(v[3][3], 900, 'البنشمارك = آخر 3 شهور لكل الحسابات');
   assert.match(e.c.getStatus_('FUNNEL'), /✓/);
 });
