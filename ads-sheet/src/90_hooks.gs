@@ -45,11 +45,13 @@ function refreshProductsNow() {
 
 /* Extension hooks the engine calls. Arrow wrappers so files load in any order.
  * views: after the core views are rebuilt (inside the lock). edit: onEdit(e). setup: inside setupAll's lock.
- * live: after ads sync, before views (outside the lock, for reads). menu: [label, functionName]. */
+ * live: after ads sync, before views (outside the lock, for reads). today: the same for ⚡ (Today's own reads).
+ * menu: [label, functionName]. */
 const EXT = {
   views: [slow => chanceViews_(slow)],
   edit: [(name, a1) => chanceEdit_(name, a1)],
   setup: [() => chanceSetup_()],
   live: [() => refreshAccountNames_(), () => discoverAccounts_(), () => chanceLive_(), () => refreshTodayFunnel_(), () => refreshFunnel_(false)],
+  today: [() => refreshTodayFunnel_(), () => refreshBalances_()],
   menu: [['📦 تحديث المنتجات والستوك وتوب 100', 'refreshProductsNow'], ['📈 تحديث Daily Account Funnel و Actual ROAS', 'refreshFunnelNow']]
 };

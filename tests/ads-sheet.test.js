@@ -556,7 +556,7 @@ test('التحديث مابيكتبش تاني حاجة ماتغيرتش، و To
   assert.deepEqual(daily.map(r => [r[0], r[3]]), [[today, 650], [d(5), 200], [d(10), 100]]);
 });
 
-test('⚡ التحديث السريع: الصرف والأوردرات في Today من غير الكتالوج والحاجات التقيلة', () => {
+test('⚡ التحديث السريع: Today بس (الصرف والأوردرات والبنشمارك والرصيد) من غير الكتالوج والحاجات التقيلة', () => {
   const probe = env(), today = probe.c.todayKey_();
   const rows = [adRow(today, '111', 600)];
   const e = env({ ads: { [A1]: rows }, creatives: { 111: 'https://chance-cosmetics.com/products/lip-oil' } });
@@ -568,7 +568,9 @@ test('⚡ التحديث السريع: الصرف والأوردرات في Toda
   const v = e.ss.getSheetByName('Today').getDataRange().getValues();
   assert.equal(v.find(r => r[0] === 'META TOTAL')[2], 850);
   assert.ok(!e.requests.some(u => /breakdowns=product_id|\/ads\?/.test(u)), 'مفيش كتالوج ولا إعلانات شغالة');
-  assert.match(e.alerts.pop(), /اتحدث الصرف والأوردرات ✅/);
+  assert.ok(e.requests.some(u => /level=account/.test(u) && !/time_increment/.test(u)), 'عمود النهارده في البنشمارك');
+  assert.ok(e.requests.some(u => /funding_source_details|balance/.test(u)), 'رصيد الأكاونتات');
+  assert.match(e.alerts.pop(), /اتحدث تاب Today ✅/);
   assert.match(e.c.getStatus_('QUICK'), /✓/);
 });
 

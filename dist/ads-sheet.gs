@@ -11,7 +11,7 @@
  * Ad accounts and stores are read-only from here: no writes to Meta, TikTok or order sources.
  */
 const APP = {
-  VERSION: '1.33.0',
+  VERSION: '1.34.0',
   T: {
     SETTINGS: 'Settings', ACCOUNTS: 'Accounts', PRODUCTS: 'Products', ADMAP: 'Ad Map',
     ADS: 'Ads Raw', ACC_RAW: 'Account Raw', ORDERS: 'Orders Raw', DAILY: 'Daily Log',
@@ -1791,19 +1791,20 @@ function refreshNow() {
 }
 
 /*
- * ⚡ Fast update: only today's new orders and today's spend, into Daily Log and Today. No catalog split, benchmark,
- * running ads or other tabs (the 15-minute update brings those), so it finishes in seconds.
+ * ⚡ Fast update of the Today tab only: today's new orders and spend (Daily Log, last 3 days), and what else Today shows
+ * (EXT.today: benchmark, balances). No catalog split, running ads or other tabs (the 15-minute update brings those).
  */
 function quickRefresh() {
   const run = startRun_(true);
   try {
     step_(run, 'أوردرات', () => syncOrders_());
     step_(run, 'صرف', () => syncAds_(todayKey_(), todayKey_(), true));
+    step_(run, 'البنشمارك والرصيد', () => EXT.today.forEach(f => { try { f(); } catch (e) { console.error('ext today: ' + errText_(e)); } }));
     step_(run, 'Today', () => withLock_(() => rebuildViews_({ quick: true }), 120000));
     const secs = Math.round((Date.now() - run.start) / 1000);
     setStatus_('QUICK', '✓ ' + secs + 'ث — ' + run.took.join('، '));
-    alert_('اتحدث الصرف والأوردرات ✅ في ' + secs + ' ثانية\n' + run.took.join('، ') +
-      '\n\nتقسيم الكتالوج والبنشمارك والإعلانات الشغالة بيتحدثوا لوحدهم كل 15 دقيقة.');
+    alert_('اتحدث تاب Today ✅ في ' + secs + ' ثانية\n' + run.took.join('، ') +
+      '\n\nباقي التابات وتقسيم الكتالوج والإعلانات الشغالة بيتحدثوا لوحدهم كل 15 دقيقة.');
     ss_().setActiveSheet(tab_(APP.T.TODAY));
   } catch (e) {
     setStatus_('QUICK', '✗ ' + errText_(e));
@@ -1831,7 +1832,7 @@ function onOpen() {
   const ui = SpreadsheetApp.getUi();
   const menu = ui.createMenu('Ads Sheet');
   menu
-    .addItem('⚡ تحديث سريع (الصرف والأوردرات)', 'quickRefresh')
+    .addItem('⚡ تحديث سريع (Today بس)', 'quickRefresh')
     .addItem('🔄 تحديث كامل', 'refreshNow')
     .addItem('🔗 تحديث ربط الإعلانات بالمنتجات', 'refreshAdMapNow');
   EXT.menu.forEach(m => menu.addItem(m[0], m[1]));
@@ -3587,11 +3588,13 @@ function refreshProductsNow() {
 
 /* Extension hooks the engine calls. Arrow wrappers so files load in any order.
  * views: after the core views are rebuilt (inside the lock). edit: onEdit(e). setup: inside setupAll's lock.
- * live: after ads sync, before views (outside the lock, for reads). menu: [label, functionName]. */
+ * live: after ads sync, before views (outside the lock, for reads). today: the same for ⚡ (Today's own reads).
+ * menu: [label, functionName]. */
 const EXT = {
   views: [slow => chanceViews_(slow)],
   edit: [(name, a1) => chanceEdit_(name, a1)],
   setup: [() => chanceSetup_()],
   live: [() => refreshAccountNames_(), () => discoverAccounts_(), () => chanceLive_(), () => refreshTodayFunnel_(), () => refreshFunnel_(false)],
+  today: [() => refreshTodayFunnel_(), () => refreshBalances_()],
   menu: [['📦 تحديث المنتجات والستوك وتوب 100', 'refreshProductsNow'], ['📈 تحديث Daily Account Funnel و Actual ROAS', 'refreshFunnelNow']]
 };
