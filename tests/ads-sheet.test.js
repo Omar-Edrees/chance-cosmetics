@@ -228,12 +228,12 @@ test('Today: بنشمارك Meta، أحسن شهر من التلات شهور ا
   assert.deepEqual(head.slice(7, 12), ['METRIC', 'BEST MONTH (LAST 3 MONTHS)', 'Chance 26', 'Chance Golden Era', 'chance store . egy3']);
   const metrics = values.map(r => r[7]), first = metrics.indexOf('METRIC') + 1;
   assert.deepEqual(metrics.slice(first, first + 18), ['ROAS', 'CPM', 'CPC (all)', 'CPC (link)', 'CTR (all)', 'CTR (link)', 'Hook rate',
-    'Hold rate', 'Cost per content view', 'Cost per LPV', 'Content view → ATC', 'ATC → Checkout', 'Checkout → Purchase', 'CVR', 'AOV',
-    'Cost per purchase', 'Link click → LPV', 'LPV → Purchase']);
+    'Hold rate', 'Cost per content view', 'Link click → LPV', 'Cost per LPV', 'Content view → ATC', 'ATC → Checkout', 'Checkout → Purchase',
+    'LPV → Purchase', 'CVR', 'AOV', '']);
   const row = l => values.find(r => r[7] === l).slice(7, 12);
   // أحسن شهر: أقل CPM (200) من التلات شهور، مش الشهر الرابع (50)؛ والنهارده 600 أسوأ
   assert.deepEqual(row('CPM'), ['CPM', 200, 600, '—', '—']);
-  assert.deepEqual(row('Cost per purchase'), ['Cost per purchase', 100, 300, '—', '—']);
+  assert.deepEqual(row('AOV'), ['AOV', '—', 450, '—', '—']);
   assert.deepEqual(row('ROAS'), ['ROAS', '—', 1.5, '—', '—']);
   assert.deepEqual(row('Checkout → Purchase'), ['Checkout → Purchase', '—', 2 / 3, '—', '—']);
   assert.deepEqual(row('Hook rate'), ['Hook rate', '—', '—', '—', '—'], 'مفيش فيديو: فاضي مش 0%');

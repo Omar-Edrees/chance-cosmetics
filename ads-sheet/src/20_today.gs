@@ -14,7 +14,7 @@ const TODAY = {
   FUNNEL_KEY: 'TODAY_FUNNEL', BEST_KEY: 'TODAY_FUNNEL_BEST', BEST_MONTHS: 3, BEST_VERSION: 1,
   FIELDS: 'spend,impressions,clicks,inline_link_clicks,actions,action_values,video_thruplay_watched_actions',
   /* [Metric, numerator, denominator, times, format (money | pct | ratio), lower is better?, blank when the numerator is 0?].
-   * The funnel in order: ROAS, the ad (cost, clicks, video), the site step by step, CVR; then the rest. */
+   * The funnel in order: ROAS, the ad (cost, clicks, video), the site step by step, CVR; then AOV. */
   METRICS: [
     ['ROAS', 'purchaseValue', 'spend', 1, 'ratio', false],
     ['CPM', 'spend', 'impressions', 1000, 'money', true],
@@ -25,15 +25,14 @@ const TODAY = {
     ['Hook rate', 'videoViews', 'impressions', 1, 'pct', false, true], // no video plays = no video ads: blank, not 0%
     ['Hold rate', 'thruplays', 'videoViews', 1, 'pct', false],
     ['Cost per content view', 'spend', 'contentViews', 1, 'money', true],
+    ['Link click → LPV', 'landingViews', 'linkClicks', 1, 'pct', false],
     ['Cost per LPV', 'spend', 'landingViews', 1, 'money', true],
     ['Content view → ATC', 'addsToCart', 'contentViews', 1, 'pct', false],
     ['ATC → Checkout', 'checkouts', 'addsToCart', 1, 'pct', false],
     ['Checkout → Purchase', 'purchases', 'checkouts', 1, 'pct', false],
+    ['LPV → Purchase', 'purchases', 'landingViews', 1, 'pct', false],
     ['CVR', 'purchases', 'linkClicks', 1, 'pct', false],
-    ['AOV', 'purchaseValue', 'purchases', 1, 'money', false],
-    ['Cost per purchase', 'spend', 'purchases', 1, 'money', true],
-    ['Link click → LPV', 'landingViews', 'linkClicks', 1, 'pct', false],
-    ['LPV → Purchase', 'purchases', 'landingViews', 1, 'pct', false]
+    ['AOV', 'purchaseValue', 'purchases', 1, 'money', false]
   ]
 };
 
