@@ -1,6 +1,7 @@
 /*
  * Today, left side under the account balances: how many days each product's stock lasts. Every product with its own
- * Meta ads running now (not catalog ads), plus any product without ads that sells and has COVER.RED days or less.
+ * Meta ads running now (not catalog ads), plus any product without ads that sells and has COVER.RED days or less
+ * but isn't out of stock yet (one already sold out with no ads is left out).
  * Per day = pieces sold in the last COVER.DAYS full days (every store order but cancelled or returned ones) ÷ COVER.DAYS.
  * Red = COVER.RED days or less (order more stock), yellow = up to COVER.YELLOW, green above.
  */
@@ -19,7 +20,7 @@ function todayStockCover_(g, r, today) {
   const perDay = n => (sold[n] || 0) / COVER.DAYS;
   const days = n => (stock[n] === undefined ? null : stock[n] <= 0 ? 0 : perDay(n) > 0 ? stock[n] / perDay(n) : Infinity);
   const names = Object.keys(Object.assign({}, active, sold)).filter(n => special.indexOf(n) < 0 &&
-    ((active[n] || 0) > 0 || ((sold[n] || 0) > 0 && days(n) !== null && days(n) <= COVER.RED)));
+    ((active[n] || 0) > 0 || ((sold[n] || 0) > 0 && days(n) !== null && days(n) > 0 && days(n) <= COVER.RED)));
   const rank = n => (days(n) === null ? 2e9 : days(n) === Infinity ? 1e9 : days(n));
   names.sort((a, b) => (rank(a) - rank(b)) || ((active[b] || 0) - (active[a] || 0)) || (a < b ? -1 : 1));
 
