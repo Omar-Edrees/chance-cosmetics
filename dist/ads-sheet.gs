@@ -11,7 +11,7 @@
  * Ad accounts and stores are read-only from here: no writes to Meta, TikTok or order sources.
  */
 const APP = {
-  VERSION: '1.31.0',
+  VERSION: '1.32.0',
   T: {
     SETTINGS: 'Settings', ACCOUNTS: 'Accounts', PRODUCTS: 'Products', ADMAP: 'Ad Map',
     ADS: 'Ads Raw', ACC_RAW: 'Account Raw', ORDERS: 'Orders Raw', DAILY: 'Daily Log',
@@ -3048,32 +3048,39 @@ function todayBenchmark_(g, r, today, shown) {
   return r;
 }
 
-/* Meta orders since `from` (not from an account outside the sheet): its ad, the ad's product, and the products ordered. */
-function todayOrders_(from) {
+/*
+ * Meta orders since `from` (not from an account outside the sheet): its ad, the ad's product, the products ordered and
+ * the order's total. withDirect: DIRECT orders too (no ad: key DIRECT).
+ */
+function todayOrders_(from, withDirect) {
   const osh = ss_().getSheetByName(APP.T.ORDERS), out = [];
   if (!osh) return out;
   const idx = adMapIndex_(), catAds = catalogAdIds_(), known = metaIdsOf_();
   recentRows_(APP.T.ORDERS, ORDERS_HEADERS.length, 2, sortKey_, from).forEach(o => {
     const d = asKey_(o[2]);
-    if (!d || d < from || o[3] !== 'META' || outsideMeta_(o, known)) return;
+    if (!d || d < from || !(o[3] === 'META' || (withDirect && o[3] === APP.DIRECT)) || outsideMeta_(o, known)) return;
     const items = [];
     lineItems_(o[6]).forEach(li => {
       const name = productNameOf_(li.title), it = items.find(x => x.name === name);
       if (it) it.qty += li.qty; else items.push({ name: name, qty: li.qty });
     });
-    out.push({ d: d, ad: String(o[14] || ''), key: orderAdProduct_(o, idx, catAds),
+    out.push({ d: d, ad: String(o[14] || ''), key: o[3] === 'META' ? orderAdProduct_(o, idx, catAds) : APP.DIRECT, total: num_(o[7]),
       items: items.length ? items : [{ name: String(o[5] || APP.UNKNOWN_PRODUCT), qty: 1 }] });
   });
   return out;
 }
+/* The one product an order counts on: `prefer` (the ad's product) when the order has it, else the one with the most pieces. */
+function mainProduct_(o, prefer) {
+  return o.items.some(i => i.name === prefer) ? prefer : o.items.reduce((a, b) => (b.qty > a.qty ? b : a)).name;
+}
 /*
- * [[ordered product, orders]] for a list of orders. Each order counts once: on `prefer` (the ad's product) when the order
- * has it, else on the product with the most pieces. Other products in those orders show next to the name ("+ 3 منتجات تانية").
+ * [[ordered product, orders]] for a list of orders, each order once (mainProduct_). Other products in those orders show
+ * next to the name ("+ 3 منتجات تانية").
  */
 function orderedList_(orders, prefer) {
   const n = {}, more = {};
   orders.forEach(o => {
-    const main = o.items.some(i => i.name === prefer) ? prefer : o.items.reduce((a, b) => (b.qty > a.qty ? b : a)).name;
+    const main = mainProduct_(o, prefer);
     n[main] = (n[main] || 0) + 1;
     more[main] = more[main] || [];
     o.items.forEach(i => { if (i.name !== main && more[main].indexOf(i.name) < 0) more[main].push(i.name); });
@@ -3082,67 +3089,37 @@ function orderedList_(orders, prefer) {
   return Object.keys(n).sort((a, b) => ((b === prefer) - (a === prefer)) || (n[b] - n[a]) || (a < b ? -1 : 1)).map(i => [label(i, more[i]), n[i]]);
 }
 /*
- * One line per product of the ads: the campaigns that spent on it, store orders (UTM, plus the product's DIRECT orders),
- * Meta's pixel purchases, spend, CPP, ROAS, and how many of its ads are running now. Which products those orders bought, campaign by campaign,
- * is in the الكتالوج tab.
+ * The store orders of Meta's TOTAL (Meta ads of the accounts in the sheet, plus DIRECT) by the product they bought:
+ * catalog ads' orders together in CATALOG, every other order once on its product (mainProduct_: the ad's product when
+ * the order has it, else the one with the most pieces). Then the totals: orders, sales, Meta spend, AOV and ROAS.
  */
-function todayProducts_(g, r, title, from, to, rows) {
-  const S = TODAY, c = S.RIGHT_COL, meta = {}, active = activeMap_(), DIRECT_ROW = 'DIRECT (مباشر أو البايو) — منتج مالوش صف';
-  const special = [APP.CATALOG, APP.MULTI, APP.UNMAPPED, APP.META_NO_AD, DIRECT_ROW, APP.UNKNOWN_PRODUCT], direct = {};
-  const z = () => ({ spend: 0, orders: 0, revenue: 0, pixel: 0 });
-  rows.forEach(x => {
-    if (x[0] < from || x[0] > to) return;
-    if (x[1] === APP.DIRECT) { const d = direct[x[2]] = direct[x[2]] || z(); d.orders += num_(x[8]); d.revenue += num_(x[10]); return; }
-    if (x[1] !== 'META') return;
-    const t = meta[x[2]] = meta[x[2]] || z();
-    t.spend += num_(x[3]); t.orders += num_(x[8]); t.revenue += num_(x[10]); t.pixel += num_(x[7]);
+function todayProducts_(g, r, title, from, to, rows, orders) {
+  const S = TODAY, c = S.RIGHT_COL, by = {}, tot = { orders: 0, revenue: 0, spend: 0, direct: 0 };
+  rows.forEach(x => { if (x[1] === 'META' && x[0] >= from && x[0] <= to) tot.spend += num_(x[3]); });
+  orders.forEach(o => {
+    if (o.d < from || o.d > to) return;
+    const n = o.key === APP.CATALOG ? APP.CATALOG : mainProduct_(o, o.key), t = by[n] = by[n] || { orders: 0, revenue: 0 };
+    t.orders++; t.revenue += o.total;
+    tot.orders++; tot.revenue += o.total;
+    if (o.key === APP.DIRECT) tot.direct++;
   });
-  // DIRECT orders (no ad: direct visit or link in bio) count as Meta orders, on their product's row; a product with no
-  // row here (no Meta spend or orders) goes to the DIRECT row. Like META TOTAL in the closing table.
-  let directOrders = 0;
-  Object.keys(direct).forEach(p => {
-    const d = direct[p], t = meta[p] && special.indexOf(p) < 0 ? meta[p] : (meta[DIRECT_ROW] = meta[DIRECT_ROW] || z());
-    t.orders += d.orders; t.revenue += d.revenue; directOrders += d.orders;
-  });
-  // Campaigns per product (same product as the Daily Log: catalog ads → CATALOG, else Ad Map), most spend first.
-  const idx = adMapIndex_(), catAds = catalogAdIds_(), camps = {};
-  recentRows_(APP.T.ADS, ADS_HEADERS.length, 1, asKey_, from).forEach(a => {
-    const d = asKey_(a[0]);
-    if (a[1] !== 'META' || d < from || d > to || num_(a[10]) <= 0) return;
-    const m = idx.get(adKey_('META', String(a[8] || ''), a[5], a[7], a[9])), p = catAds.has('META|' + String(a[8])) ? APP.CATALOG : m ? m.product : APP.UNMAPPED;
-    const x = camps[p] = camps[p] || {};
-    x[a[5]] = (x[a[5]] || 0) + num_(a[10]);
-  });
-  const campOf = p => {
-    const x = camps[p] || {}, n = Object.keys(x).sort((a, b) => x[b] - x[a]);
-    return n.length > 2 ? n[0] + ' + ' + (n.length - 1) + ' كامبين' : n.join(' / ');
-  };
-  r = todayHead_(g, r, c, 8, title, ['CAMPAIGN', 'PRODUCT', 'SHOPIFY ORDERS', 'PIXEL PURCHASES', 'META SPEND', 'META CPP', 'META ROAS', 'ADS RUNNING NOW']);
-  const names = Object.keys(meta).filter(n => special.indexOf(n) < 0 && (meta[n].spend > 0 || meta[n].orders > 0))
-    .sort((a, b) => (meta[b].spend - meta[a].spend) || (meta[b].orders - meta[a].orders));
-  const tot = { spend: 0, orders: 0, revenue: 0, pixel: 0, ads: 0 };
-  const put = (name, t, ads, style, camp) => {
+  r = todayHead_(g, r, c, 6, title, ['PRODUCT', 'SHOPIFY ORDERS', 'REVENUE', 'META SPEND', 'AOV', 'ROAS']);
+  const line = (name, t, style) => {
     const num = (col, v, nf) => g.set(r, col, v, Object.assign({ nf: nf, al: 'right' }, style));
-    g.set(r, c, camp, style);
-    g.set(r, c + 1, name, style);
-    num(c + 2, t.orders, S.COUNT); num(c + 3, t.pixel, S.COUNT); num(c + 4, Math.round(t.spend * 100) / 100, S.MONEY);
-    num(c + 5, ratioOrBlank_(t.spend, t.orders, 2), S.MONEY); num(c + 6, ratioOrBlank_(t.revenue, t.spend, 2), S.RATIO);
-    g.set(r, c + 7, ads || '', Object.assign({ nf: S.COUNT, al: 'center' }, style, { fc: '#137333' }));
+    g.set(r, c, name, style);
+    num(c + 1, t.orders, S.COUNT); num(c + 2, Math.round(t.revenue * 100) / 100, S.MONEY);
+    if (t.spend !== undefined) {
+      num(c + 3, Math.round(t.spend * 100) / 100, S.MONEY); num(c + 4, ratioOrBlank_(t.revenue, t.orders, 2), S.MONEY);
+      num(c + 5, ratioOrBlank_(t.revenue, t.spend, 2), S.RATIO);
+    }
     r++;
   };
-  // CATALOG first (all catalog / Advantage+ ads together), then products, then the rest.
-  const add = (n, style) => {
-    const t = meta[n];
-    if (!t || (t.spend <= 0 && t.orders <= 0)) return;
-    put(n, t, active[n] || 0, style, campOf(n));
-    ['spend', 'orders', 'revenue', 'pixel'].forEach(k => { tot[k] += t[k]; });
-    tot.ads += active[n] || 0;
-  };
-  add(APP.CATALOG, { bg: S.CATALOG, b: 'bold' });
-  names.forEach(n => add(n, {}));
-  special.filter(n => n !== APP.CATALOG).forEach(n => add(n, { bg: S.SPECIAL }));
-  if (!names.length && !special.some(n => meta[n])) { g.set(r, c, 'مفيش صرف Meta في الفترة دي', { fc: '#6b7280' }); r++; }
-  put('', tot, tot.ads, { bg: S.TOTAL, b: 'bold' }, 'TOTAL META' + (directOrders ? ' (شامل DIRECT: ' + directOrders + ')' : ''));
+  if (by[APP.CATALOG]) line(APP.CATALOG, by[APP.CATALOG], { bg: S.CATALOG, b: 'bold' });
+  Object.keys(by).filter(n => n !== APP.CATALOG)
+    .sort((a, b) => (by[b].orders - by[a].orders) || (by[b].revenue - by[a].revenue) || (a < b ? -1 : 1))
+    .forEach(n => line(n, by[n], {}));
+  if (!tot.orders) { g.set(r, c, 'مفيش أوردرات في الفترة دي', { fc: '#6b7280' }); r++; }
+  line('TOTAL' + (tot.direct ? ' (شامل DIRECT: ' + tot.direct + ')' : ''), tot, { bg: S.TOTAL, b: 'bold' });
   return r;
 }
 
@@ -3154,8 +3131,9 @@ function writeToday_() {
   todayBalances_(g, todayClosing_(g, today, sum, rows) + 2, today);
   let r = todaySlots_(g, 1, today) + 1;
   r = todayBenchmark_(g, r, today, shown) + 1;
-  r = todayProducts_(g, r, 'PRODUCT PERFORMANCE — TODAY | ' + shown, today, today, rows) + 1;
-  todayProducts_(g, r, 'PRODUCT PERFORMANCE — THIS MONTH | ' + month, today.slice(0, 8) + '01', today, rows);
+  const orders = todayOrders_(today.slice(0, 8) + '01', true);
+  r = todayProducts_(g, r, 'PRODUCT PERFORMANCE — TODAY | ' + shown, today, today, rows, orders) + 1;
+  todayProducts_(g, r, 'PRODUCT PERFORMANCE — THIS MONTH | ' + month, today.slice(0, 8) + '01', today, rows, orders);
   if (!writeGrid_(sh, g)) return;
   sh.setFrozenRows(0);
   [[1, 150], [2, 210], [3, 120], [4, 130], [5, 130], [6, 130], [7, 24], [8, 300], [9, 260]].forEach(w => sh.setColumnWidth(w[0], w[1]));

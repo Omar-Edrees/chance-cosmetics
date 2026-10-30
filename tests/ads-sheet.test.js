@@ -237,27 +237,24 @@ test('Today: بنشمارك Meta، متوسط آخر 60 يوم مقابل كل �
   assert.equal(cell(11), '#d9ead3');
 });
 
-test('Today: أداء المنتجات بالـ ROAS، والأوردر على منتج الإعلان اللي جابه مش على أول منتج فيه', () => {
+test('Today: أداء المنتجات بالأوردرات والمبيعات، والإجمالي فيه الصرف و AOV و ROAS', () => {
   const e = scenario(), values = e.ss.getSheetByName('Today').getDataRange().getValues();
   const titles = values.map(r => String(r[7])).filter(t => /^PRODUCT PERFORMANCE/.test(t));
   assert.equal(titles.length, 2);
-  const heads = values.filter(r => r[8] === 'PRODUCT');
-  heads.forEach(h => assert.deepEqual(h.slice(7, 15), ['CAMPAIGN', 'PRODUCT', 'SHOPIFY ORDERS', 'PIXEL PURCHASES', 'META SPEND', 'META CPP', 'META ROAS', 'ADS RUNNING NOW']));
-  // الـ UTM هنا (fb / Camp) مش بيشاور على إعلان في الشيت: الأوردرات في صف لوحدها مش على Lip Oil
-  const lip = values.find(r => r[8] === 'Lip Oil'), blush = values.find(r => r[8] === 'Blush');
-  assert.deepEqual(lip.slice(7, 15), ['Camp', 'Lip Oil', 0, 2, 600, '', 0, 1]);
-  assert.deepEqual(blush.slice(7, 15), ['Camp', 'Blush', 0, 2, 100, '', 0, '']);
-  assert.deepEqual(values.find(r => r[8] === 'أوردرات Meta من غير إعلان معروف (مفيش UTM)').slice(7, 12), ['', 'أوردرات Meta من غير إعلان معروف (مفيش UTM)', 2, 0, 0]);
-  const unmapped = values.find(r => r[8] === '❌ صرف مش مربوط بمنتج');
-  assert.deepEqual(unmapped.slice(7, 12), ['Camp', '❌ صرف مش مربوط بمنتج', 0, 2, 400]);
-  const total = values.find(r => r[7] === 'TOTAL META');
-  assert.deepEqual(total.slice(7, 15), ['TOTAL META', '', 2, 6, 1100, 550, 0.95, 1]);
+  const heads = values.filter(r => r[7] === 'PRODUCT');
+  assert.equal(heads.length, 2);
+  heads.forEach(h => assert.deepEqual(h.slice(7, 14), ['PRODUCT', 'SHOPIFY ORDERS', 'REVENUE', 'META SPEND', 'AOV', 'ROAS', '']));
+  // الـ UTM هنا (fb / Camp) مش بيشاور على إعلان في الشيت: الأوردر بيتحسب على المنتج اللي فيه قطع أكتر، وأوردر TikTok برا
+  const i = values.findIndex(r => r[7] === 'PRODUCT');
+  assert.deepEqual(values.slice(i + 1, i + 3).map(r => r.slice(7, 13)), [
+    ['Lip Oil', 2, 1050, '', '', ''],
+    ['TOTAL', 2, 1050, 1100, 525, 0.95],
+  ]);
 });
 
 test('ربط الإعلانات بالمنتجات من لينك صفحة المنتج، والكوليكشن مش مربوط طول ما دومين المتجر فاضي', () => {
   const e = scenario();
-  const prods = e.ss.getSheetByName('Today').getDataRange().getValues();
-  const spend = n => (prods.find(r => r[8] === n) || [])[11];
+  const spend = n => e.c.dailyRows_().filter(r => r[0] === e.today && r[1] === 'META' && r[2] === n).reduce((a, r) => a + r[3], 0);
   assert.equal(spend('Lip Oil'), 600);
   assert.equal(spend('Blush'), 100);
   // business.store_domains فاضي في البروفايل، فلينك الكوليكشن مابيتعرفش MULTI
@@ -390,11 +387,11 @@ test('الكتالوج: Today فيه صف CATALOG واحد بصرفه وأورد
 
   const between = (v, col, from, to) => { const i = v.findIndex(r => r[col] === from); return v.slice(i + 1, v.findIndex((r, j) => j > i && r[col] === to) + 1); };
   const v = e.ss.getSheetByName('Today').getDataRange().getValues();
-  // Today بسيط: سطر لكل منتج، من غير المنتجات اللي اتطلبت
-  assert.deepEqual(between(v, 7, 'CAMPAIGN', 'TOTAL META').map(r => r.slice(7, 16)), [
-    ['Camp', 'CATALOG (كل إعلانات الكتالوج)', 1, 2, 400, 400, 0.63, 1, ''],
-    ['Camp', 'Lip Oil', 1, 2, 600, 600, 0.5, 1, ''],
-    ['TOTAL META', '', 2, 4, 1000, 500, 0.55, 2, ''],
+  // Today: أوردرات الكتالوج كلها في صف واحد، والباقي على المنتج اللي اتشرى
+  assert.deepEqual(between(v, 7, 'PRODUCT', 'TOTAL').map(r => r.slice(7, 13)), [
+    ['CATALOG (كل إعلانات الكتالوج)', 1, 250, '', '', ''],
+    ['Lip Oil', 1, 300, '', '', ''],
+    ['TOTAL', 2, 550, 1000, 275, 0.55],
   ]);
   const t = e.ss.getSheetByName('الكتالوج').getDataRange().getValues();
   // تاب الكتالوج: كل كامبين، وأوردراتها رايحة على أنهي منتجات. الأوردر بيتعد مرة واحدة، على منتج الإعلان لو فيه.
@@ -490,8 +487,10 @@ test('أوردرات من حساب Meta مش معانا: صف لوحدها بر�
   assert.deepEqual(row('META TOTAL').slice(2, 4), [600, 2], 'META TOTAL من غير أوردر الحساب التاني');
   assert.deepEqual(row('META (حساب مش معانا)').slice(1, 4), ['مش داخل في التوتال: Marshmallow', '', 1]);
   assert.equal(row('GRAND TOTAL')[3], 2, 'أوردرات الحساب التاني برا GRAND TOTAL');
-  const i = v.findIndex(r => r[8] === 'PRODUCT');
-  assert.deepEqual(v.slice(i + 1, i + 3).map(r => [r[7], r[8], r[9]]), [['Camp', 'Lip Oil', 2], ['TOTAL META', '', 2]]);
+  const i = v.findIndex(r => r[7] === 'PRODUCT');
+  // أوردر 2 جه من إعلان Lip Oil ومافيهوش Lip Oil: بيتحسب على المنتج اللي فيه قطع أكتر
+  assert.deepEqual(v.slice(i + 1, i + 4).map(r => r.slice(7, 13)), [
+    ['Blush', 1, 900, '', '', ''], ['Lip Oil', 1, 300, '', '', ''], ['TOTAL', 2, 1200, 600, 600, 2]]);
   const t = e.ss.getSheetByName('الكتالوج').getDataRange().getValues(), j = t.findIndex(r => r[7] === 'CAMPAIGN');
   assert.deepEqual(t.slice(j + 1, j + 4).map(r => [r[7], r[10], r[11], r[12]]), [
     ['Camp', 2, 'Lip Oil', 1],
@@ -708,7 +707,7 @@ test('أوردر Meta من كامبين قديمة لحساب معانا مش ME
   assert.equal(c.outsideMeta_(o('120256366878570102', '120256366881430102'), known), true, 'الحساب اللي مش معانا');
 });
 
-test('PRODUCT PERFORMANCE: أوردرات DIRECT داخلة في أوردرات Meta على صف منتجها', () => {
+test('PRODUCT PERFORMANCE: أوردرات DIRECT على المنتج اللي اتشرى، وداخلة في الإجمالي', () => {
   const AD = '120256366885940102', probe = env(), today = probe.c.todayKey_(), at = ' ' + today + 'T10:00:00+03:00', B = '(blank)';
   const flow = (id, a, products) => ['gid://shopify/Order/' + id, ' #' + id, ' N', B, 500, at, B, B, B, B, B].concat(a, [products, '4655075']);
   const e = env({ orderHead: FLOW_HEAD.slice(0, 17), ads: { [A1]: [adRow(today, AD, 600)] },
@@ -719,11 +718,8 @@ test('PRODUCT PERFORMANCE: أوردرات DIRECT داخلة في أوردرات 
   e.c.setupAll();
   e.c.liveTick(); e.c.liveTick();
   const v = e.ss.getSheetByName('Today').getDataRange().getValues(), i = v.findIndex(r => /^PRODUCT PERFORMANCE — TODAY/.test(String(r[7])));
-  const rows = v.slice(i + 2).map(r => r.slice(7, 13)), until = rows.findIndex(r => /^TOTAL META/.test(String(r[0])));
-  const body = rows.slice(0, until + 1);
-  assert.deepEqual(body.find(r => r[1] === 'Lip Oil').slice(2, 6), [2, 2, 600, 300], 'أوردر Meta + أوردر DIRECT لنفس المنتج');
-  assert.equal(body.find(r => /^DIRECT/.test(String(r[1])))[2], 1, 'Blush مالوش صف: صف DIRECT');
-  assert.deepEqual([body[until][0], body[until][2]], ['TOTAL META (شامل DIRECT: 2)', 3]);
+  assert.deepEqual(v.slice(i + 2, i + 5).map(r => r.slice(7, 13)), [
+    ['Lip Oil', 2, 1000, '', '', ''], ['Blush', 1, 500, '', '', ''], ['TOTAL (شامل DIRECT: 2)', 3, 1500, 600, 500, 2.5]], 'أوردر Meta + أوردر DIRECT لنفس المنتج');
 });
 
 test('Actual ROAS: الإلغاء والتأكيد والمرتجع والمتسلم والمبيعات الفعلية، بنفس تقسيمة الفانل', () => {
