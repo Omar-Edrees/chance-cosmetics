@@ -214,6 +214,10 @@ test('Today: لقطات الـ 3 ساعات من تاب Intraday، مع CPP و S
   assert.deepEqual(values.filter(r => /^\d+:00 [AP]M$/.test(r[7])).map(r => r[7]), ['12:00 PM', '3:00 PM', '6:00 PM', '9:00 PM', '12:00 AM']);
   assert.deepEqual(todayRow(e, '3:00 PM', 8).slice(7, 16), ['3:00 PM', 500, 3, 166.67, 2.5, 0, 0, '', '']);
   assert.deepEqual(todayRow(e, '6:00 PM', 8).slice(8, 16), ['', '', '', '', '', '', '', '']);
+  // صفوف قديمة: الشيت كان بيحوّل "18:00" لوقت (تاريخ 1899)، وبتتقري برضه
+  e.ss.getSheetByName('Intraday').appendRow([e.today, e.c.makeDate('1899-12-30T18:00:00+02:00'), 'META', 800, 4, 200, 2400]);
+  e.c.writeToday_();
+  assert.deepEqual(todayRow(e, '6:00 PM', 8).slice(7, 12), ['6:00 PM', 800, 4, 200, 3]);
 });
 
 test('Today: بنشمارك Meta، أحسن شهر من التلات شهور اللي فاتوا مقابل كل حساب النهارده، بترتيب الفانل', () => {

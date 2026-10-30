@@ -283,7 +283,7 @@ function writeHealth_() {
 function takeIntraday_() {
   const now = new Date(), h = Number(Utilities.formatDate(now, tz_(), 'H')), m = Number(Utilities.formatDate(now, tz_(), 'm'));
   const hours = cfgList_('intraday.hours').map(Number);
-  if (m > 20 || hours.indexOf(h) < 0) return false;
+  if (m > 30 || hours.indexOf(h) < 0) return false; // the first update in the half hour after the slot
   const day = h === 0 ? shiftKey_(todayKey_(), -1) : todayKey_(), slot = (h === 0 ? 24 : h) + ':00', key = day + '|' + slot;
   const props = PropertiesService.getDocumentProperties();
   if (props.getProperty('INTRA_LAST') === key) return false;
@@ -294,10 +294,20 @@ function takeIntraday_() {
     cpp(sum.byPlatform[p]), round2_(sum.byPlatform[p].revenue)]);
   rows.push([day, slot, 'الإجمالي', round2_(sum.total.spend), sum.total.orders, cpp(sum.total), round2_(sum.total.revenue)]);
   const at = sh.getLastRow() + 1;
-  sh.getRange(at, 1, rows.length, 1).setNumberFormat('@');
+  sh.getRange(at, 1, rows.length, 2).setNumberFormat('@'); // as text: Sheets turns "15:00" into a time otherwise
   sh.getRange(at, 1, rows.length, INTRA_HEADERS.length).setValues(rows);
   props.setProperty('INTRA_LAST', key);
   return true;
+}
+
+/*
+ * An Intraday row's slot ('15:00', midnight '24:00'). Rows written before the slot column was text hold a time instead
+ * (Sheets read "15:00" as one): its hour, rounded (a time in 1899 can be a few minutes off in the local zone).
+ */
+function intraSlot_(v) {
+  if (!(v instanceof Date)) return String(v).trim();
+  const t = Utilities.formatDate(v, tz_(), 'H:mm').split(':').map(Number), h = (t[0] + (t[1] >= 30 ? 1 : 0)) % 24;
+  return (h === 0 ? 24 : h) + ':00';
 }
 
 /* Tests: spend and pixel purchases of every ad whose campaign/ad set/ad name contains the Test ID as a whole token. */

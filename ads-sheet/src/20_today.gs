@@ -245,7 +245,7 @@ function todaySlots_(g, r, today) {
     'SHOPIFY ROAS (META + DIRECT)', 'TIKTOK SPEND', 'TIKTOK ORDERS', 'TIKTOK CPP', 'SHOPIFY ROAS (TIKTOK)']);
   const snaps = {}, intra = ss_().getSheetByName(APP.T.INTRA);
   if (intra) readRows_(intra, INTRA_HEADERS.length).forEach(x => {
-    if (asKey_(x[0]) === today) snaps[String(x[1]) + '|' + x[2]] = { spend: num_(x[3]), orders: num_(x[4]), revenue: x[6] === '' ? null : num_(x[6]) };
+    if (asKey_(x[0]) === today) snaps[intraSlot_(x[1]) + '|' + x[2]] = { spend: num_(x[3]), orders: num_(x[4]), revenue: x[6] === '' ? null : num_(x[6]) };
   });
   cfgList_('intraday.hours').map(Number).forEach(h => {
     const slot = (h === 0 ? 24 : h) + ':00', label = (h % 12 === 0 ? 12 : h % 12) + ':00 ' + (h > 0 && h < 12 ? 'AM' : h === 12 ? 'PM' : h === 0 ? 'AM' : 'PM');
