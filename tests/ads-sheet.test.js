@@ -198,20 +198,21 @@ test('Today: صف لكل حساب بأرقام المنصة، والإجمالي
   assert.match(String(e.c.getStatus_('LIVE')), /✓ OK/);
 });
 
-test('Today: لقطات الـ 3 ساعات من تاب Intraday، مع CPP و ROAS', () => {
+test('Today: لقطات الـ 3 ساعات من تاب Intraday، مع CPP و Shopify ROAS، وأوردرات DIRECT مع Meta', () => {
   const e = scenario();
   // اللقطات بتتاخد من الساعة الحقيقية: التاب يبقى بلقطة 3 بس، عشان الاختبار مايتأثرش بساعة تشغيله
   const intra = e.ss.getSheetByName('Intraday');
   e.c.writeRows_(intra, [], 7, []);
   e.doc.INTRA_LAST = 'x'; e.c.takeIntraday_ = () => false;
   e.ss.getSheetByName('Intraday').appendRow([e.today, '15:00', 'META', 500, 2, 250, 1000]);
+  e.ss.getSheetByName('Intraday').appendRow([e.today, '15:00', 'DIRECT', 0, 1, '', 250]);
   e.ss.getSheetByName('Intraday').appendRow([e.today, '15:00', 'الإجمالي', 500, 3, 166.67, 1250]);
   e.c.writeToday_();
   const values = e.ss.getSheetByName('Today').getDataRange().getValues();
   const head = values.find(r => r[7] === 'TIME');
-  assert.deepEqual(head.slice(7, 16), ['TIME', 'META SPEND', 'META ORDERS', 'META CPP', 'META ROAS', 'TIKTOK SPEND', 'TIKTOK ORDERS', 'TIKTOK CPP', 'TIKTOK ROAS']);
+  assert.deepEqual(head.slice(7, 16), ['TIME', 'META SPEND', 'ORDERS (META + DIRECT)', 'CPP (META + DIRECT)', 'SHOPIFY ROAS (META + DIRECT)', 'TIKTOK SPEND', 'TIKTOK ORDERS', 'TIKTOK CPP', 'SHOPIFY ROAS (TIKTOK)']);
   assert.deepEqual(values.filter(r => /^\d+:00 [AP]M$/.test(r[7])).map(r => r[7]), ['12:00 PM', '3:00 PM', '6:00 PM', '9:00 PM', '12:00 AM']);
-  assert.deepEqual(todayRow(e, '3:00 PM', 8).slice(7, 16), ['3:00 PM', 500, 2, 250, 2, 0, 0, '', '']);
+  assert.deepEqual(todayRow(e, '3:00 PM', 8).slice(7, 16), ['3:00 PM', 500, 3, 166.67, 2.5, 0, 0, '', '']);
   assert.deepEqual(todayRow(e, '6:00 PM', 8).slice(8, 16), ['', '', '', '', '', '', '', '']);
 });
 
@@ -227,14 +228,14 @@ test('Today: بنشمارك Meta، أحسن شهر من التلات شهور ا
   const head = values.find(r => r[7] === 'METRIC');
   assert.deepEqual(head.slice(7, 12), ['METRIC', 'BEST MONTH (LAST 3 MONTHS)', 'Chance 26', 'Chance Golden Era', 'chance store . egy3']);
   const metrics = values.map(r => r[7]), first = metrics.indexOf('METRIC') + 1;
-  assert.deepEqual(metrics.slice(first, first + 18), ['ROAS', 'CPM', 'CPC (all)', 'CPC (link)', 'CTR (all)', 'CTR (link)', 'Hook rate',
+  assert.deepEqual(metrics.slice(first, first + 18), ['Meta ROAS', 'CPM', 'CPC (all)', 'CPC (link)', 'CTR (all)', 'CTR (link)', 'Hook rate',
     'Hold rate', 'Cost per content view', 'Link click → LPV', 'Cost per LPV', 'Content view → ATC', 'ATC → Checkout', 'Checkout → Purchase',
     'LPV → Purchase', 'CVR', 'AOV', '']);
   const row = l => values.find(r => r[7] === l).slice(7, 12);
   // أحسن شهر: أقل CPM (200) من التلات شهور، مش الشهر الرابع (50)؛ والنهارده 600 أسوأ
   assert.deepEqual(row('CPM'), ['CPM', 200, 600, '—', '—']);
   assert.deepEqual(row('AOV'), ['AOV', '—', 450, '—', '—']);
-  assert.deepEqual(row('ROAS'), ['ROAS', '—', 1.5, '—', '—']);
+  assert.deepEqual(row('Meta ROAS'), ['Meta ROAS', '—', 1.5, '—', '—']);
   assert.deepEqual(row('Checkout → Purchase'), ['Checkout → Purchase', '—', 2 / 3, '—', '—']);
   assert.deepEqual(row('Hook rate'), ['Hook rate', '—', '—', '—', '—'], 'مفيش فيديو: فاضي مش 0%');
   const t = e.requests.filter(u => /time_increment=monthly/.test(u) && /level=account/.test(u) && /video_thruplay/.test(u))
@@ -257,7 +258,7 @@ test('Today: أداء المنتجات بالقطع والمبيعات لكل م
   assert.equal(titles.length, 2);
   const heads = values.filter(r => r[7] === 'PRODUCT');
   assert.equal(heads.length, 2);
-  heads.forEach(h => assert.deepEqual(h.slice(7, 15), ['PRODUCT', 'PIECES', 'ORDERS', 'REVENUE', 'SPEND', 'AOV', 'ROAS', '']));
+  heads.forEach(h => assert.deepEqual(h.slice(7, 15), ['PRODUCT', 'PIECES', 'ORDERS', 'REVENUE', 'SPEND', 'AOV', 'SHOPIFY ROAS', '']));
   // كل قطعة على منتجها، ومبيعات الأوردر 1001 (750) متقسمة بسعر Lip Oil (300) و Blush (250). أوردر TikTok داخل.
   const i = values.findIndex(r => r[7] === 'PRODUCT');
   assert.deepEqual(values.slice(i + 1, i + 4).map(r => r.slice(7, 14)), [
@@ -655,7 +656,7 @@ test('Daily Account Funnel: الشهور مجموع، والبيزنس كله ا
   e.c.refreshFunnelNow();
   const v = e.ss.getSheetByName('Daily Account Funnel').getDataRange().getValues();
   assert.match(String(v[0][0]), /^DAILY ACCOUNT FUNNEL/);
-  assert.deepEqual(v[2].slice(0, 7), ['DATE', 'SPEND', 'SHOPIFY ORDERS', 'CPP', 'AOV', 'ROAS', 'META ORDERS']);
+  assert.deepEqual(v[2].slice(0, 7), ['DATE', 'SPEND', 'SHOPIFY ORDERS', 'CPP', 'AOV', 'SHOPIFY ROAS', 'META ORDERS']);
   const k = v.findIndex(r => r[0] === 'كل الحسابات (البيزنس كله)');
   assert.equal(k, 4, 'البيزنس كله أول قسم تحت البنشمارك');
   assert.deepEqual(v[k + 1].slice(1, 7), [400, 2, 200, 375, 1.875, 4], 'الشهر ده: صرف 400، أوردرين Shopify بـ 750، و 4 مشتريات Meta');
@@ -741,6 +742,8 @@ test('PRODUCT PERFORMANCE: أوردرات DIRECT والمانيول (Draft) دا
   assert.deepEqual(v.slice(i + 2, i + 5).map(r => r.slice(7, 14)), [
     ['Blush', 3, '', 1000, '', '', ''], ['Lip Oil', 2, '', 1000, '', '', ''], ['TOTAL', 5, 4, 2000, 600, 500, 3.33]],
     'أوردر Meta + أوردر DIRECT لنفس المنتج، وأوردر Draft داخل');
+  const cl = block(e.ss.getSheetByName('Closing'), 'شهر ').find(r => r[0] === today);
+  assert.deepEqual([cl[5], cl[6], cl[15]], [600, 3, 3.33], 'Closing: أوردرات Meta + DIRECT، و Shopify ROAS على كل الأوردرات');
 });
 
 test('Actual ROAS: الإلغاء والتأكيد والمرتجع والمتسلم والمبيعات الفعلية، بنفس تقسيمة الفانل', () => {
@@ -784,7 +787,7 @@ test('توب 100: الأكثر مبيعًا والأعلى ROAS والستوك �
   const sh = e.ss.getSheetByName('توب 100'), cols = (t, n) => sideBlock(sh, t).map(r => r.slice(0, n));
   assert.equal(sh.getDataRange().getValues()[4].filter(x => /^\d\) /.test(String(x))).length, 5, 'الجداول الخمسة جنب بعض في صف 5');
   assert.deepEqual(cols('1) الأكثر مبيعًا', 5), [[1, 'Lip Oil', 3, 2, 40], [2, 'Blush', 3, 2, 5], [3, 'Mask', 1, 1, 9]], 'أوردر 4 اتلغى و 6 رجع');
-  assert.deepEqual(cols('2) الأعلى ROAS', 8), [[1, 'Lip Oil', 600, 2, 1000, 1.67, 300, 40]], 'أوردرين Meta (أوردرات DIRECT كانت لمنتجات تانية)');
+  assert.deepEqual(cols('2) الأعلى Shopify ROAS', 8), [[1, 'Lip Oil', 600, 2, 1000, 1.67, 300, 40]], 'أوردرين Meta (أوردرات DIRECT كانت لمنتجات تانية)');
   assert.deepEqual(cols('3) أعلى ستوك', 4), [[1, 'Serum', 70, 0], [2, 'Lip Oil', 40, 3], [3, 'Mask', 9, 1], [4, 'Blush', 5, 3]]);
   assert.deepEqual(cols('4) بيتباع من غير إعلانات', 5), [[1, 'Blush', 3, 2, 5], [2, 'Mask', 1, 1, 9]]);
   assert.deepEqual(cols('5) الرواكد', 4), [[1, 'Serum', 70, 0], [2, 'Mask', 9, 1], [3, 'Lip Oil', 40, 3], [4, 'Blush', 5, 3]]);

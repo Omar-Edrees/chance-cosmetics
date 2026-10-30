@@ -70,8 +70,8 @@ function writeAccountsBE_() {
     return [label, round2_(t.spend), round2_(t.spend * (1 + tax)), t.pixel, pr, t.orders, round2_(t.revenue), rr,
       t.orders ? round2_(t.revenue / t.orders) : '', t.orders ? round2_(t.spend * (1 + tax) / t.orders) : '', be.v === null ? '' : be.v, status];
   };
-  const H = ['اليوم', 'الصرف', 'الصرف + الضريبة', 'مشتريات البيكسل', 'ROAS البيكسل', 'أوردرات الموقع (UTM)', 'مبيعات (UTM)',
-    'ROAS الفعلي', 'AOV', 'تكلفة الأوردر + الضريبة', 'نقطة التعادل ROAS', 'الحالة'];
+  const H = ['اليوم', 'الصرف', 'الصرف + الضريبة', 'مشتريات البيكسل', 'Meta ROAS', 'أوردرات الموقع (UTM)', 'مبيعات (UTM)',
+    'Shopify ROAS', 'AOV', 'تكلفة الأوردر + الضريبة', 'نقطة التعادل ROAS', 'الحالة'];
   const list = Array.from(accs.values()).sort((a, b) => tot(b.key, 1, days).spend - tot(a.key, 1, days).spend);
   const summary = list.map(a => {
     const t = tot(a.key, 1, days);

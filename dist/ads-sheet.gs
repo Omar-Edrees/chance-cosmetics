@@ -11,7 +11,7 @@
  * Ad accounts and stores are read-only from here: no writes to Meta, TikTok or order sources.
  */
 const APP = {
-  VERSION: '1.36.0',
+  VERSION: '1.37.0',
   T: {
     SETTINGS: 'Settings', ACCOUNTS: 'Accounts', PRODUCTS: 'Products', ADMAP: 'Ad Map',
     ADS: 'Ads Raw', ACC_RAW: 'Account Raw', ORDERS: 'Orders Raw', DAILY: 'Daily Log',
@@ -1443,9 +1443,9 @@ function writeClosing_() {
   if (!/^\d{4}-\d{2}$/.test(month)) { month = todayKey_().slice(0, 7); sh.getRange('B2').setValue(month); }
   const rows = dailyRows_(), p = month.split('-').map(Number), days = new Date(Date.UTC(p[0], p[1], 0)).getUTCDate();
   const line = (label, s) => {
-    const m = s.byPlatform.META || { spend: 0, orders: 0 }, t = s.byPlatform.TIKTOK || { spend: 0, orders: 0 }, u = s.byPlatform[APP.UNKNOWN_PLATFORM] || { orders: 0 };
+    const d = s.byPlatform[APP.DIRECT] || { orders: 0 }, m = Object.assign({ spend: 0, orders: 0 }, s.byPlatform.META), t = s.byPlatform.TIKTOK || { spend: 0, orders: 0 }, u = s.byPlatform[APP.UNKNOWN_PLATFORM] || { orders: 0 };
     return [label, round2_(s.total.spend), round2_(s.total.spend * (1 + taxRate_())), s.total.orders, cpp_(s.total),
-      round2_(m.spend), m.orders, cpp_(m), round2_(t.spend), t.orders, cpp_(t), u.orders, s.total.cancelled,
+      round2_(m.spend), m.orders + d.orders, cpp_({ spend: m.spend, orders: m.orders + d.orders }), round2_(t.spend), t.orders, cpp_(t), u.orders, s.total.cancelled,
       round2_(s.total.revenue), aov_(s.total), roas_(s.total)];
   };
   const out = [], weeks = [[1, 7], [8, 14], [15, 21], [22, 28], [29, days]];
@@ -1459,8 +1459,8 @@ function writeClosing_() {
   });
   out.push(line('إجمالي الشهر', summarize_(rows, month + '-01', month + '-' + String(days).padStart(2, '0'))));
   writeBlocks_(sh, 4, [{ title: 'شهر ' + month, headers: ['اليوم', 'الصرف', 'الصرف + الضريبة', 'الأوردرات', 'تكلفة الأوردر + الضريبة',
-    'صرف Meta', 'أوردرات Meta', 'تكلفة Meta + الضريبة', 'صرف TikTok', 'أوردرات TikTok', 'تكلفة TikTok + الضريبة',
-    'أوردرات مش معروف مصدرها', 'ملغي', 'المبيعات', 'متوسط الأوردر AOV', 'ROAS الفعلي'], rows: out }], 16);
+    'صرف Meta', 'أوردرات Meta + DIRECT', 'تكلفة Meta + DIRECT + الضريبة', 'صرف TikTok', 'أوردرات TikTok', 'تكلفة TikTok + الضريبة',
+    'أوردرات مش معروف مصدرها', 'ملغي', 'المبيعات', 'متوسط الأوردر AOV', 'Shopify ROAS'], rows: out }], 16);
 }
 
 function writeHealth_() {
@@ -2006,7 +2006,7 @@ function productNameOf_(title) {
 
 /* ---------- Tab: المنتجات ---------- */
 const XP_HEADERS = ['شغال', 'المنتج', 'الستوك', 'الستوك يكفي كام يوم', 'قطع اتباعت', 'أوردرات فيها المنتج', 'الصرف',
-  'منه مش متأكد', 'أوردرات (المنتج أول قطعة)', 'تكلفة الأوردر + الضريبة', 'المبيعات', 'ROAS الفعلي', 'AOV',
+  'منه مش متأكد', 'أوردرات (المنتج أول قطعة)', 'تكلفة الأوردر + الضريبة', 'المبيعات', 'Shopify ROAS', 'AOV',
   'نقطة التعادل', 'الإشارة', 'إعلانات Meta شغالة', 'ملاحظة'];
 
 function writeProductsTab_() {
@@ -2142,8 +2142,8 @@ function writeAccountsBE_() {
     return [label, round2_(t.spend), round2_(t.spend * (1 + tax)), t.pixel, pr, t.orders, round2_(t.revenue), rr,
       t.orders ? round2_(t.revenue / t.orders) : '', t.orders ? round2_(t.spend * (1 + tax) / t.orders) : '', be.v === null ? '' : be.v, status];
   };
-  const H = ['اليوم', 'الصرف', 'الصرف + الضريبة', 'مشتريات البيكسل', 'ROAS البيكسل', 'أوردرات الموقع (UTM)', 'مبيعات (UTM)',
-    'ROAS الفعلي', 'AOV', 'تكلفة الأوردر + الضريبة', 'نقطة التعادل ROAS', 'الحالة'];
+  const H = ['اليوم', 'الصرف', 'الصرف + الضريبة', 'مشتريات البيكسل', 'Meta ROAS', 'أوردرات الموقع (UTM)', 'مبيعات (UTM)',
+    'Shopify ROAS', 'AOV', 'تكلفة الأوردر + الضريبة', 'نقطة التعادل ROAS', 'الحالة'];
   const list = Array.from(accs.values()).sort((a, b) => tot(b.key, 1, days).spend - tot(a.key, 1, days).spend);
   const summary = list.map(a => {
     const t = tot(a.key, 1, days);
@@ -2281,7 +2281,7 @@ function writeCatalogTab_() {
     split.forEach(x => { if (x[0] >= from && x[0] <= to) { z(x[1]).spend += x[2]; z(x[1]).pixel += x[3]; } });
     orders.forEach(x => { if (x[0] >= from && x[0] <= to) { z(x[1]).orders++; z(x[1]).revenue += x[2]; } });
     const total = { spend: adSpend.filter(x => x[0] >= from && x[0] <= to).reduce((s, x) => s + x[1], 0), pixel: 0, orders: 0, revenue: 0 };
-    r = todayHead_(g, r, 1, 6, title, ['PRODUCT', 'ORDERS', 'META SPEND', 'CPP', 'ROAS', 'META PURCHASES (PIXEL)']);
+    r = todayHead_(g, r, 1, 6, title, ['PRODUCT', 'ORDERS', 'META SPEND', 'CPP', 'SHOPIFY ROAS', 'META PURCHASES (PIXEL)']);
     const put = (name, t, style) => {
       g.set(r, 1, name, style);
       g.set(r, 2, t.orders, Object.assign({ nf: TODAY.COUNT, al: 'right' }, style));
@@ -2474,7 +2474,7 @@ const FUNNEL = {
     ['SHOPIFY ORDERS', 'shopOrders', 'one', 1, '0', false, true],
     ['CPP', 'shopSpend', 'shopOrders', 1, '#,##0.00', true],
     ['AOV', 'shopRevenue', 'shopOrders', 1, '#,##0.00', false, true],
-    ['ROAS', 'shopRevenue', 'shopSpend', 1, '0.00"x"', false],
+    ['SHOPIFY ROAS', 'shopRevenue', 'shopSpend', 1, '0.00"x"', false],
     ['META ORDERS', 'purchases', 'one', 1, '0', false, true],
     ['CPM', 'spend', 'impressions', 1000, '#,##0.00', true],
     ['CPC', 'spend', 'clicks', 1, '#,##0.00', true],
@@ -2636,7 +2636,7 @@ function writeFunnel_(data) {
   const pct = Math.round(yellow * 100) + '%';
   g.set(2, 3, '🟢 أحسن من البنشمارك أو زيه   🟡 أسوأ لحد ' + pct + '   🔴 أسوأ بأكتر من ' + pct +
     ' — البنشمارك = أحسن شهر في ' + range3 + ' لكل عمود، للبيزنس كله (مجموع الشهر مش متوسط؛ أقل تكلفة وأعلى نسبة وأكتر أوردرات)' +
-    '. SHOPIFY ORDERS = أوردرات المتجر من إعلانات الحساب (UTM)، وفي البيزنس كله: كل أوردرات شوبيفاي من أي مصدر ماعدا الأكاونت اللي مش معانا. وعليها CPP و AOV و ROAS. META ORDERS = مشتريات البيكسل.' +
+    '. SHOPIFY ORDERS = أوردرات المتجر من إعلانات الحساب (UTM)، وفي البيزنس كله: كل أوردرات شوبيفاي من أي مصدر ماعدا الأكاونت اللي مش معانا. وعليها CPP و AOV و SHOPIFY ROAS. META ORDERS = مشتريات البيكسل.' +
     ' صفوف الشهور: الصرف والأوردرات مجموع الشهر، والنسب من مجموع الأرقام.' +
     ' نسبة خطوة فوق 100% (زي Pur/Chk) رمادي من غير لون: الخطوة اللي قبلها مش بتتسجل كلها (فورم الكاش مابيبعتش Checkout).');
   g.merge(2, 3, 1, W - 2);
@@ -2793,7 +2793,7 @@ const TODAY = {
   /* [Metric, numerator, denominator, times, format (money | pct | ratio), lower is better?, blank when the numerator is 0?].
    * The funnel in order: ROAS, the ad (cost, clicks, video), the site step by step, CVR; then AOV. */
   METRICS: [
-    ['ROAS', 'purchaseValue', 'spend', 1, 'ratio', false],
+    ['Meta ROAS', 'purchaseValue', 'spend', 1, 'ratio', false],
     ['CPM', 'spend', 'impressions', 1000, 'money', true],
     ['CPC (all)', 'spend', 'clicks', 1, 'money', true],
     ['CPC (link)', 'spend', 'linkClicks', 1, 'money', true],
@@ -2964,9 +2964,9 @@ function todayClosing_(g, today, sum, rows) {
     g.set(3 + i, 2, x[1], { al: 'right' });
   });
   g.live = [[5, 2]]; // Last Update: written every time, even when nothing else changed
-  const totalNote = '(ACCOUNT: PLATFORM / TOTAL: UTMs)';
+  const totalNote = '(ACCOUNT: PLATFORM / TOTAL: SHOPIFY)';
   let r = 8;
-  ['PLATFORM', 'AD ACCOUNT NAME', 'AMOUNT SPENT', 'ORDERS ' + totalNote, 'CPP ' + totalNote, 'ROAS ' + totalNote]
+  ['PLATFORM', 'AD ACCOUNT NAME', 'AMOUNT SPENT', 'ORDERS ' + totalNote, 'CPP ' + totalNote, 'ROAS (ACCOUNT: META ROAS / TOTAL: SHOPIFY ROAS)']
     .forEach((h, i) => g.set(r, 1 + i, h, { bg: S.YELLOW, b: 'bold', al: 'center' }));
   r++;
   const accs = todayAccounts_(today);
@@ -3015,11 +3015,11 @@ function todayClosing_(g, today, sum, rows) {
   return r;
 }
 
-/* 3-hour snapshots: spend and orders of the day so far at each hour in intraday.hours. */
+/* 3-hour snapshots: spend and store orders of the day so far at each hour in intraday.hours. Meta's include DIRECT. */
 function todaySlots_(g, r, today) {
   const S = TODAY, c = S.RIGHT_COL;
-  r = todayHead_(g, r, c, 9, '3-HOUR PERFORMANCE CHECK — DAY TO DATE', ['TIME', 'META SPEND', 'META ORDERS', 'META CPP', 'META ROAS',
-    'TIKTOK SPEND', 'TIKTOK ORDERS', 'TIKTOK CPP', 'TIKTOK ROAS']);
+  r = todayHead_(g, r, c, 9, '3-HOUR PERFORMANCE CHECK — DAY TO DATE', ['TIME', 'META SPEND', 'ORDERS (META + DIRECT)', 'CPP (META + DIRECT)',
+    'SHOPIFY ROAS (META + DIRECT)', 'TIKTOK SPEND', 'TIKTOK ORDERS', 'TIKTOK CPP', 'SHOPIFY ROAS (TIKTOK)']);
   const snaps = {}, intra = ss_().getSheetByName(APP.T.INTRA);
   if (intra) readRows_(intra, INTRA_HEADERS.length).forEach(x => {
     if (asKey_(x[0]) === today) snaps[String(x[1]) + '|' + x[2]] = { spend: num_(x[3]), orders: num_(x[4]), revenue: x[6] === '' ? null : num_(x[6]) };
@@ -3028,8 +3028,10 @@ function todaySlots_(g, r, today) {
     const slot = (h === 0 ? 24 : h) + ':00', label = (h % 12 === 0 ? 12 : h % 12) + ':00 ' + (h > 0 && h < 12 ? 'AM' : h === 12 ? 'PM' : h === 0 ? 'AM' : 'PM');
     g.set(r, c, label, { b: 'bold', al: 'center' });
     ['META', 'TIKTOK'].forEach((p, i) => {
-      const s = snaps[slot + '|' + p] || (snaps[slot + '|الإجمالي'] ? { spend: 0, orders: 0, revenue: 0 } : null), at = c + 1 + i * 4;
+      let s = snaps[slot + '|' + p] || (snaps[slot + '|الإجمالي'] ? { spend: 0, orders: 0, revenue: 0 } : null);
+      const d = p === 'META' && snaps[slot + '|' + APP.DIRECT], at = c + 1 + i * 4;
       if (!s) return;
+      if (d) s = { spend: s.spend, orders: s.orders + d.orders, revenue: s.revenue === null || d.revenue === null ? null : s.revenue + d.revenue };
       g.set(r, at, Math.round(s.spend * 100) / 100, { nf: S.MONEY, al: 'right' });
       g.set(r, at + 1, s.orders, { nf: S.COUNT, al: 'right' });
       g.set(r, at + 2, ratioOrBlank_(s.spend, s.orders, 2), { nf: S.MONEY, al: 'right' });
@@ -3119,7 +3121,7 @@ function todayProducts_(g, r, title, from, to, rows, orders) {
     const sum = o.items.reduce((a, i) => a + w(i), 0);
     o.items.forEach(i => add(i.name, i.qty, sum > 0 ? o.total * w(i) / sum : 0));
   });
-  r = todayHead_(g, r, c, 7, title, ['PRODUCT', 'PIECES', 'ORDERS', 'REVENUE', 'SPEND', 'AOV', 'ROAS']);
+  r = todayHead_(g, r, c, 7, title, ['PRODUCT', 'PIECES', 'ORDERS', 'REVENUE', 'SPEND', 'AOV', 'SHOPIFY ROAS']);
   const money = v => Math.round(v * 100) / 100;
   const line = (name, t, style) => {
     const num = (col, v, nf) => g.set(r, col, v, Object.assign({ nf: nf, al: 'right' }, style));
@@ -3336,8 +3338,8 @@ function writeTopTab_() {
   const at = writeSideBlocks_(sh, 5, [
     { title: '1) الأكثر مبيعًا' + period + ' — قطع اتباعت في أوردرات مااتلغتش ولا رجعت', rows: best,
       headers: ['#', 'المنتج', 'قطع اتباعت', 'أوردرات فيها المنتج', 'الستوك', 'الستوك يكفي كام يوم', 'إعلانات Meta شغالة'] },
-    { title: '2) الأعلى ROAS' + period + ' — مبيعات أوردرات إعلانات المنتج (و DIRECT) ÷ الصرف عليه، للي اتصرف عليه ' + TOP.MIN_SPEND + ' أو أكتر', rows: roas,
-      headers: ['#', 'المنتج', 'الصرف', 'الأوردرات', 'المبيعات', 'ROAS', 'CPP', 'الستوك'] },
+    { title: '2) الأعلى Shopify ROAS' + period + ' — مبيعات أوردرات إعلانات المنتج (و DIRECT) ÷ الصرف عليه، للي اتصرف عليه ' + TOP.MIN_SPEND + ' أو أكتر', rows: roas,
+      headers: ['#', 'المنتج', 'الصرف', 'الأوردرات', 'المبيعات', 'Shopify ROAS', 'CPP', 'الستوك'] },
     { title: '3) أعلى ستوك — الستوك دلوقتي، والمبيعات في الفترة', rows: most,
       headers: ['#', 'المنتج', 'الستوك', 'قطع اتباعت', 'الستوك يكفي كام يوم', 'آخر مرة اتباع'] },
     { title: '4) بيتباع من غير إعلانات' + period + ' — مفيش صرف على إعلانات المنتج ولا ظهر في إعلانات الكتالوج في الفترة', rows: noAds,

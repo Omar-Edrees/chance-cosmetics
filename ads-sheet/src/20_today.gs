@@ -16,7 +16,7 @@ const TODAY = {
   /* [Metric, numerator, denominator, times, format (money | pct | ratio), lower is better?, blank when the numerator is 0?].
    * The funnel in order: ROAS, the ad (cost, clicks, video), the site step by step, CVR; then AOV. */
   METRICS: [
-    ['ROAS', 'purchaseValue', 'spend', 1, 'ratio', false],
+    ['Meta ROAS', 'purchaseValue', 'spend', 1, 'ratio', false],
     ['CPM', 'spend', 'impressions', 1000, 'money', true],
     ['CPC (all)', 'spend', 'clicks', 1, 'money', true],
     ['CPC (link)', 'spend', 'linkClicks', 1, 'money', true],
@@ -187,9 +187,9 @@ function todayClosing_(g, today, sum, rows) {
     g.set(3 + i, 2, x[1], { al: 'right' });
   });
   g.live = [[5, 2]]; // Last Update: written every time, even when nothing else changed
-  const totalNote = '(ACCOUNT: PLATFORM / TOTAL: UTMs)';
+  const totalNote = '(ACCOUNT: PLATFORM / TOTAL: SHOPIFY)';
   let r = 8;
-  ['PLATFORM', 'AD ACCOUNT NAME', 'AMOUNT SPENT', 'ORDERS ' + totalNote, 'CPP ' + totalNote, 'ROAS ' + totalNote]
+  ['PLATFORM', 'AD ACCOUNT NAME', 'AMOUNT SPENT', 'ORDERS ' + totalNote, 'CPP ' + totalNote, 'ROAS (ACCOUNT: META ROAS / TOTAL: SHOPIFY ROAS)']
     .forEach((h, i) => g.set(r, 1 + i, h, { bg: S.YELLOW, b: 'bold', al: 'center' }));
   r++;
   const accs = todayAccounts_(today);
@@ -238,11 +238,11 @@ function todayClosing_(g, today, sum, rows) {
   return r;
 }
 
-/* 3-hour snapshots: spend and orders of the day so far at each hour in intraday.hours. */
+/* 3-hour snapshots: spend and store orders of the day so far at each hour in intraday.hours. Meta's include DIRECT. */
 function todaySlots_(g, r, today) {
   const S = TODAY, c = S.RIGHT_COL;
-  r = todayHead_(g, r, c, 9, '3-HOUR PERFORMANCE CHECK — DAY TO DATE', ['TIME', 'META SPEND', 'META ORDERS', 'META CPP', 'META ROAS',
-    'TIKTOK SPEND', 'TIKTOK ORDERS', 'TIKTOK CPP', 'TIKTOK ROAS']);
+  r = todayHead_(g, r, c, 9, '3-HOUR PERFORMANCE CHECK — DAY TO DATE', ['TIME', 'META SPEND', 'ORDERS (META + DIRECT)', 'CPP (META + DIRECT)',
+    'SHOPIFY ROAS (META + DIRECT)', 'TIKTOK SPEND', 'TIKTOK ORDERS', 'TIKTOK CPP', 'SHOPIFY ROAS (TIKTOK)']);
   const snaps = {}, intra = ss_().getSheetByName(APP.T.INTRA);
   if (intra) readRows_(intra, INTRA_HEADERS.length).forEach(x => {
     if (asKey_(x[0]) === today) snaps[String(x[1]) + '|' + x[2]] = { spend: num_(x[3]), orders: num_(x[4]), revenue: x[6] === '' ? null : num_(x[6]) };
@@ -251,8 +251,10 @@ function todaySlots_(g, r, today) {
     const slot = (h === 0 ? 24 : h) + ':00', label = (h % 12 === 0 ? 12 : h % 12) + ':00 ' + (h > 0 && h < 12 ? 'AM' : h === 12 ? 'PM' : h === 0 ? 'AM' : 'PM');
     g.set(r, c, label, { b: 'bold', al: 'center' });
     ['META', 'TIKTOK'].forEach((p, i) => {
-      const s = snaps[slot + '|' + p] || (snaps[slot + '|الإجمالي'] ? { spend: 0, orders: 0, revenue: 0 } : null), at = c + 1 + i * 4;
+      let s = snaps[slot + '|' + p] || (snaps[slot + '|الإجمالي'] ? { spend: 0, orders: 0, revenue: 0 } : null);
+      const d = p === 'META' && snaps[slot + '|' + APP.DIRECT], at = c + 1 + i * 4;
       if (!s) return;
+      if (d) s = { spend: s.spend, orders: s.orders + d.orders, revenue: s.revenue === null || d.revenue === null ? null : s.revenue + d.revenue };
       g.set(r, at, Math.round(s.spend * 100) / 100, { nf: S.MONEY, al: 'right' });
       g.set(r, at + 1, s.orders, { nf: S.COUNT, al: 'right' });
       g.set(r, at + 2, ratioOrBlank_(s.spend, s.orders, 2), { nf: S.MONEY, al: 'right' });
@@ -342,7 +344,7 @@ function todayProducts_(g, r, title, from, to, rows, orders) {
     const sum = o.items.reduce((a, i) => a + w(i), 0);
     o.items.forEach(i => add(i.name, i.qty, sum > 0 ? o.total * w(i) / sum : 0));
   });
-  r = todayHead_(g, r, c, 7, title, ['PRODUCT', 'PIECES', 'ORDERS', 'REVENUE', 'SPEND', 'AOV', 'ROAS']);
+  r = todayHead_(g, r, c, 7, title, ['PRODUCT', 'PIECES', 'ORDERS', 'REVENUE', 'SPEND', 'AOV', 'SHOPIFY ROAS']);
   const money = v => Math.round(v * 100) / 100;
   const line = (name, t, style) => {
     const num = (col, v, nf) => g.set(r, col, v, Object.assign({ nf: nf, al: 'right' }, style));

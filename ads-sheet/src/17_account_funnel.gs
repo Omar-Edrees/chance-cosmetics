@@ -22,7 +22,7 @@ const FUNNEL = {
     ['SHOPIFY ORDERS', 'shopOrders', 'one', 1, '0', false, true],
     ['CPP', 'shopSpend', 'shopOrders', 1, '#,##0.00', true],
     ['AOV', 'shopRevenue', 'shopOrders', 1, '#,##0.00', false, true],
-    ['ROAS', 'shopRevenue', 'shopSpend', 1, '0.00"x"', false],
+    ['SHOPIFY ROAS', 'shopRevenue', 'shopSpend', 1, '0.00"x"', false],
     ['META ORDERS', 'purchases', 'one', 1, '0', false, true],
     ['CPM', 'spend', 'impressions', 1000, '#,##0.00', true],
     ['CPC', 'spend', 'clicks', 1, '#,##0.00', true],
@@ -184,7 +184,7 @@ function writeFunnel_(data) {
   const pct = Math.round(yellow * 100) + '%';
   g.set(2, 3, '🟢 أحسن من البنشمارك أو زيه   🟡 أسوأ لحد ' + pct + '   🔴 أسوأ بأكتر من ' + pct +
     ' — البنشمارك = أحسن شهر في ' + range3 + ' لكل عمود، للبيزنس كله (مجموع الشهر مش متوسط؛ أقل تكلفة وأعلى نسبة وأكتر أوردرات)' +
-    '. SHOPIFY ORDERS = أوردرات المتجر من إعلانات الحساب (UTM)، وفي البيزنس كله: كل أوردرات شوبيفاي من أي مصدر ماعدا الأكاونت اللي مش معانا. وعليها CPP و AOV و ROAS. META ORDERS = مشتريات البيكسل.' +
+    '. SHOPIFY ORDERS = أوردرات المتجر من إعلانات الحساب (UTM)، وفي البيزنس كله: كل أوردرات شوبيفاي من أي مصدر ماعدا الأكاونت اللي مش معانا. وعليها CPP و AOV و SHOPIFY ROAS. META ORDERS = مشتريات البيكسل.' +
     ' صفوف الشهور: الصرف والأوردرات مجموع الشهر، والنسب من مجموع الأرقام.' +
     ' نسبة خطوة فوق 100% (زي Pur/Chk) رمادي من غير لون: الخطوة اللي قبلها مش بتتسجل كلها (فورم الكاش مابيبعتش Checkout).');
   g.merge(2, 3, 1, W - 2);

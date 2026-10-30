@@ -243,9 +243,9 @@ function writeClosing_() {
   if (!/^\d{4}-\d{2}$/.test(month)) { month = todayKey_().slice(0, 7); sh.getRange('B2').setValue(month); }
   const rows = dailyRows_(), p = month.split('-').map(Number), days = new Date(Date.UTC(p[0], p[1], 0)).getUTCDate();
   const line = (label, s) => {
-    const m = s.byPlatform.META || { spend: 0, orders: 0 }, t = s.byPlatform.TIKTOK || { spend: 0, orders: 0 }, u = s.byPlatform[APP.UNKNOWN_PLATFORM] || { orders: 0 };
+    const d = s.byPlatform[APP.DIRECT] || { orders: 0 }, m = Object.assign({ spend: 0, orders: 0 }, s.byPlatform.META), t = s.byPlatform.TIKTOK || { spend: 0, orders: 0 }, u = s.byPlatform[APP.UNKNOWN_PLATFORM] || { orders: 0 };
     return [label, round2_(s.total.spend), round2_(s.total.spend * (1 + taxRate_())), s.total.orders, cpp_(s.total),
-      round2_(m.spend), m.orders, cpp_(m), round2_(t.spend), t.orders, cpp_(t), u.orders, s.total.cancelled,
+      round2_(m.spend), m.orders + d.orders, cpp_({ spend: m.spend, orders: m.orders + d.orders }), round2_(t.spend), t.orders, cpp_(t), u.orders, s.total.cancelled,
       round2_(s.total.revenue), aov_(s.total), roas_(s.total)];
   };
   const out = [], weeks = [[1, 7], [8, 14], [15, 21], [22, 28], [29, days]];
@@ -259,8 +259,8 @@ function writeClosing_() {
   });
   out.push(line('إجمالي الشهر', summarize_(rows, month + '-01', month + '-' + String(days).padStart(2, '0'))));
   writeBlocks_(sh, 4, [{ title: 'شهر ' + month, headers: ['اليوم', 'الصرف', 'الصرف + الضريبة', 'الأوردرات', 'تكلفة الأوردر + الضريبة',
-    'صرف Meta', 'أوردرات Meta', 'تكلفة Meta + الضريبة', 'صرف TikTok', 'أوردرات TikTok', 'تكلفة TikTok + الضريبة',
-    'أوردرات مش معروف مصدرها', 'ملغي', 'المبيعات', 'متوسط الأوردر AOV', 'ROAS الفعلي'], rows: out }], 16);
+    'صرف Meta', 'أوردرات Meta + DIRECT', 'تكلفة Meta + DIRECT + الضريبة', 'صرف TikTok', 'أوردرات TikTok', 'تكلفة TikTok + الضريبة',
+    'أوردرات مش معروف مصدرها', 'ملغي', 'المبيعات', 'متوسط الأوردر AOV', 'Shopify ROAS'], rows: out }], 16);
 }
 
 function writeHealth_() {
