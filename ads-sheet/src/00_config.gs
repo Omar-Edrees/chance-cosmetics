@@ -5,7 +5,7 @@
  * Ad accounts and stores are read-only from here: no writes to Meta, TikTok or order sources.
  */
 const APP = {
-  VERSION: '1.41.0',
+  VERSION: '1.42.0',
   T: {
     SETTINGS: 'Settings', ACCOUNTS: 'Accounts', PRODUCTS: 'Products', ADMAP: 'Ad Map',
     ADS: 'Ads Raw', ACC_RAW: 'Account Raw', ORDERS: 'Orders Raw', DAILY: 'Daily Log',
@@ -55,6 +55,7 @@ const SETTINGS_SPEC = [
   ['attribution.tiktok_markers', 'tiktok,tik tok,tk,tt', 'كلمات في الـUTM تعني TikTok'],
   ['attribution.meta_markers', 'fb,facebook,ig,instagram,meta', 'كلمات في الـUTM تعني Meta'],
   ['attribution.other_utm_platform', 'META', 'UTM موجود بس مش معروف: META | UNKNOWN'],
+  ['attribution.manual_account', '1354948596094660', 'الأكاونت اللي أوردرات المانيول (المسيجات) بتتحسب عليه في Daily Account Funnel و Actual ROAS'],
   ['meta.api_version', 'v26.0', 'نسخة Graph API'],
   ['meta.purchase_actions', 'offsite_conversion.fb_pixel_purchase,purchase,omni_purchase', 'أول نوع موجود بس بيتحسب'],
   ['tiktok.method', 'none', 'none | connector_tab | csv_tab'],

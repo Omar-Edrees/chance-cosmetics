@@ -5,7 +5,7 @@
  * back), IN SHIPPING (shipped, not delivered or back yet), DELIVERED (delivered and paid), then AOV, REVENUE (delivered
  * orders only), ROAS and CPO (spend per delivered order).
  * Orders: the same as the funnel's SHOPIFY ORDERS (the business: every store order but those from an ad account not in the
- * sheet; an account: the orders from its ads). Where each order stands comes from 19_order_status.gs (read once from Shopify);
+ * sheet; an account: the orders from its ads, DIRECT and MANUAL ones as in funnelShop_). Where each order stands comes from 19_order_status.gs (read once from Shopify);
  * a newer order counts in TOTAL ORDERS only. Spend: Meta's, from the funnel's reads. Written with the funnel, every 3 hours.
  */
 const ACTUAL = {
@@ -54,7 +54,7 @@ function writeActual_(data) {
   g.set(1, 1, A.TITLE + ' — الأرقام الفعلية من شوبيفاي | آخر تحديث ' + nowText_(), { bg: A.BAND, fc: '#ffffff', b: 'bold', al: 'center' });
   g.fill(1, 2, W - 1, { bg: A.BAND });
   g.merge(1, 1, 1, W);
-  g.set(2, 1, 'TOTAL ORDERS = أوردرات شوبيفاي (البيزنس كله: كلها ماعدا الأكاونت اللي مش معانا؛ الأكاونت: اللي جت من إعلاناته). ' +
+  g.set(2, 1, 'TOTAL ORDERS = أوردرات شوبيفاي (البيزنس كله: كلها ماعدا الأكاونت اللي مش معانا؛ الأكاونت: اللي جت من إعلاناته، و DIRECT على الأكاونت اللي بيصرف على المنتج، والمانيول على أكاونت المسيجات). ' +
     'CANCELLED = اتلغى قبل الشحن. CONFIRMED = اتشحن (RETURNED + IN SHIPPING + DELIVERED). RETURNED = اتشحن ورجع أو اتلغى بعد الشحن. ' +
     'IN SHIPPING = في الشحن ولسه ماتسلمش ولا رجع. DELIVERED = اتسلم واتحصّل. REVENUE = مبيعات المتسلم بس، و AOV عليه. ROAS = REVENUE ÷ SPEND. CPO = SPEND ÷ DELIVERED. ' +
     'حالة الأوردرات من شوبيفاي لحد ' + ORDER_STATUS_AT + '، والأوردر الأحدث محسوب في TOTAL ORDERS بس.', { al: 'left' });

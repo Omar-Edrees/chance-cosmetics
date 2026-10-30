@@ -678,6 +678,30 @@ test('Daily Account Funnel: الشهور مجموع، والبيزنس كله ا
   assert.match(e.c.getStatus_('FUNNEL'), /✓/);
 });
 
+test('Daily Account Funnel: المانيول على Chance 26، و DIRECT على الأكاونت اللي بيصرف على المنتج، و Meta من غير إعلان بآخر 4 أرقام', () => {
+  const probe = env(), today = probe.c.todayKey_(), at = ' ' + today + 'T10:00:00+03:00', B = '(blank)', OLD = '120250000000000297';
+  const flow = (id, total, a, products, src) => ['gid://shopify/Order/' + id, ' #' + id, ' N', B, total, at, B, B, B, B, B].concat(a, [products, src || '4655075']);
+  const e = env({ orderHead: FLOW_HEAD.slice(0, 17),
+    ads: { [A1]: [adRow(today, '111', 300)], [A2]: [adRow(today, '222', 100)], [A3]: [adRow(today, OLD, 50)] },
+    creatives: { 111: 'https://chance-cosmetics.com/products/lip-oil', 222: 'https://chance-cosmetics.com/products/blush' },
+    stock: [['P1', 'V1', 'Lip Oil', 'Default Title', 'LO', 'lip-oil', 40, 300], ['P2', 'V2', 'Blush', 'Default Title', 'BL', 'blush', 40, 250],
+      ['P3', 'V3', 'Mask', 'Default Title', 'MA', 'mask', 40, 200]],
+    orders: [flow(1, 200, [B, B, B, 'Direct(Chancestoreegy)'], 'Blush x1'), // إعلانات Blush على Golden Era
+      flow(2, 300, [B, B, B, 'Direct(Chancestoreegy)'], 'Mask x2 | Lip Oil x1'), // Mask مالوش صرف: Lip Oil على Chance 26
+      flow(3, 400, [B, B, B, 'Direct(Chancestoreegy)'], 'Serum x1'), // محدش بيصرف على Serum: البيزنس كله بس
+      flow(4, 500, [B, B, B, B], 'Mask x1', 'shopify_draft_order'), // مانيول (مسيجات): Chance 26
+      flow(5, 600, ['facebook', '120250999999990297', '120250999999990297', 'Facebook'], 'Mask x1')] }); // كامبين قديمة آخرها 0297: egy3
+  e.c.setupAll();
+  e.c.liveTick(); e.c.liveTick();
+  e.c.refreshFunnelNow();
+  const v = e.ss.getSheetByName('Daily Account Funnel').getDataRange().getValues();
+  const month = re => v[v.findIndex(r => re.test(String(r[0]))) + 1].slice(1, 6).map(x => Math.round(x * 100) / 100);
+  assert.deepEqual(month(/^كل الحسابات/), [450, 5, 90, 400, 4.44]);
+  assert.deepEqual(month(/Chance 26/), [300, 2, 150, 400, 2.67], 'Lip Oil من DIRECT + المانيول');
+  assert.deepEqual(month(/Golden Era/), [100, 1, 100, 200, 2]);
+  assert.deepEqual(month(/egy3/), [50, 1, 50, 600, 12]);
+});
+
 test('أرشيف الأوردرات القديمة: بيدخل Orders Raw ثابت، و Flow بيكسب، والحساب بييجي معاه', () => {
   const probe = env(), today = probe.c.todayKey_(), p = today.split('-').map(Number);
   const ym = i => new Date(Date.UTC(p[0], p[1] - 1 - i, 1)).toISOString().slice(0, 7);

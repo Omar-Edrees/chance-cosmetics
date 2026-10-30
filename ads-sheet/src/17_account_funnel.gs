@@ -4,7 +4,9 @@
  * then its days for the last 30 days (newest first). SPEND and ORDERS are totals; the rates come from the summed numbers
  * (not an average of daily rates). A step rate over 100% (more purchases than checkouts: the COD form sends no checkout)
  * says the earlier event isn't tracked, so it gets no color.
- * SHOPIFY ORDERS = store orders from the account's ads (UTM → ad → account; the business row: every store order, from any
+ * SHOPIFY ORDERS = store orders from the account's ads (UTM → ad → account, or the last 4 digits of the UTM's IDs), plus
+ * DIRECT orders on the account spending on what they bought (orderProductAccount_) and MANUAL orders (from messages) on
+ * attribution.manual_account (the business row: every store order, from any
  * source, but those from an ad account not in the sheet, like GRAND TOTAL in Today). CPP, AOV and ROAS come from them
  * and their sales, against the spend of the days the orders sheet
  * covers (from 1 Jul 2026 with the archive of older orders; before that they're blank). META ORDERS = Meta's pixel
@@ -105,24 +107,69 @@ function funnelShop_(from, each) {
   const out = { first: '', acc: {}, all: {}, spend: {} }, osh = ss_().getSheetByName(APP.T.ORDERS);
   if (!osh || osh.getLastRow() < 2) return out;
   out.first = asKey_(osh.getRange(osh.getLastRow(), 3).getValue()) || sortKey_(osh.getRange(osh.getLastRow(), 2).getValue()).slice(0, 10);
-  const adAcc = {}, add = (map, d, rev) => { const x = map[d] = map[d] || { orders: 0, revenue: 0 }; x.orders++; x.revenue += rev; };
+  const adAcc = {}, tailAcc = {}, add = (map, d, rev) => { const x = map[d] = map[d] || { orders: 0, revenue: 0 }; x.orders++; x.revenue += rev; };
   recentRows_(APP.T.ADS, ADS_HEADERS.length, 1, asKey_, from).forEach(a => {
     if (a[1] !== 'META') return;
     const acc = String(a[2]), d = asKey_(a[0]), s = out.spend[acc] = out.spend[acc] || {};
     if (a[8]) adAcc[String(a[8])] = acc;
+    [a[4], a[6], a[8]].forEach(x => { if (x) tailAcc[String(x).slice(-4)] = acc; });
     s[d] = (s[d] || 0) + num_(a[10]);
   });
-  const known = metaIdsOf_();
+  const known = metaIdsOf_(), byProduct = orderProductAccount_(from);
   recentRows_(APP.T.ORDERS, ORDERS_HEADERS.length, 2, sortKey_, from).forEach(o => {
     const d = asKey_(o[2]);
     if (!d || d < from || outsideMeta_(o, known)) return;
     add(out.all, d, num_(o[7]));
-    const arch = o[3] === 'META' ? archiveAccOf_(o[0]) : '', acc = o[3] !== 'META' ? '' : adAcc[String(o[14] || '')] || (arch !== 'OUT' ? arch : '');
+    // Meta: the order's ad, else the archive's account, else the account its campaign / ad IDs end like (an older campaign).
+    const arch = o[3] === 'META' ? archiveAccOf_(o[0]) : '', ids = [o[11], o[12], o[13], o[16], o[17]].join(' ').match(/\d{15,}/g) || [];
+    let acc = o[3] !== 'META' ? '' : adAcc[String(o[14] || '')] || (arch === 'OUT' ? '' : arch) ||
+      (ids.map(x => tailAcc[x.slice(-4)]).filter(Boolean)[0] || '');
+    if (!acc && o[3] === APP.MANUAL) acc = cfgStr_('attribution.manual_account'); // orders from messages
+    if (!acc && (o[3] === 'META' || o[3] === APP.DIRECT) && arch !== 'OUT') acc = byProduct(o, d);
     if (acc) add(out.acc[acc] = out.acc[acc] || {}, d, num_(o[7]));
     if (each) each(o, d, acc);
   });
   return out;
 }
+/*
+ * For a store order with no ad of its own (DIRECT, or Meta with no known ad): the ad account that spent the most on the
+ * products it bought that day (the product's own ads, and its share of catalog ads), else in the 7 days before. Products
+ * tried by most pieces first. '' when no account spent on any of them.
+ */
+function orderProductAccount_(from) {
+  const since = shiftKey_(from, -7), spend = {}, idx = adMapIndex_(), catAds = catalogAdIds_();
+  const special = [APP.CATALOG, APP.MULTI, APP.UNMAPPED, APP.UNKNOWN_PRODUCT, APP.META_NO_AD, CATALOG.OTHER, ''];
+  const put = (p, d, acc, s) => {
+    if (special.indexOf(p) >= 0 || !(s > 0)) return;
+    const days = spend[p] = spend[p] || {}, x = days[d] = days[d] || {};
+    x[acc] = (x[acc] || 0) + s;
+  };
+  recentRows_(APP.T.ADS, ADS_HEADERS.length, 1, asKey_, since).forEach(a => {
+    if (a[1] !== 'META' || catAds.has('META|' + String(a[8] || ''))) return;
+    const m = idx.get(adKey_('META', String(a[8] || ''), a[5], a[7], a[9]));
+    if (m) put(m.product, asKey_(a[0]), String(a[2]), num_(a[10]));
+  });
+  if (ss_().getSheetByName(APP.T.CATALOG)) recentRows_(APP.T.CATALOG, CATALOG_HEADERS.length, 1, asKey_, since)
+    .forEach(r => put(catalogProduct_(r[4]), asKey_(r[0]), String(r[2]), num_(r[5])));
+  const top = m => Object.keys(m || {}).sort((a, b) => m[b] - m[a])[0] || '';
+  const best = (p, d) => {
+    const x = spend[p];
+    if (!x) return '';
+    if (top(x[d])) return top(x[d]);
+    const week = {};
+    for (let i = 1; i <= 7; i++) Object.keys(x[shiftKey_(d, -i)] || {}).forEach(k => { week[k] = (week[k] || 0) + x[shiftKey_(d, -i)][k]; });
+    return top(week);
+  };
+  return (o, d) => {
+    const items = {};
+    lineItems_(o[6]).forEach(li => { const n = productNameOf_(li.title); items[n] = (items[n] || 0) + li.qty; });
+    if (!Object.keys(items).length && o[5]) items[o[5]] = 1;
+    const names = Object.keys(items).sort((a, b) => items[b] - items[a]);
+    for (let i = 0; i < names.length; i++) { const acc = best(names[i], d); if (acc) return acc; }
+    return '';
+  };
+}
+
 /*
  * Adds shopOrders / shopRevenue / shopSpend to a raw for the days in [from..to] the orders sheet covers (none: left out).
  * Spend: Meta's own (raw.spend) when raw is for exactly [from..to] (same = true) and the orders cover all of it, else Ads
@@ -184,7 +231,7 @@ function writeFunnel_(data) {
   const pct = Math.round(yellow * 100) + '%';
   g.set(2, 3, '🟢 أحسن من البنشمارك أو زيه   🟡 أسوأ لحد ' + pct + '   🔴 أسوأ بأكتر من ' + pct +
     ' — البنشمارك = أحسن شهر في ' + range3 + ' لكل عمود، للبيزنس كله (مجموع الشهر مش متوسط؛ أقل تكلفة وأعلى نسبة وأكتر أوردرات)' +
-    '. SHOPIFY ORDERS = أوردرات المتجر من إعلانات الحساب (UTM)، وفي البيزنس كله: كل أوردرات شوبيفاي من أي مصدر ماعدا الأكاونت اللي مش معانا. وعليها CPP و AOV و SHOPIFY ROAS. META ORDERS = مشتريات البيكسل.' +
+    '. SHOPIFY ORDERS = أوردرات المتجر من إعلانات الحساب (UTM)، وأوردرات DIRECT على الحساب اللي بيصرف على المنتج اللي اتشرى، والمانيول على أكاونت المسيجات (attribution.manual_account في Settings)؛ وفي البيزنس كله: كل أوردرات شوبيفاي من أي مصدر ماعدا الأكاونت اللي مش معانا. وعليها CPP و AOV و SHOPIFY ROAS. META ORDERS = مشتريات البيكسل.' +
     ' صفوف الشهور: الصرف والأوردرات مجموع الشهر، والنسب من مجموع الأرقام.' +
     ' نسبة خطوة فوق 100% (زي Pur/Chk) رمادي من غير لون: الخطوة اللي قبلها مش بتتسجل كلها (فورم الكاش مابيبعتش Checkout).');
   g.merge(2, 3, 1, W - 2);
