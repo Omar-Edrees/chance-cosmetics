@@ -158,6 +158,44 @@ function writeBlocks_(sh, start, blocks, width) {
   return end;
 }
 
+/*
+ * Like writeBlocks_, but side by side from column A, one empty column between blocks, each as wide as its headers.
+ * The title is merged over its block. Returns the first column of each block, the width, and the row after the tallest.
+ */
+function writeSideBlocks_(sh, start, blocks) {
+  const cols = [];
+  let c = 1;
+  blocks.forEach(b => { cols.push(c); c += b.headers.length + 1; });
+  const width = c - 2, height = 2 + Math.max.apply(null, blocks.map(b => b.rows.length)), end = start + height;
+  const grid = v => Array.from({ length: height }, () => new Array(width).fill(v));
+  const vals = grid(''), bg = grid(null), fw = grid('normal'), fc = grid('#000000');
+  blocks.forEach((b, k) => {
+    const put = (i, row, b2, w2, c2) => b.headers.forEach((_, j) => {
+      const x = cols[k] - 1 + j;
+      vals[i][x] = row[j] === undefined ? '' : row[j]; bg[i][x] = b2; fw[i][x] = w2; fc[i][x] = c2;
+    });
+    put(0, [b.title], '#1f2937', 'bold', '#ffffff');
+    put(1, b.headers, '#fff200', 'bold', '#000000');
+    b.rows.forEach((r, i) => put(i + 2, r, null, 'normal', '#000000'));
+  });
+  const out = { cols: cols, width: width, end: end }, last = sh.getLastRow(), lastCol = sh.getLastColumn(), props = PropertiesService.getDocumentProperties();
+  const key = 'BS_' + sh.getName() + '|' + start, hash = sha_(JSON.stringify(cols) + '|' + JSON.stringify(vals));
+  if (props.getProperty(key) === hash && last < end && lastCol <= width && String(sh.getRange(start, 1).getValue()) === String(vals[0][0])) return out;
+  if (end > sh.getMaxRows()) sh.insertRowsAfter(sh.getMaxRows(), end - sh.getMaxRows());
+  if (width > sh.getMaxColumns()) sh.insertColumnsAfter(sh.getMaxColumns(), width - sh.getMaxColumns());
+  // Whatever was there before (the old stacked layout, a longer list) goes first.
+  sh.getRange(start, 1, Math.max(height, last - start + 1), Math.max(width, lastCol)).breakApart().clearContent()
+    .setBackground(null).setFontWeight('normal').setFontColor('#000000').setWrap(false);
+  sh.getRange(start, 1, height, width).setValues(vals).setBackgrounds(bg).setFontWeights(fw).setFontColors(fc);
+  blocks.forEach((b, k) => {
+    sh.getRange(start, cols[k], 1, b.headers.length).merge();
+    sh.getRange(start, cols[k], 2, b.headers.length).setWrap(true).setVerticalAlignment('middle');
+  });
+  sh.setRowHeight(start, 44); // a merged title doesn't grow its row by itself: room for 2 lines
+  props.setProperty(key, hash);
+  return out;
+}
+
 function checksRows_(from, to) {
   const acc = ss_().getSheetByName(APP.T.ACC_RAW), ads = rawRows_(APP.T.ADS, ADS_HEADERS.length);
   const adSum = {}, accSum = {};

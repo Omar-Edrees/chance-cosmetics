@@ -3,9 +3,9 @@
  * best sellers (units sold), highest ROAS (spend on the product's ads vs its orders' sales, like the product table in Today,
  * for products with at least TOP.MIN_SPEND spend), most stock, selling without ads (no spend on its own ads and no share of
  * catalog ads), and dead stock (stock with the fewest sales). Units: the line items of store orders that weren't cancelled
- * or returned (19_order_status.gs). Refreshed with the slow views and when B2 / B3 change.
+ * or returned (19_order_status.gs). The lists sit side by side. Refreshed with the slow views and when B2 / B3 change.
  */
-const TOP = { N: 100, MIN_SPEND: 500, WIDTH: 8 };
+const TOP = { N: 100, MIN_SPEND: 500 };
 
 function writeTopTab_() {
   const sh = ensureTab_(X.TOP), today = todayKey_(), week = shiftKey_(today, -6);
@@ -68,7 +68,7 @@ function writeTopTab_() {
 
   const period = ' (' + p.from + ' لـ ' + p.to + ')';
   sh.getRange('C2:D2').setValues([['الستوك', stock0.status]]);
-  writeBlocks_(sh, 5, [
+  const at = writeSideBlocks_(sh, 5, [
     { title: '1) الأكثر مبيعًا' + period + ' — قطع اتباعت في أوردرات مااتلغتش ولا رجعت', rows: best,
       headers: ['#', 'المنتج', 'قطع اتباعت', 'أوردرات فيها المنتج', 'الستوك', 'الستوك يكفي كام يوم', 'إعلانات Meta شغالة'] },
     { title: '2) الأعلى ROAS' + period + ' — مبيعات أوردرات إعلانات المنتج (و DIRECT) ÷ الصرف عليه، للي اتصرف عليه ' + TOP.MIN_SPEND + ' أو أكتر', rows: roas,
@@ -79,7 +79,9 @@ function writeTopTab_() {
       headers: ['#', 'المنتج', 'قطع اتباعت', 'أوردرات فيها المنتج', 'الستوك', 'آخر مرة اتباع'] },
     { title: '5) الرواكد' + period + ' — عنده ستوك، والأقل مبيعًا الأول (وبعدين الأكتر ستوك)', rows: dead,
       headers: ['#', 'المنتج', 'الستوك', 'قطع اتباعت', 'آخر مرة اتباع', 'الستوك يكفي كام يوم'] }
-  ], TOP.WIDTH);
-  sh.setColumnWidth(2, 320);
-  sh.setFrozenRows(3);
+  ]);
+  // Per block: # narrow, product wide, the rest even; the empty column between blocks thin.
+  for (let c = 1; c <= at.width; c++) sh.setColumnWidth(c, 95);
+  at.cols.forEach((c, k) => { sh.setColumnWidth(c, 35); sh.setColumnWidth(c + 1, 260); if (k) sh.setColumnWidth(c - 1, 16); });
+  sh.setFrozenRows(6);
 }

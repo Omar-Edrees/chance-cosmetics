@@ -11,7 +11,7 @@
  * Ad accounts and stores are read-only from here: no writes to Meta, TikTok or order sources.
  */
 const APP = {
-  VERSION: '1.30.0',
+  VERSION: '1.31.0',
   T: {
     SETTINGS: 'Settings', ACCOUNTS: 'Accounts', PRODUCTS: 'Products', ADMAP: 'Ad Map',
     ADS: 'Ads Raw', ACC_RAW: 'Account Raw', ORDERS: 'Orders Raw', DAILY: 'Daily Log',
@@ -1356,6 +1356,44 @@ function writeBlocks_(sh, start, blocks, width) {
   if (last >= end) sh.getRange(end, 1, last - end + 1, Math.max(width, sh.getLastColumn())).clearContent().setBackground(null).setFontWeight('normal').setFontColor('#000000');
   props.setProperty(key, hash);
   return end;
+}
+
+/*
+ * Like writeBlocks_, but side by side from column A, one empty column between blocks, each as wide as its headers.
+ * The title is merged over its block. Returns the first column of each block, the width, and the row after the tallest.
+ */
+function writeSideBlocks_(sh, start, blocks) {
+  const cols = [];
+  let c = 1;
+  blocks.forEach(b => { cols.push(c); c += b.headers.length + 1; });
+  const width = c - 2, height = 2 + Math.max.apply(null, blocks.map(b => b.rows.length)), end = start + height;
+  const grid = v => Array.from({ length: height }, () => new Array(width).fill(v));
+  const vals = grid(''), bg = grid(null), fw = grid('normal'), fc = grid('#000000');
+  blocks.forEach((b, k) => {
+    const put = (i, row, b2, w2, c2) => b.headers.forEach((_, j) => {
+      const x = cols[k] - 1 + j;
+      vals[i][x] = row[j] === undefined ? '' : row[j]; bg[i][x] = b2; fw[i][x] = w2; fc[i][x] = c2;
+    });
+    put(0, [b.title], '#1f2937', 'bold', '#ffffff');
+    put(1, b.headers, '#fff200', 'bold', '#000000');
+    b.rows.forEach((r, i) => put(i + 2, r, null, 'normal', '#000000'));
+  });
+  const out = { cols: cols, width: width, end: end }, last = sh.getLastRow(), lastCol = sh.getLastColumn(), props = PropertiesService.getDocumentProperties();
+  const key = 'BS_' + sh.getName() + '|' + start, hash = sha_(JSON.stringify(cols) + '|' + JSON.stringify(vals));
+  if (props.getProperty(key) === hash && last < end && lastCol <= width && String(sh.getRange(start, 1).getValue()) === String(vals[0][0])) return out;
+  if (end > sh.getMaxRows()) sh.insertRowsAfter(sh.getMaxRows(), end - sh.getMaxRows());
+  if (width > sh.getMaxColumns()) sh.insertColumnsAfter(sh.getMaxColumns(), width - sh.getMaxColumns());
+  // Whatever was there before (the old stacked layout, a longer list) goes first.
+  sh.getRange(start, 1, Math.max(height, last - start + 1), Math.max(width, lastCol)).breakApart().clearContent()
+    .setBackground(null).setFontWeight('normal').setFontColor('#000000').setWrap(false);
+  sh.getRange(start, 1, height, width).setValues(vals).setBackgrounds(bg).setFontWeights(fw).setFontColors(fc);
+  blocks.forEach((b, k) => {
+    sh.getRange(start, cols[k], 1, b.headers.length).merge();
+    sh.getRange(start, cols[k], 2, b.headers.length).setWrap(true).setVerticalAlignment('middle');
+  });
+  sh.setRowHeight(start, 44); // a merged title doesn't grow its row by itself: room for 2 lines
+  props.setProperty(key, hash);
+  return out;
 }
 
 function checksRows_(from, to) {
@@ -3235,9 +3273,9 @@ function writeActual_(data) {
  * best sellers (units sold), highest ROAS (spend on the product's ads vs its orders' sales, like the product table in Today,
  * for products with at least TOP.MIN_SPEND spend), most stock, selling without ads (no spend on its own ads and no share of
  * catalog ads), and dead stock (stock with the fewest sales). Units: the line items of store orders that weren't cancelled
- * or returned (19_order_status.gs). Refreshed with the slow views and when B2 / B3 change.
+ * or returned (19_order_status.gs). The lists sit side by side. Refreshed with the slow views and when B2 / B3 change.
  */
-const TOP = { N: 100, MIN_SPEND: 500, WIDTH: 8 };
+const TOP = { N: 100, MIN_SPEND: 500 };
 
 function writeTopTab_() {
   const sh = ensureTab_(X.TOP), today = todayKey_(), week = shiftKey_(today, -6);
@@ -3300,7 +3338,7 @@ function writeTopTab_() {
 
   const period = ' (' + p.from + ' لـ ' + p.to + ')';
   sh.getRange('C2:D2').setValues([['الستوك', stock0.status]]);
-  writeBlocks_(sh, 5, [
+  const at = writeSideBlocks_(sh, 5, [
     { title: '1) الأكثر مبيعًا' + period + ' — قطع اتباعت في أوردرات مااتلغتش ولا رجعت', rows: best,
       headers: ['#', 'المنتج', 'قطع اتباعت', 'أوردرات فيها المنتج', 'الستوك', 'الستوك يكفي كام يوم', 'إعلانات Meta شغالة'] },
     { title: '2) الأعلى ROAS' + period + ' — مبيعات أوردرات إعلانات المنتج (و DIRECT) ÷ الصرف عليه، للي اتصرف عليه ' + TOP.MIN_SPEND + ' أو أكتر', rows: roas,
@@ -3311,9 +3349,11 @@ function writeTopTab_() {
       headers: ['#', 'المنتج', 'قطع اتباعت', 'أوردرات فيها المنتج', 'الستوك', 'آخر مرة اتباع'] },
     { title: '5) الرواكد' + period + ' — عنده ستوك، والأقل مبيعًا الأول (وبعدين الأكتر ستوك)', rows: dead,
       headers: ['#', 'المنتج', 'الستوك', 'قطع اتباعت', 'آخر مرة اتباع', 'الستوك يكفي كام يوم'] }
-  ], TOP.WIDTH);
-  sh.setColumnWidth(2, 320);
-  sh.setFrozenRows(3);
+  ]);
+  // Per block: # narrow, product wide, the rest even; the empty column between blocks thin.
+  for (let c = 1; c <= at.width; c++) sh.setColumnWidth(c, 95);
+  at.cols.forEach((c, k) => { sh.setColumnWidth(c, 35); sh.setColumnWidth(c + 1, 260); if (k) sh.setColumnWidth(c - 1, 16); });
+  sh.setFrozenRows(6);
 }
 
 /* ======== 23_stock_snapshot.gs ======== */
@@ -3364,10 +3404,10 @@ function orderGov_(id) {
  * before shipping ÷ the orders whose status is known), delivery and return (delivered or returned ÷ the shipments that
  * finished; orders still in shipping aren't counted yet). Orders: every store order but those from an ad account not in
  * the sheet, like Actual ROAS. Governorate: 24_order_gov.gs, else the orders sheet's City / Province column. Status:
- * 19_order_status.gs. Written with the views every 15 minutes, and when B2 / B3 change.
+ * 19_order_status.gs. The tables sit side by side. Written with the views every 15 minutes, and when B2 / B3 change.
  */
 const GOV = {
-  WIDTH: 7, UNKNOWN: 'مش معروفة',
+  UNKNOWN: 'مش معروفة',
   /* Names the orders sheet may carry (Shopify's English names, codes, Arabic) → ORDER_GOVS. */
   ALIASES: {
     'cairo': 'القاهرة', 'c': 'القاهرة', 'helwan': 'القاهرة', 'giza': 'الجيزة', 'gz': 'الجيزة', '6th of october': 'الجيزة',
@@ -3431,18 +3471,15 @@ function writeGovTab_() {
   ];
   sh.getRange('C2:D3').setValues([['حالة الأوردرات وعنوانها من شوبيفاي لحد', ORDER_STATUS_AT],
     ['', 'الأوردر الأحدث بيظهر في جدول 1 بس، ومحافظته "' + GOV.UNKNOWN + '" لحد ما تتقري']]);
-  const end = writeBlocks_(sh, 5, blocks, GOV.WIDTH);
-  sh.getRange(5, 1, end - 5, GOV.WIDTH).setNumberFormat('#,##0'); // a row that moved never keeps a % format
-  let r = 5;
-  blocks.forEach(b => {
-    const first = r + 2, n = b.rows.length;
-    b.pct.forEach(c => sh.getRange(first, c, n, 1).setNumberFormat('0.0%'));
-    sh.getRange(first + n - 1, 1, 1, GOV.WIDTH).setFontWeight('bold').setBackground('#e5e7eb');
-    r = first + n + 1;
+  const at = writeSideBlocks_(sh, 5, blocks), first = 7, n = names.length + 1;
+  sh.getRange(first, 1, n, at.width).setNumberFormat('#,##0'); // a cell that held a % before never keeps it
+  blocks.forEach((b, k) => {
+    b.pct.forEach(c => sh.getRange(first, at.cols[k] + c - 1, n, 1).setNumberFormat('0.0%'));
+    sh.getRange(first + n - 1, at.cols[k], 1, b.headers.length).setFontWeight('bold').setBackground('#e5e7eb');
   });
-  sh.setColumnWidth(1, 150);
-  for (let c = 2; c <= GOV.WIDTH; c++) sh.setColumnWidth(c, 110);
-  sh.setFrozenRows(3);
+  for (let c = 1; c <= at.width; c++) sh.setColumnWidth(c, 110);
+  at.cols.forEach((c, k) => { sh.setColumnWidth(c, 150); if (k) sh.setColumnWidth(c - 1, 16); });
+  sh.setFrozenRows(6);
 }
 
 /* ======== 26_balances.gs ======== */

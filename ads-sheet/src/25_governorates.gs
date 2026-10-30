@@ -4,10 +4,10 @@
  * before shipping ÷ the orders whose status is known), delivery and return (delivered or returned ÷ the shipments that
  * finished; orders still in shipping aren't counted yet). Orders: every store order but those from an ad account not in
  * the sheet, like Actual ROAS. Governorate: 24_order_gov.gs, else the orders sheet's City / Province column. Status:
- * 19_order_status.gs. Written with the views every 15 minutes, and when B2 / B3 change.
+ * 19_order_status.gs. The tables sit side by side. Written with the views every 15 minutes, and when B2 / B3 change.
  */
 const GOV = {
-  WIDTH: 7, UNKNOWN: 'مش معروفة',
+  UNKNOWN: 'مش معروفة',
   /* Names the orders sheet may carry (Shopify's English names, codes, Arabic) → ORDER_GOVS. */
   ALIASES: {
     'cairo': 'القاهرة', 'c': 'القاهرة', 'helwan': 'القاهرة', 'giza': 'الجيزة', 'gz': 'الجيزة', '6th of october': 'الجيزة',
@@ -71,16 +71,13 @@ function writeGovTab_() {
   ];
   sh.getRange('C2:D3').setValues([['حالة الأوردرات وعنوانها من شوبيفاي لحد', ORDER_STATUS_AT],
     ['', 'الأوردر الأحدث بيظهر في جدول 1 بس، ومحافظته "' + GOV.UNKNOWN + '" لحد ما تتقري']]);
-  const end = writeBlocks_(sh, 5, blocks, GOV.WIDTH);
-  sh.getRange(5, 1, end - 5, GOV.WIDTH).setNumberFormat('#,##0'); // a row that moved never keeps a % format
-  let r = 5;
-  blocks.forEach(b => {
-    const first = r + 2, n = b.rows.length;
-    b.pct.forEach(c => sh.getRange(first, c, n, 1).setNumberFormat('0.0%'));
-    sh.getRange(first + n - 1, 1, 1, GOV.WIDTH).setFontWeight('bold').setBackground('#e5e7eb');
-    r = first + n + 1;
+  const at = writeSideBlocks_(sh, 5, blocks), first = 7, n = names.length + 1;
+  sh.getRange(first, 1, n, at.width).setNumberFormat('#,##0'); // a cell that held a % before never keeps it
+  blocks.forEach((b, k) => {
+    b.pct.forEach(c => sh.getRange(first, at.cols[k] + c - 1, n, 1).setNumberFormat('0.0%'));
+    sh.getRange(first + n - 1, at.cols[k], 1, b.headers.length).setFontWeight('bold').setBackground('#e5e7eb');
   });
-  sh.setColumnWidth(1, 150);
-  for (let c = 2; c <= GOV.WIDTH; c++) sh.setColumnWidth(c, 110);
-  sh.setFrozenRows(3);
+  for (let c = 1; c <= at.width; c++) sh.setColumnWidth(c, 110);
+  at.cols.forEach((c, k) => { sh.setColumnWidth(c, 150); if (k) sh.setColumnWidth(c - 1, 16); });
+  sh.setFrozenRows(6);
 }

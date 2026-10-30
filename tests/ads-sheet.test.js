@@ -115,6 +115,21 @@ function block(sheet, title) {
   return out;
 }
 
+/* بلوك من writeSideBlocks_: العنوان في أي عمود، والبلوك عرضه قد عناوين الأعمدة اللي تحته. */
+function sideBlock(sheet, title) {
+  const v = sheet.getDataRange().getValues();
+  for (let i = 0; i < v.length - 1; i++) {
+    const c = v[i].findIndex(x => String(x).indexOf(title) === 0);
+    if (c < 0) continue;
+    let w = 0;
+    while (c + w < v[i + 1].length && v[i + 1][c + w] !== '') w++;
+    const out = [];
+    for (let r = i + 2; r < v.length && v[r].slice(c, c + w).some(x => x !== ''); r++) out.push(v[r].slice(c, c + w));
+    return out;
+  }
+  assert.fail('مش لاقي البلوك: ' + title);
+}
+
 function scenario() {
   const probe = env();
   const today = probe.c.todayKey_(), yest = probe.c.shiftKey_(today, -1);
@@ -749,20 +764,21 @@ test('توب 100: الأكثر مبيعًا والأعلى ROAS والستوك �
   e.c.setupAll();
   e.c.liveTick(); e.c.liveTick();
   e.c.writeTopTab_();
-  const sh = e.ss.getSheetByName('توب 100'), cols = (t, n) => block(sh, t).map(r => r.slice(0, n));
+  const sh = e.ss.getSheetByName('توب 100'), cols = (t, n) => sideBlock(sh, t).map(r => r.slice(0, n));
+  assert.equal(sh.getDataRange().getValues()[4].filter(x => /^\d\) /.test(String(x))).length, 5, 'الجداول الخمسة جنب بعض في صف 5');
   assert.deepEqual(cols('1) الأكثر مبيعًا', 5), [[1, 'Lip Oil', 3, 2, 40], [2, 'Blush', 3, 2, 5], [3, 'Mask', 1, 1, 9]], 'أوردر 4 اتلغى و 6 رجع');
   assert.deepEqual(cols('2) الأعلى ROAS', 8), [[1, 'Lip Oil', 600, 2, 1000, 1.67, 300, 40]], 'أوردرين Meta (أوردرات DIRECT كانت لمنتجات تانية)');
   assert.deepEqual(cols('3) أعلى ستوك', 4), [[1, 'Serum', 70, 0], [2, 'Lip Oil', 40, 3], [3, 'Mask', 9, 1], [4, 'Blush', 5, 3]]);
   assert.deepEqual(cols('4) بيتباع من غير إعلانات', 5), [[1, 'Blush', 3, 2, 5], [2, 'Mask', 1, 1, 9]]);
   assert.deepEqual(cols('5) الرواكد', 4), [[1, 'Serum', 70, 0], [2, 'Mask', 9, 1], [3, 'Lip Oil', 40, 3], [4, 'Blush', 5, 3]]);
-  assert.deepEqual(block(sh, '5) الرواكد').map(r => r[4]), ['مااتباعش', today, today, today], 'أوردر Serum الوحيد رجع: مااتباعش');
+  assert.deepEqual(sideBlock(sh, '5) الرواكد').map(r => r[4]), ['مااتباعش', today, today, today], 'أوردر Serum الوحيد رجع: مااتباعش');
   // تغيير الفترة بيشتغل في onEdit، ومن غير إذن مايقدرش يفتح شيت الستوك: بياخد آخر ستوك اتقرا
   e.c.readStock_ = () => ({ byHandle: {}, rows: 0, error: 'مفيش إذن' });
   sh.getRange('B2').setValue(today);
   e.c.onEdit({ range: { getSheet: () => sh, getA1Notation: () => 'B2' } });
   assert.match(String(sh.getRange('D2').getValue()), /^✓ 4 منتج من فلو الستوك \(آخر قراية /);
   assert.deepEqual(cols('3) أعلى ستوك', 3), [[1, 'Serum', 70], [2, 'Lip Oil', 40], [3, 'Mask', 9], [4, 'Blush', 5]]);
-  assert.match(String(block(sh, '1) الأكثر مبيعًا')[0]), /Lip Oil/);
+  assert.match(String(sideBlock(sh, '1) الأكثر مبيعًا')[0]), /Lip Oil/);
   e.c.writeProductsTab_();
   assert.equal(block(e.ss.getSheetByName('المنتجات'), 'المنتجات من ').find(r => r[1] === 'Lip Oil')[2], 40, 'وتاب المنتجات كمان');
 });
@@ -800,7 +816,8 @@ test('المحافظات: الأوردرات والإلغاء والتوصيل �
   e.c.orderGov_ = id => gov[String(id).split('/').pop()] || '';
   e.c.setupAll();
   e.c.liveTick();
-  const sh = e.ss.getSheetByName('المحافظات'), rows = t => block(sh, t);
+  const sh = e.ss.getSheetByName('المحافظات'), rows = t => sideBlock(sh, t);
+  assert.equal(sh.getDataRange().getValues()[4].filter(x => /^\d\) /.test(String(x))).length, 4, 'الجداول الأربعة جنب بعض في صف 5');
   assert.equal(sh.getRange('B2').getValue(), e.c.shiftKey_(today, -89), 'الفترة: آخر 90 يوم');
   assert.deepEqual(rows('1) الأوردرات').map(r => [r[0], r[1], r[5]]), [['الجيزة', 0, 4], ['القاهرة', 0, 2], ['مش معروفة', 1, 1], ['الإجمالي', 1, 7]],
     'أوردر 7 من الأكاونت اللي مش معانا مش محسوب، وأوردر 9 الجديد مالوش محافظة');
