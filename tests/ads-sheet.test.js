@@ -875,7 +875,7 @@ test('رصيد الأكاونتات في Today: المشحون ويكفي كام
   e.requests.filter(u => /fields=account_status/.test(u)).forEach(u => assert.match(u, /^https:\/\/graph\.facebook\.com\/v[\d.]+\/act_\d+\?fields=/));
 });
 
-test('Today: الستوك يكفي كام يوم للمنتجات اللي عليها إعلانات، واللي من غير إعلانات وقرّبت تخلص، بالألوان', () => {
+test('Today: الستوك يكفي كام يوم، جزء للمنتجات اللي عليها إعلانات وجزء للي من غير إعلانات بتتباع وقرّبت تخلص، و اطلب كام', () => {
   const probe = env(), today = probe.c.todayKey_(), d = n => probe.c.shiftKey_(today, -n), B = '(blank)';
   const flow = (id, day, products) => ['gid://shopify/Order/' + id, ' #' + id, ' N', B, 500, ' ' + day + 'T10:00:00+03:00',
     B, B, B, B, B, B, B, B, 'Direct(Chancestoreegy)', products, '4655075'];
@@ -883,17 +883,22 @@ test('Today: الستوك يكفي كام يوم للمنتجات اللي عل�
     creatives: { 111: 'https://chance-cosmetics.com/products/lip-oil', 222: 'https://chance-cosmetics.com/products/eye-pen' },
     stock: [['P1', 'V1', 'Lip Oil', 'Default Title', 'LO', 'lip-oil', 12, 300], ['P2', 'V2', 'Blush', 'Default Title', 'BL', 'blush', 5, 250],
       ['P3', 'V3', 'Mask', 'Default Title', 'MA', 'mask', 70, 200], ['P4', 'V4', 'Serum', 'Default Title', 'SE', 'serum', 3, 400],
-      ['P5', 'V5', 'Eye Pen', 'Default Title', 'EP', 'eye-pen', 30, 150], ['P6', 'V6', 'Dress', 'Default Title', 'DR', 'dress', 0, 900]],
+      ['P5', 'V5', 'Eye Pen', 'Default Title', 'EP', 'eye-pen', 30, 150], ['P6', 'V6', 'Dress', 'Default Title', 'DR', 'dress', 0, 900],
+      ['P7', 'V7', 'Brush', 'Default Title', 'BR', 'brush', 1, 90]],
     orders: [flow(1, d(1), 'Lip Oil x2'), flow(2, d(3), 'Lip Oil x3'), flow(3, d(2), 'Blush x5'), flow(4, d(1), 'Mask x1'),
-      flow(5, d(6), 'Mask x20'), flow(6, d(1), 'Serum x5'), flow(7, today, 'Blush x10'), flow(8, d(2), 'Dress x1')] });
+      flow(5, d(6), 'Mask x20'), flow(6, d(1), 'Serum x5'), flow(7, today, 'Blush x10'), flow(8, d(2), 'Dress x1'), flow(9, d(2), 'Brush x2')] });
   e.c.orderStatus_ = id => (String(id).split('/').pop() === '6' ? { code: 'C', revenue: null } : null);
   e.c.setupAll();
   e.c.liveTick(); e.c.liveTick();
   const sh = e.ss.getSheetByName('Today'), v = sh.getDataRange().getValues(), i = v.findIndex(r => /^الستوك يكفي كام يوم/.test(String(r[0])));
   assert.ok(i > v.findIndex(r => /^رصيد الأكاونتات من Meta/.test(String(r[0]))), 'تحت رصيد الأكاونتات');
-  assert.deepEqual(v[i + 1].slice(0, 6), ['المنتج', '', 'إعلانات شغالة', 'الستوك', 'بيتباع في اليوم', 'يكفي كام يوم']);
-  // Blush من غير إعلانات بس فاضله 5 أيام. Mask كتير، و Serum أوردره اتلغى، و Dress خلص ومالوش إعلانات، فمش ظاهرين. أوردرات النهارده والأقدم من 5 أيام مش محسوبة.
-  assert.deepEqual(v.slice(i + 2, i + 6).map(r => r.slice(0, 6)), [
-    ['Blush', '', 'مفيش', 5, 1, 5], ['Lip Oil', '', 1, 12, 1, 12], ['Eye Pen', '', 1, 30, 0, '— مااتباعش'], ['', '', '', '', '', '']]);
-  assert.deepEqual([sh.attr(i + 3, 6).bg, sh.attr(i + 4, 6).bg, sh.attr(i + 5, 6).bg], ['#f4cccc', '#fff2cc', null]);
+  assert.deepEqual(v[i + 1].slice(0, 6), ['المنتج', '', 'الستوك', 'بيتباع في اليوم', 'يكفي كام يوم', 'اطلب كام (لـ 30 يوم)']);
+  // اطلب كام = اللي يكفي 30 يوم ناقص الستوك. Blush من غير إعلانات بس بيتباع قطعة في اليوم وفاضله 5 أيام. Mask كتير، و Serum أوردره اتلغى،
+  // و Dress خلص ومالوش إعلانات، و Brush بيتباع أقل من قطعة في اليوم، فمش ظاهرين. أوردرات النهارده والأقدم من 5 أيام مش محسوبة.
+  assert.deepEqual(v.slice(i + 2, i + 8).map(r => r.slice(0, 6)), [
+    ['منتجات عليها إعلانات شغالة', '', '', '', '', ''],
+    ['Lip Oil', '', 12, 1, 12, 18], ['Eye Pen', '', 30, 0, '— مااتباعش', ''],
+    ['منتجات من غير إعلانات — بتتباع 1 قطعة في اليوم أو أكتر وفاضلها 10 أيام أو أقل', '', '', '', '', ''],
+    ['Blush', '', 5, 1, 5, 25], ['', '', '', '', '', '']]);
+  assert.deepEqual([sh.attr(i + 4, 5).bg, sh.attr(i + 5, 5).bg, sh.attr(i + 7, 5).bg], ['#fff2cc', null, '#f4cccc']);
 });
