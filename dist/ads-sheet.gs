@@ -11,7 +11,7 @@
  * Ad accounts and stores are read-only from here: no writes to Meta, TikTok or order sources.
  */
 const APP = {
-  VERSION: '1.32.0',
+  VERSION: '1.33.0',
   T: {
     SETTINGS: 'Settings', ACCOUNTS: 'Accounts', PRODUCTS: 'Products', ADMAP: 'Ad Map',
     ADS: 'Ads Raw', ACC_RAW: 'Account Raw', ORDERS: 'Orders Raw', DAILY: 'Daily Log',
@@ -3050,37 +3050,33 @@ function todayBenchmark_(g, r, today, shown) {
 
 /*
  * Meta orders since `from` (not from an account outside the sheet): its ad, the ad's product, the products ordered and
- * the order's total. withDirect: DIRECT orders too (no ad: key DIRECT).
+ * the order's total. all: every store order (DIRECT, MANUAL, TikTok ...: key = the platform) but the outside account's.
  */
-function todayOrders_(from, withDirect) {
+function todayOrders_(from, all) {
   const osh = ss_().getSheetByName(APP.T.ORDERS), out = [];
   if (!osh) return out;
   const idx = adMapIndex_(), catAds = catalogAdIds_(), known = metaIdsOf_();
   recentRows_(APP.T.ORDERS, ORDERS_HEADERS.length, 2, sortKey_, from).forEach(o => {
     const d = asKey_(o[2]);
-    if (!d || d < from || !(o[3] === 'META' || (withDirect && o[3] === APP.DIRECT)) || outsideMeta_(o, known)) return;
+    if (!d || d < from || !(all || o[3] === 'META') || outsideMeta_(o, known)) return;
     const items = [];
     lineItems_(o[6]).forEach(li => {
       const name = productNameOf_(li.title), it = items.find(x => x.name === name);
       if (it) it.qty += li.qty; else items.push({ name: name, qty: li.qty });
     });
-    out.push({ d: d, ad: String(o[14] || ''), key: o[3] === 'META' ? orderAdProduct_(o, idx, catAds) : APP.DIRECT, total: num_(o[7]),
+    out.push({ d: d, ad: String(o[14] || ''), key: o[3] === 'META' ? orderAdProduct_(o, idx, catAds) : o[3], total: num_(o[7]),
       items: items.length ? items : [{ name: String(o[5] || APP.UNKNOWN_PRODUCT), qty: 1 }] });
   });
   return out;
 }
-/* The one product an order counts on: `prefer` (the ad's product) when the order has it, else the one with the most pieces. */
-function mainProduct_(o, prefer) {
-  return o.items.some(i => i.name === prefer) ? prefer : o.items.reduce((a, b) => (b.qty > a.qty ? b : a)).name;
-}
 /*
- * [[ordered product, orders]] for a list of orders, each order once (mainProduct_). Other products in those orders show
- * next to the name ("+ 3 منتجات تانية").
+ * [[ordered product, orders]] for a list of orders. Each order counts once: on `prefer` (the ad's product) when the order
+ * has it, else on the product with the most pieces. Other products in those orders show next to the name ("+ 3 منتجات تانية").
  */
 function orderedList_(orders, prefer) {
   const n = {}, more = {};
   orders.forEach(o => {
-    const main = mainProduct_(o, prefer);
+    const main = o.items.some(i => i.name === prefer) ? prefer : o.items.reduce((a, b) => (b.qty > a.qty ? b : a)).name;
     n[main] = (n[main] || 0) + 1;
     more[main] = more[main] || [];
     o.items.forEach(i => { if (i.name !== main && more[main].indexOf(i.name) < 0) more[main].push(i.name); });
@@ -3089,37 +3085,43 @@ function orderedList_(orders, prefer) {
   return Object.keys(n).sort((a, b) => ((b === prefer) - (a === prefer)) || (n[b] - n[a]) || (a < b ? -1 : 1)).map(i => [label(i, more[i]), n[i]]);
 }
 /*
- * The store orders of Meta's TOTAL (Meta ads of the accounts in the sheet, plus DIRECT) by the product they bought:
- * catalog ads' orders together in CATALOG, every other order once on its product (mainProduct_: the ad's product when
- * the order has it, else the one with the most pieces). Then the totals: orders, sales, Meta spend, AOV and ROAS.
+ * The store orders of GRAND TOTAL (every order but the outside account's: Meta ads, DIRECT, MANUAL, TikTok ...) as pieces
+ * per product: catalog ads' orders together in CATALOG, every other order's pieces each on its own product. Sales: the
+ * order's total split over its products by their price in Products (by pieces when one has no price). Then the totals:
+ * pieces, orders, sales, spend (Meta + TikTok), AOV and ROAS.
  */
 function todayProducts_(g, r, title, from, to, rows, orders) {
-  const S = TODAY, c = S.RIGHT_COL, by = {}, tot = { orders: 0, revenue: 0, spend: 0, direct: 0 };
-  rows.forEach(x => { if (x[1] === 'META' && x[0] >= from && x[0] <= to) tot.spend += num_(x[3]); });
+  const S = TODAY, c = S.RIGHT_COL, by = {}, tot = { units: 0, orders: 0, revenue: 0, spend: 0 }, price = {};
+  products_().forEach(p => { if (p.price > 0) price[p.name] = p.price; });
+  rows.forEach(x => { if ((x[1] === 'META' || x[1] === 'TIKTOK') && x[0] >= from && x[0] <= to) tot.spend += num_(x[3]); });
+  const add = (n, units, revenue) => { const t = by[n] = by[n] || { units: 0, revenue: 0 }; t.units += units; t.revenue += revenue; };
   orders.forEach(o => {
     if (o.d < from || o.d > to) return;
-    const n = o.key === APP.CATALOG ? APP.CATALOG : mainProduct_(o, o.key), t = by[n] = by[n] || { orders: 0, revenue: 0 };
-    t.orders++; t.revenue += o.total;
-    tot.orders++; tot.revenue += o.total;
-    if (o.key === APP.DIRECT) tot.direct++;
+    const units = o.items.reduce((a, i) => a + i.qty, 0);
+    tot.units += units; tot.orders++; tot.revenue += o.total;
+    if (o.key === APP.CATALOG) { add(APP.CATALOG, units, o.total); return; }
+    const priced = o.items.every(i => price[i.name]), w = i => (priced ? price[i.name] : 1) * i.qty;
+    const sum = o.items.reduce((a, i) => a + w(i), 0);
+    o.items.forEach(i => add(i.name, i.qty, sum > 0 ? o.total * w(i) / sum : 0));
   });
-  r = todayHead_(g, r, c, 6, title, ['PRODUCT', 'SHOPIFY ORDERS', 'REVENUE', 'META SPEND', 'AOV', 'ROAS']);
+  r = todayHead_(g, r, c, 7, title, ['PRODUCT', 'PIECES', 'ORDERS', 'REVENUE', 'SPEND', 'AOV', 'ROAS']);
+  const money = v => Math.round(v * 100) / 100;
   const line = (name, t, style) => {
     const num = (col, v, nf) => g.set(r, col, v, Object.assign({ nf: nf, al: 'right' }, style));
     g.set(r, c, name, style);
-    num(c + 1, t.orders, S.COUNT); num(c + 2, Math.round(t.revenue * 100) / 100, S.MONEY);
-    if (t.spend !== undefined) {
-      num(c + 3, Math.round(t.spend * 100) / 100, S.MONEY); num(c + 4, ratioOrBlank_(t.revenue, t.orders, 2), S.MONEY);
-      num(c + 5, ratioOrBlank_(t.revenue, t.spend, 2), S.RATIO);
+    num(c + 1, t.units, S.COUNT); num(c + 3, money(t.revenue), S.MONEY);
+    if (t.orders !== undefined) {
+      num(c + 2, t.orders, S.COUNT); num(c + 4, money(t.spend), S.MONEY); num(c + 5, ratioOrBlank_(t.revenue, t.orders, 2), S.MONEY);
+      num(c + 6, ratioOrBlank_(t.revenue, t.spend, 2), S.RATIO);
     }
     r++;
   };
   if (by[APP.CATALOG]) line(APP.CATALOG, by[APP.CATALOG], { bg: S.CATALOG, b: 'bold' });
   Object.keys(by).filter(n => n !== APP.CATALOG)
-    .sort((a, b) => (by[b].orders - by[a].orders) || (by[b].revenue - by[a].revenue) || (a < b ? -1 : 1))
+    .sort((a, b) => (by[b].units - by[a].units) || (by[b].revenue - by[a].revenue) || (a < b ? -1 : 1))
     .forEach(n => line(n, by[n], {}));
   if (!tot.orders) { g.set(r, c, 'مفيش أوردرات في الفترة دي', { fc: '#6b7280' }); r++; }
-  line('TOTAL' + (tot.direct ? ' (شامل DIRECT: ' + tot.direct + ')' : ''), tot, { bg: S.TOTAL, b: 'bold' });
+  line('TOTAL', tot, { bg: S.TOTAL, b: 'bold' });
   return r;
 }
 

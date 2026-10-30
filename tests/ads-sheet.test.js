@@ -237,18 +237,19 @@ test('Today: بنشمارك Meta، متوسط آخر 60 يوم مقابل كل �
   assert.equal(cell(11), '#d9ead3');
 });
 
-test('Today: أداء المنتجات بالأوردرات والمبيعات، والإجمالي فيه الصرف و AOV و ROAS', () => {
+test('Today: أداء المنتجات بالقطع والمبيعات لكل منتج، والإجمالي فيه القطع والأوردرات والصرف و AOV و ROAS', () => {
   const e = scenario(), values = e.ss.getSheetByName('Today').getDataRange().getValues();
   const titles = values.map(r => String(r[7])).filter(t => /^PRODUCT PERFORMANCE/.test(t));
   assert.equal(titles.length, 2);
   const heads = values.filter(r => r[7] === 'PRODUCT');
   assert.equal(heads.length, 2);
-  heads.forEach(h => assert.deepEqual(h.slice(7, 14), ['PRODUCT', 'SHOPIFY ORDERS', 'REVENUE', 'META SPEND', 'AOV', 'ROAS', '']));
-  // الـ UTM هنا (fb / Camp) مش بيشاور على إعلان في الشيت: الأوردر بيتحسب على المنتج اللي فيه قطع أكتر، وأوردر TikTok برا
+  heads.forEach(h => assert.deepEqual(h.slice(7, 15), ['PRODUCT', 'PIECES', 'ORDERS', 'REVENUE', 'SPEND', 'AOV', 'ROAS', '']));
+  // كل قطعة على منتجها، ومبيعات الأوردر 1001 (750) متقسمة بسعر Lip Oil (300) و Blush (250). أوردر TikTok داخل.
   const i = values.findIndex(r => r[7] === 'PRODUCT');
-  assert.deepEqual(values.slice(i + 1, i + 3).map(r => r.slice(7, 13)), [
-    ['Lip Oil', 2, 1050, '', '', ''],
-    ['TOTAL', 2, 1050, 1100, 525, 0.95],
+  assert.deepEqual(values.slice(i + 1, i + 4).map(r => r.slice(7, 14)), [
+    ['Lip Oil', 3, '', 829.41, '', '', ''],
+    ['Blush', 2, '', 470.59, '', '', ''],
+    ['TOTAL', 5, 3, 1300, 1100, 433.33, 1.18],
   ]);
 });
 
@@ -387,11 +388,12 @@ test('الكتالوج: Today فيه صف CATALOG واحد بصرفه وأورد
 
   const between = (v, col, from, to) => { const i = v.findIndex(r => r[col] === from); return v.slice(i + 1, v.findIndex((r, j) => j > i && r[col] === to) + 1); };
   const v = e.ss.getSheetByName('Today').getDataRange().getValues();
-  // Today: أوردرات الكتالوج كلها في صف واحد، والباقي على المنتج اللي اتشرى
-  assert.deepEqual(between(v, 7, 'PRODUCT', 'TOTAL').map(r => r.slice(7, 13)), [
-    ['CATALOG (كل إعلانات الكتالوج)', 1, 250, '', '', ''],
-    ['Lip Oil', 1, 300, '', '', ''],
-    ['TOTAL', 2, 550, 1000, 275, 0.55],
+  // Today: قطع أوردرات الكتالوج كلها في صف واحد، والباقي كل قطعة على منتجها (Blush مالوش سعر: المبيعات بالقطع)
+  assert.deepEqual(between(v, 7, 'PRODUCT', 'TOTAL').map(r => r.slice(7, 14)), [
+    ['CATALOG (كل إعلانات الكتالوج)', 1, '', 250, '', '', ''],
+    ['Blush', 2, '', 200, '', '', ''],
+    ['Lip Oil', 1, '', 100, '', '', ''],
+    ['TOTAL', 4, 2, 550, 1000, 275, 0.55],
   ]);
   const t = e.ss.getSheetByName('الكتالوج').getDataRange().getValues();
   // تاب الكتالوج: كل كامبين، وأوردراتها رايحة على أنهي منتجات. الأوردر بيتعد مرة واحدة، على منتج الإعلان لو فيه.
@@ -488,9 +490,10 @@ test('أوردرات من حساب Meta مش معانا: صف لوحدها بر�
   assert.deepEqual(row('META (حساب مش معانا)').slice(1, 4), ['مش داخل في التوتال: Marshmallow', '', 1]);
   assert.equal(row('GRAND TOTAL')[3], 2, 'أوردرات الحساب التاني برا GRAND TOTAL');
   const i = v.findIndex(r => r[7] === 'PRODUCT');
-  // أوردر 2 جه من إعلان Lip Oil ومافيهوش Lip Oil: بيتحسب على المنتج اللي فيه قطع أكتر
-  assert.deepEqual(v.slice(i + 1, i + 4).map(r => r.slice(7, 13)), [
-    ['Blush', 1, 900, '', '', ''], ['Lip Oil', 1, 300, '', '', ''], ['TOTAL', 2, 1200, 600, 600, 2]]);
+  // أوردر 2 جه من إعلان Lip Oil ومافيهوش Lip Oil: كل قطعة على منتجها
+  assert.deepEqual(v.slice(i + 1, i + 6).map(r => r.slice(7, 14)), [
+    ['Blush', 2, '', 360, '', '', ''], ['Mascara', 2, '', 360, '', '', ''], ['Lip Oil', 1, '', 300, '', '', ''],
+    ['Primer', 1, '', 180, '', '', ''], ['TOTAL', 6, 2, 1200, 600, 600, 2]]);
   const t = e.ss.getSheetByName('الكتالوج').getDataRange().getValues(), j = t.findIndex(r => r[7] === 'CAMPAIGN');
   assert.deepEqual(t.slice(j + 1, j + 4).map(r => [r[7], r[10], r[11], r[12]]), [
     ['Camp', 2, 'Lip Oil', 1],
@@ -707,19 +710,21 @@ test('أوردر Meta من كامبين قديمة لحساب معانا مش ME
   assert.equal(c.outsideMeta_(o('120256366878570102', '120256366881430102'), known), true, 'الحساب اللي مش معانا');
 });
 
-test('PRODUCT PERFORMANCE: أوردرات DIRECT على المنتج اللي اتشرى، وداخلة في الإجمالي', () => {
+test('PRODUCT PERFORMANCE: أوردرات DIRECT والمانيول (Draft) داخلة في القطع والإجمالي', () => {
   const AD = '120256366885940102', probe = env(), today = probe.c.todayKey_(), at = ' ' + today + 'T10:00:00+03:00', B = '(blank)';
   const flow = (id, a, products) => ['gid://shopify/Order/' + id, ' #' + id, ' N', B, 500, at, B, B, B, B, B].concat(a, [products, '4655075']);
   const e = env({ orderHead: FLOW_HEAD.slice(0, 17), ads: { [A1]: [adRow(today, AD, 600)] },
     creatives: { [AD]: 'https://chance-cosmetics.com/products/lip-oil' },
     stock: [['P1', 'V1', 'Lip Oil', 'Default Title', 'LO', 'lip-oil', 40, 300], ['P2', 'V2', 'Blush', 'Default Title', 'BL', 'blush', 40, 300]],
     orders: [flow(1, ['facebook', '120256366878570102', AD, 'Facebook'], 'Lip Oil x1'),
-      flow(2, [B, B, B, 'Direct(Chancestoreegy)'], 'Lip Oil x1'), flow(3, [B, B, B, 'Direct(Chancestoreegy)'], 'Blush x1')] });
+      flow(2, [B, B, B, 'Direct(Chancestoreegy)'], 'Lip Oil x1'), flow(3, [B, B, B, 'Direct(Chancestoreegy)'], 'Blush x1'),
+      flow(4, [B, B, B, B], 'Blush x2').slice(0, 16).concat(['shopify_draft_order'])] });
   e.c.setupAll();
   e.c.liveTick(); e.c.liveTick();
   const v = e.ss.getSheetByName('Today').getDataRange().getValues(), i = v.findIndex(r => /^PRODUCT PERFORMANCE — TODAY/.test(String(r[7])));
-  assert.deepEqual(v.slice(i + 2, i + 5).map(r => r.slice(7, 13)), [
-    ['Lip Oil', 2, 1000, '', '', ''], ['Blush', 1, 500, '', '', ''], ['TOTAL (شامل DIRECT: 2)', 3, 1500, 600, 500, 2.5]], 'أوردر Meta + أوردر DIRECT لنفس المنتج');
+  assert.deepEqual(v.slice(i + 2, i + 5).map(r => r.slice(7, 14)), [
+    ['Blush', 3, '', 1000, '', '', ''], ['Lip Oil', 2, '', 1000, '', '', ''], ['TOTAL', 5, 4, 2000, 600, 500, 3.33]],
+    'أوردر Meta + أوردر DIRECT لنفس المنتج، وأوردر Draft داخل');
 });
 
 test('Actual ROAS: الإلغاء والتأكيد والمرتجع والمتسلم والمبيعات الفعلية، بنفس تقسيمة الفانل', () => {
