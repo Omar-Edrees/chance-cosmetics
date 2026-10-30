@@ -11,7 +11,7 @@
  * Ad accounts and stores are read-only from here: no writes to Meta, TikTok or order sources.
  */
 const APP = {
-  VERSION: '1.34.0',
+  VERSION: '1.35.0',
   T: {
     SETTINGS: 'Settings', ACCOUNTS: 'Accounts', PRODUCTS: 'Products', ADMAP: 'Ad Map',
     ADS: 'Ads Raw', ACC_RAW: 'Account Raw', ORDERS: 'Orders Raw', DAILY: 'Daily Log',
@@ -2788,26 +2788,29 @@ const TODAY = {
   GRAND: '#00ff00', LABEL: '#f3f4f6', METRIC: '#e8f0fe', AVG: '#e8eefc', SPECIAL: '#fde8e8', TOTAL: '#e8eefc',
   GREEN: '#d9ead3', RED: '#f4cccc', OTHER: '#f3f4f6', CATALOG: '#fff2cc',
   MONEY: '#,##0.00', COUNT: '0', RATIO: '0.00', PCT: '0.00%',
-  FUNNEL_KEY: 'TODAY_FUNNEL', AVG_KEY: 'TODAY_FUNNEL_AVG', AVG_DAYS: 60, AVG_VERSION: 2,
-  FIELDS: 'spend,impressions,clicks,inline_link_clicks,actions,action_values',
-  /* [Metric, numerator, denominator, times, format (money | pct | ratio), lower is better?].
-   * House of Beauty's benchmark + ROAS and AOV on top + add to cart and checkout rates. */
+  FUNNEL_KEY: 'TODAY_FUNNEL', BEST_KEY: 'TODAY_FUNNEL_BEST', BEST_MONTHS: 3, BEST_VERSION: 1,
+  FIELDS: 'spend,impressions,clicks,inline_link_clicks,actions,action_values,video_thruplay_watched_actions',
+  /* [Metric, numerator, denominator, times, format (money | pct | ratio), lower is better?, blank when the numerator is 0?].
+   * The funnel in order: ROAS, the ad (cost, clicks, video), the site step by step, CVR; then the rest. */
   METRICS: [
     ['ROAS', 'purchaseValue', 'spend', 1, 'ratio', false],
-    ['AOV', 'purchaseValue', 'purchases', 1, 'money', false],
     ['CPM', 'spend', 'impressions', 1000, 'money', true],
     ['CPC (all)', 'spend', 'clicks', 1, 'money', true],
+    ['CPC (link)', 'spend', 'linkClicks', 1, 'money', true],
     ['CTR (all)', 'clicks', 'impressions', 1, 'pct', false],
     ['CTR (link)', 'linkClicks', 'impressions', 1, 'pct', false],
-    ['CPC (link)', 'spend', 'linkClicks', 1, 'money', true],
-    ['CVR', 'purchases', 'linkClicks', 1, 'pct', false],
+    ['Hook rate', 'videoViews', 'impressions', 1, 'pct', false, true], // no video plays = no video ads: blank, not 0%
+    ['Hold rate', 'thruplays', 'videoViews', 1, 'pct', false],
     ['Cost per content view', 'spend', 'contentViews', 1, 'money', true],
     ['Cost per LPV', 'spend', 'landingViews', 1, 'money', true],
+    ['Content view → ATC', 'addsToCart', 'contentViews', 1, 'pct', false],
+    ['ATC → Checkout', 'checkouts', 'addsToCart', 1, 'pct', false],
+    ['Checkout → Purchase', 'purchases', 'checkouts', 1, 'pct', false],
+    ['CVR', 'purchases', 'linkClicks', 1, 'pct', false],
+    ['AOV', 'purchaseValue', 'purchases', 1, 'money', false],
     ['Cost per purchase', 'spend', 'purchases', 1, 'money', true],
     ['Link click → LPV', 'landingViews', 'linkClicks', 1, 'pct', false],
-    ['LPV → Purchase', 'purchases', 'landingViews', 1, 'pct', false],
-    ['Content view → ATC', 'addsToCart', 'contentViews', 1, 'pct', false],
-    ['ATC → Checkout', 'checkouts', 'addsToCart', 1, 'pct', false]
+    ['LPV → Purchase', 'purchases', 'landingViews', 1, 'pct', false]
   ]
 };
 
@@ -2825,44 +2828,56 @@ function funnelRaw_(rows) {
     contentViews: action(['offsite_conversion.fb_pixel_view_content', 'view_content', 'omni_view_content']),
     addsToCart: action(['offsite_conversion.fb_pixel_add_to_cart', 'add_to_cart', 'omni_add_to_cart']),
     checkouts: action(['offsite_conversion.fb_pixel_initiate_checkout', 'initiate_checkout', 'omni_initiated_checkout']),
+    videoViews: action(['video_view']), // 3-second plays
+    thruplays: rows.reduce((n, r) => n + (r.video_thruplay_watched_actions || []).reduce((x, a) => x + num_(a.value), 0), 0),
     purchases: rows.reduce((n, r) => n + metaPick_(r.actions), 0),
     purchaseValue: rows.reduce((n, r) => n + metaPick_(r.action_values), 0) };
 }
 function funnelAdd_(a, b) { const out = Object.assign({}, a); Object.keys(b).forEach(k => { out[k] = (out[k] || 0) + b[k]; }); return out; }
 
 /*
- * Today's funnel per Meta account (every update), and the average of the last 60 days before today
- * for all Meta accounts together (once a day). Stored in document properties for writeToday_.
+ * Today's funnel per Meta account (every update), and the month totals of the 3 months before this one for all Meta
+ * accounts together (once a day), for the benchmark. Stored in document properties for writeToday_.
  */
 function refreshTodayFunnel_() {
   const accs = accounts_('META');
   if (!accs.length) return;
-  const props = PropertiesService.getDocumentProperties(), today = todayKey_();
+  const props = PropertiesService.getDocumentProperties(), today = todayKey_(), p = today.split('-').map(Number);
   const range = (a, b) => JSON.stringify({ since: a, until: b });
-  let avg = null;
-  try { avg = JSON.parse(props.getProperty(TODAY.AVG_KEY) || 'null'); } catch (e) { avg = null; }
-  const from = shiftKey_(today, -TODAY.AVG_DAYS), to = shiftKey_(today, -1);
-  const needAvg = !avg || avg.day !== today || avg.from !== from || avg.v !== TODAY.AVG_VERSION; // new day, days or metrics changed
-  const out = { day: today, accounts: [] };
-  let total = {}, avgOk = true;
+  let best = null;
+  try { best = JSON.parse(props.getProperty(TODAY.BEST_KEY) || 'null'); } catch (e) { best = null; }
+  const from = new Date(Date.UTC(p[0], p[1] - 1 - TODAY.BEST_MONTHS, 1)).toISOString().slice(0, 10);
+  const to = new Date(Date.UTC(p[0], p[1] - 1, 0)).toISOString().slice(0, 10);
+  const needBest = !best || best.day !== today || best.from !== from || best.v !== TODAY.BEST_VERSION; // new day or metrics changed
+  const out = { day: today, accounts: [] }, months = {};
+  let bestOk = true;
   accs.forEach(acc => {
     const row = { id: acc.id, name: acc.name || acc.id };
     try {
       row.raw = funnelRaw_(metaAll_('act_' + acc.id + '/insights', { level: 'account', time_range: range(today, today), fields: TODAY.FIELDS }));
-      if (needAvg) total = funnelAdd_(total, funnelRaw_(metaAll_('act_' + acc.id + '/insights',
-        { level: 'account', time_range: range(from, to), fields: TODAY.FIELDS })));
-    } catch (e) { row.error = errText_(e); avgOk = false; }
+      if (needBest) metaAll_('act_' + acc.id + '/insights', { level: 'account', time_range: range(from, to), time_increment: 'monthly', fields: TODAY.FIELDS })
+        .forEach(m => { const ym = String(m.date_start).slice(0, 7); months[ym] = funnelAdd_(months[ym] || {}, funnelRaw_([m])); });
+    } catch (e) { row.error = errText_(e); bestOk = false; }
     out.accounts.push(row);
   });
-  if (needAvg && avgOk) props.setProperty(TODAY.AVG_KEY, JSON.stringify({ day: today, from: from, to: to, v: TODAY.AVG_VERSION, raw: total }));
+  if (needBest && bestOk) props.setProperty(TODAY.BEST_KEY, JSON.stringify({ day: today, from: from, to: to, v: TODAY.BEST_VERSION, months: months }));
   props.setProperty(TODAY.FUNNEL_KEY, JSON.stringify(out));
 }
 function todayFunnel_() {
   const props = PropertiesService.getDocumentProperties(), read = k => { try { return JSON.parse(props.getProperty(k) || 'null'); } catch (e) { return null; } };
-  return { today: read(TODAY.FUNNEL_KEY), avg: read(TODAY.AVG_KEY) };
+  return { today: read(TODAY.FUNNEL_KEY), best: read(TODAY.BEST_KEY) };
+}
+/*
+ * A metric's best month (the benchmark): lowest cost or highest rate of the months' totals, like Daily Account Funnel.
+ * A step rate over 100% (an event not fully tracked) counts only if no month is at or under 100%.
+ */
+function funnelBest_(months, m) {
+  let vals = months.map(raw => funnelRatio_(raw, m)).filter(v => typeof v === 'number' && isFinite(v) && v > 0);
+  if (m[4] === 'pct' && vals.some(v => v <= 1)) vals = vals.filter(v => v <= 1);
+  return vals.length ? (m[5] ? Math.min.apply(null, vals) : Math.max.apply(null, vals)) : '';
 }
 function funnelRatio_(raw, m) {
-  return raw && raw[m[2]] > 0 ? raw[m[1]] / raw[m[2]] * m[3] : '';
+  return raw && raw[m[2]] > 0 && !(m[6] && !raw[m[1]]) ? raw[m[1]] / raw[m[2]] * m[3] : '';
 }
 
 /* ---------- Drawing ---------- */
@@ -3026,16 +3041,16 @@ function todaySlots_(g, r, today) {
   return r;
 }
 
-/* Meta benchmark: your last-60-days average vs each Meta account today. Worse = red, better = green. */
+/* Meta benchmark: each metric's best month of the last 3 vs each Meta account today. Worse = red, better = green. */
 function todayBenchmark_(g, r, today, shown) {
   const S = TODAY, c = S.RIGHT_COL, f = todayFunnel_(), accs = (f.today && f.today.day === today ? f.today.accounts : [])
     .concat(accounts_('META').filter(a => !(f.today && f.today.day === today && f.today.accounts.some(x => x.id === a.id)))
       .map(a => ({ id: a.id, name: a.name || a.id })));
-  const avg = f.avg && f.avg.raw ? f.avg.raw : null, width = Math.max(2 + accs.length, 2);
+  const months = f.best && f.best.months ? Object.keys(f.best.months).map(k => f.best.months[k]) : [], width = Math.max(2 + accs.length, 2);
   r = todayHead_(g, r, c, width, 'META BENCHMARK vs TODAY | ' + shown,
-    ['METRIC', 'AVERAGE (LAST ' + S.AVG_DAYS + ' DAYS)'].concat(accs.map(a => (a.error ? '⚠️ ' : '') + a.name)));
+    ['METRIC', 'BEST MONTH (LAST ' + S.BEST_MONTHS + ' MONTHS)'].concat(accs.map(a => (a.error ? '⚠️ ' : '') + a.name)));
   S.METRICS.forEach(m => {
-    const base = funnelRatio_(avg, m), nf = { money: S.MONEY, pct: S.PCT, ratio: S.RATIO }[m[4]];
+    const base = funnelBest_(months, m), nf = { money: S.MONEY, pct: S.PCT, ratio: S.RATIO }[m[4]];
     g.set(r, c, m[0], { b: 'bold' });
     g.set(r, c + 1, base === '' ? '—' : base, { nf: nf, bg: S.AVG, al: 'center' });
     accs.forEach((a, i) => {

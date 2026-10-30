@@ -51,8 +51,9 @@ function env(options) {
           act('offsite_conversion.fb_pixel_initiate_checkout', 3)], action_values: [act('offsite_conversion.fb_pixel_purchase', 900)] }] };
     }
     if (/\/insights\?/.test(url)) { // مستوى الحساب يوم بيوم، أو شهر بشهر (time_increment=monthly)
-      const byDay = {}, monthly = /time_increment=monthly/.test(url);
-      (ads[id] || []).forEach(r => {
+      const byDay = {}, monthly = /time_increment=monthly/.test(url), tr = url.match(/time_range=([^&]+)/);
+      const t = tr ? JSON.parse(decodeURIComponent(tr[1])) : { since: '', until: '9999' };
+      (ads[id] || []).filter(r => !monthly || (r.date_start >= t.since && r.date_start <= t.until)).forEach(r => {
         const k = monthly ? r.date_start.slice(0, 8) + '01' : r.date_start, x = byDay[k] = byDay[k] || { spend: 0, buys: 0, imp: 0 };
         x.spend += Number(r.spend); x.buys += 2; x.imp += 1000;
       });
@@ -214,27 +215,40 @@ test('Today: لقطات الـ 3 ساعات من تاب Intraday، مع CPP و R
   assert.deepEqual(todayRow(e, '6:00 PM', 8).slice(8, 16), ['', '', '', '', '', '', '', '']);
 });
 
-test('Today: بنشمارك Meta، متوسط آخر 60 يوم مقابل كل حساب النهارده', () => {
-  const e = scenario(), values = e.ss.getSheetByName('Today').getDataRange().getValues();
+test('Today: بنشمارك Meta، أحسن شهر من التلات شهور اللي فاتوا مقابل كل حساب النهارده، بترتيب الفانل', () => {
+  const probe = env(), today = probe.c.todayKey_(), p = today.split('-').map(Number);
+  const day = i => new Date(Date.UTC(p[0], p[1] - 1 - i, 10)).toISOString().slice(0, 10);
+  // كل صف = 1000 ظهور و 2 شراية: CPM الشهر = الصرف، وتكلفة الشراية = الصرف ÷ 2
+  const e = env({ ads: { [A1]: [adRow(today, '111', 600), adRow(day(1), '111', 300), adRow(day(2), '111', 200), adRow(day(3), '111', 500),
+    adRow(day(4), '111', 50)] } });
+  e.c.setupAll();
+  e.c.liveTick();
+  const values = e.ss.getSheetByName('Today').getDataRange().getValues();
   const head = values.find(r => r[7] === 'METRIC');
-  assert.deepEqual(head.slice(7, 12), ['METRIC', 'AVERAGE (LAST 60 DAYS)', 'Chance 26', 'Chance Golden Era', 'chance store . egy3']);
-  const cpm = values.find(r => r[7] === 'CPM'), cpp = values.find(r => r[7] === 'Cost per purchase');
-  // المتوسط من آخر 60 يوم قبل النهارده: إعلان واحد امبارح صرف 300 على 1000 ظهور
-  assert.deepEqual(cpm.slice(7, 12), ['CPM', 300, 500, 100, '—']);
-  assert.equal(cpp[8], 150);
+  assert.deepEqual(head.slice(7, 12), ['METRIC', 'BEST MONTH (LAST 3 MONTHS)', 'Chance 26', 'Chance Golden Era', 'chance store . egy3']);
   const metrics = values.map(r => r[7]), first = metrics.indexOf('METRIC') + 1;
-  assert.deepEqual(metrics.slice(first, first + 2), ['ROAS', 'AOV']);
+  assert.deepEqual(metrics.slice(first, first + 18), ['ROAS', 'CPM', 'CPC (all)', 'CPC (link)', 'CTR (all)', 'CTR (link)', 'Hook rate',
+    'Hold rate', 'Cost per content view', 'Cost per LPV', 'Content view → ATC', 'ATC → Checkout', 'Checkout → Purchase', 'CVR', 'AOV',
+    'Cost per purchase', 'Link click → LPV', 'LPV → Purchase']);
   const row = l => values.find(r => r[7] === l).slice(7, 12);
-  assert.deepEqual(row('ROAS'), ['ROAS', 3, 1.8, 9, '—']);
-  assert.deepEqual(row('AOV'), ['AOV', 450, 450, 450, '—']);
-  assert.deepEqual(row('Content view → ATC'), ['Content view → ATC', 0.4, 0.4, 0.4, '—']);
-  assert.deepEqual(row('ATC → Checkout'), ['ATC → Checkout', 0.75, 0.75, 0.75, '—']);
-  const ranges = e.requests.filter(u => /level=account/.test(u) && !/time_increment/.test(u))
+  // أحسن شهر: أقل CPM (200) من التلات شهور، مش الشهر الرابع (50)؛ والنهارده 600 أسوأ
+  assert.deepEqual(row('CPM'), ['CPM', 200, 600, '—', '—']);
+  assert.deepEqual(row('Cost per purchase'), ['Cost per purchase', 100, 300, '—', '—']);
+  assert.deepEqual(row('ROAS'), ['ROAS', '—', 1.5, '—', '—']);
+  assert.deepEqual(row('Checkout → Purchase'), ['Checkout → Purchase', '—', 2 / 3, '—', '—']);
+  assert.deepEqual(row('Hook rate'), ['Hook rate', '—', '—', '—', '—'], 'مفيش فيديو: فاضي مش 0%');
+  const t = e.requests.filter(u => /time_increment=monthly/.test(u) && /level=account/.test(u) && /video_thruplay/.test(u))
     .map(u => JSON.parse(decodeURIComponent(u.match(/time_range=([^&]+)/)[1])));
-  assert.ok(ranges.some(t => t.since === e.c.shiftKey_(e.today, -60) && t.until === e.yest), 'المتوسط من آخر 60 يوم لحد امبارح');
-  const cell = c => e.ss.getSheetByName('Today').attr(values.indexOf(cpm) + 1, c).bg;
-  assert.equal(cell(10), '#f4cccc');
-  assert.equal(cell(11), '#d9ead3');
+  assert.ok(t.some(x => x.since === day(3).slice(0, 8) + '01' && x.until === e.c.shiftKey_(today.slice(0, 8) + '01', -1)), 'التلات شهور اللي قبل الشهر ده');
+  const cpm = values.find(r => r[7] === 'CPM');
+  assert.equal(e.ss.getSheetByName('Today').attr(values.indexOf(cpm) + 1, 10).bg, '#f4cccc');
+  // Hook و Hold من الفيديو: 3 ثواني ÷ الظهور، و ThruPlay ÷ 3 ثواني
+  const raw = e.c.funnelRaw_([{ impressions: '1000', actions: [{ action_type: 'video_view', value: '300' }], video_thruplay_watched_actions: [{ action_type: 'video_view', value: '60' }] }]);
+  assert.deepEqual([raw.videoViews, raw.thruplays], [300, 60]);
+  assert.deepEqual([e.c.funnelRatio_(raw, ['Hook rate', 'videoViews', 'impressions', 1, 'pct', false, true]),
+    e.c.funnelRatio_(raw, ['Hold rate', 'thruplays', 'videoViews', 1, 'pct', false])], [0.3, 0.2]);
+  // معدل خطوة فوق 100% مايتاخدش لو فيه شهر تحته
+  assert.equal(e.c.funnelBest_([{ checkouts: 10, purchases: 12 }, { checkouts: 10, purchases: 5 }], ['Checkout → Purchase', 'purchases', 'checkouts', 1, 'pct', false]), 0.5);
 });
 
 test('Today: أداء المنتجات بالقطع والمبيعات لكل منتج، والإجمالي فيه القطع والأوردرات والصرف و AOV و ROAS', () => {
