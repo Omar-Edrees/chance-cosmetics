@@ -53,5 +53,6 @@ const EXT = {
   setup: [() => chanceSetup_()],
   live: [() => refreshAccountNames_(), () => discoverAccounts_(), () => chanceLive_(), () => refreshTodayFunnel_(), () => refreshFunnel_(false)],
   today: [() => refreshTodayFunnel_(), () => refreshBalances_()],
-  menu: [['📦 تحديث المنتجات والستوك وتوب 100', 'refreshProductsNow'], ['📈 تحديث Daily Account Funnel و Actual ROAS', 'refreshFunnelNow']]
+  menu: [['📦 تحديث المنتجات والستوك وتوب 100', 'refreshProductsNow'], ['📈 تحديث Daily Account Funnel و Actual ROAS', 'refreshFunnelNow'],
+    ['🗄 أرشيف Closing لشهر خلص', 'archiveClosingMonth']]
 };

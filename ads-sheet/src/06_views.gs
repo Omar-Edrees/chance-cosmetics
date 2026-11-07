@@ -234,35 +234,6 @@ function writePerf_() {
   ], 9);
 }
 
-/* Closing: pick a month in B2 (yyyy-MM). Days, weekly subtotals, month total. */
-function writeClosing_() {
-  const sh = ensureTab_(APP.T.CLOSING);
-  sh.getRange('A1:A2').setValues([['التقفيل اليومي والأسبوعي والشهري'], ['الشهر (yyyy-MM)']]);
-  sh.getRange('B2').setNumberFormat('@').setBackground('#fff2cc');
-  let month = String(sh.getRange('B2').getDisplayValue() || '').trim();
-  if (!/^\d{4}-\d{2}$/.test(month)) { month = todayKey_().slice(0, 7); sh.getRange('B2').setValue(month); }
-  const rows = dailyRows_(), p = month.split('-').map(Number), days = new Date(Date.UTC(p[0], p[1], 0)).getUTCDate();
-  const line = (label, s) => {
-    const d = s.byPlatform[APP.DIRECT] || { orders: 0 }, m = Object.assign({ spend: 0, orders: 0 }, s.byPlatform.META), t = s.byPlatform.TIKTOK || { spend: 0, orders: 0 }, u = s.byPlatform[APP.UNKNOWN_PLATFORM] || { orders: 0 };
-    return [label, round2_(s.total.spend), round2_(s.total.spend * (1 + taxRate_())), s.total.orders, cpp_(s.total),
-      round2_(m.spend), m.orders + d.orders, cpp_({ spend: m.spend, orders: m.orders + d.orders }), round2_(t.spend), t.orders, cpp_(t), u.orders, s.total.cancelled,
-      round2_(s.total.revenue), aov_(s.total), roas_(s.total)];
-  };
-  const out = [], weeks = [[1, 7], [8, 14], [15, 21], [22, 28], [29, days]];
-  weeks.forEach((w, i) => {
-    if (w[0] > days) return;
-    for (let d = w[0]; d <= w[1]; d++) {
-      const k = month + '-' + String(d).padStart(2, '0');
-      out.push(line(k, summarize_(rows, k, k)));
-    }
-    out.push(line('إجمالي الأسبوع ' + (i + 1), summarize_(rows, month + '-' + String(w[0]).padStart(2, '0'), month + '-' + String(w[1]).padStart(2, '0'))));
-  });
-  out.push(line('إجمالي الشهر', summarize_(rows, month + '-01', month + '-' + String(days).padStart(2, '0'))));
-  writeBlocks_(sh, 4, [{ title: 'شهر ' + month, headers: ['اليوم', 'الصرف', 'الصرف + الضريبة', 'الأوردرات', 'تكلفة الأوردر + الضريبة',
-    'صرف Meta', 'أوردرات Meta + DIRECT', 'تكلفة Meta + DIRECT + الضريبة', 'صرف TikTok', 'أوردرات TikTok', 'تكلفة TikTok + الضريبة',
-    'أوردرات مش معروف مصدرها', 'ملغي', 'المبيعات', 'متوسط الأوردر AOV', 'Shopify ROAS'], rows: out }], 16);
-}
-
 function writeHealth_() {
   const sh = ensureTab_(APP.T.HEALTH);
   const am = ss_().getSheetByName(APP.T.ADMAP), st = { '❌': 0, '⚠️': 0, '✅': 0 };
@@ -361,7 +332,6 @@ function onEdit(e) {
   try {
     const sh = e.range.getSheet(), n = sh.getName(), a1 = e.range.getA1Notation();
     if (n === APP.T.PERF && (a1 === 'B2' || a1 === 'B3')) writePerf_();
-    if (n === APP.T.CLOSING && a1 === 'B2') writeClosing_();
     EXT.edit.forEach(f => f(n, a1));
   } catch (err) { console.log('onEdit: ' + err); }
 }

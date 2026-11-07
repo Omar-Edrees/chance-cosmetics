@@ -87,7 +87,7 @@ function env(options) {
   const c = load('ads-sheet', {
     SpreadsheetApp: {
       getActive: () => active, openById: id => { if (id !== ORDERS_ID) throw new Error('not found ' + id); return source; },
-      newDataValidation: builder, newConditionalFormatRule: builder,
+      newDataValidation: builder, newConditionalFormatRule: builder, ProtectionType: { SHEET: 'SHEET', RANGE: 'RANGE' },
       getUi: () => ({ alert: m => { alerts.push(m); } }),
     },
     PropertiesService: { getDocumentProperties: () => store(doc), getUserProperties: () => store(user) },
@@ -284,15 +284,83 @@ test('ربط الإعلانات بالمنتجات من لينك صفحة الم
   assert.equal(map.find(r => r[0] === '222')[9], 'NONE');
 });
 
-test('Closing: يوم بيوم والأسبوع والشهر من نفس الأرقام', () => {
-  const e = scenario();
-  const rows = block(e.ss.getSheetByName('Closing'), 'شهر ');
-  const day = rows.find(r => r[0] === e.today), month = rows.find(r => r[0] === 'إجمالي الشهر');
-  assert.equal(day[1], 1100);
-  assert.equal(day[3], 3);
+/* Closing: صف بالاسم اللي في عمود A (اليوم "Sat 07-Nov"، أو WEEK 1 TOTAL، أو MONTH TOTAL) كأوبجكت بعناوين الأعمدة. */
+function closingRow(sheet, label) {
+  const v = sheet.getDataRange().getValues(), head = v.find(r => r[0] === 'DATE'), r = v.find(x => x[0] === label);
+  assert.ok(head && r, 'مش لاقي في Closing: ' + label);
+  const o = {};
+  head.forEach((h, i) => { o[h] = r[i]; });
+  return o;
+}
+function dayLabel(c, key) {
+  const p = key.split('-').map(Number);
+  return c.Utilities.formatDate(new Date(Date.UTC(p[0], p[1] - 1, p[2], 12)), 'UTC', 'EEE dd-MMM');
+}
+
+test('Closing: يوم بيوم والأسبوع والشهر من نفس الأرقام، والشهر ده بس', () => {
+  const e = scenario(), sh = e.ss.getSheetByName('Closing'), v = sh.getDataRange().getValues();
+  const day = closingRow(sh, dayLabel(e.c, e.today)), month = closingRow(sh, 'MONTH TOTAL');
+  assert.equal(day['TOTAL SPEND'], 1100);
+  assert.equal(day['TOTAL ORDERS'], 3);
+  assert.equal(day['TOTAL UNITS'], 5, 'Lip Oil x2 | Blush x1 + Lip Oil x1 + Blush x1');
+  assert.equal(day.UPO, 1.67);
+  assert.equal(day.CPL, 367);
   const sameMonth = e.yest.slice(0, 7) === e.today.slice(0, 7);
-  assert.equal(month[1], sameMonth ? 1400 : 1100);
-  assert.equal(month[3], sameMonth ? 4 : 3);
+  assert.equal(month['TOTAL SPEND'], sameMonth ? 1400 : 1100);
+  assert.equal(month['TOTAL ORDERS'], sameMonth ? 4 : 3);
+  assert.equal(v.filter(r => /^WEEK \d TOTAL$/.test(r[0])).length, 4, '4 أسابيع زي House of Beauty');
+  const days = e.c.closingDays_(e.today.slice(0, 7));
+  assert.ok(v.some(r => r[0] === dayLabel(e.c, e.today.slice(0, 8) + days)), 'آخر يوم في الشهر موجود');
+  const next = e.c.shiftKey_(e.today, 1);
+  if (next.slice(0, 7) === e.today.slice(0, 7)) assert.equal(closingRow(sh, dayLabel(e.c, next))['TOTAL SPEND'], '', 'الأيام اللي لسه ماجتش فاضية');
+  assert.deepEqual(v.find(r => r[0] === 'DATE'), ['DATE', 'TOTAL SPEND', 'TOTAL ORDERS', 'ROAS', 'ACTUAL ROAS', 'AOV', 'REVENUE', 'TOTAL UNITS', 'UPO',
+    'CONFIRMED ORDERS', 'DELIVERED ORDERS', 'CPL', 'CPO', 'CROSS-SELL REVENUE']);
+});
+
+test('Closing: المتأكد والمتسلم و REVENUE الفعلي والكروس سيل من حالة شوبيفاي، والأيام بعد آخر قراية فاضية', () => {
+  const probe = env(), today = probe.c.todayKey_(), month = today.slice(0, 7), d1 = month + '-01', d2 = month + '-02', B = '(blank)';
+  const flow = (id, day, total, products) => ['gid://shopify/Order/' + id, ' #' + id, ' N', B, total, ' ' + day + 'T10:00:00+03:00', B, B, B, B, B, '', '', '', '', products, 'web'];
+  const e = env({ orderHead: FLOW_HEAD.slice(0, 17), ads: { [A1]: [adRow(d1, '111', 1000), adRow(d2, '111', 500)] },
+    orders: [flow(1, d1, 500, 'Lip Oil x1'), flow(2, d1, 300, 'Lip Oil x1'), flow(3, d1, 200, 'Blush x1'), flow(4, d1, 400, 'Blush x1'), flow(5, d2, 600, 'Blush x1')] });
+  const st = { 1: { code: 'D', revenue: 800, cross: 300, units: 3 }, 2: { code: 'D', revenue: null, cross: 0, units: null }, 3: { code: 'R', revenue: null },
+    4: { code: 'C', revenue: null } };
+  e.c.orderStatus_ = id => st[String(id).split('/').pop()] || null;
+  e.c.orderStatusDay_ = () => d1;
+  e.c.setupAll();
+  e.c.liveTick(); e.c.liveTick();
+  const sh = e.ss.getSheetByName('Closing'), a = closingRow(sh, dayLabel(e.c, d1));
+  assert.deepEqual([a['TOTAL SPEND'], a['TOTAL ORDERS'], a.ROAS, a.AOV, a['TOTAL UNITS'], a['CONFIRMED ORDERS'], a['DELIVERED ORDERS'], a.REVENUE,
+    a['ACTUAL ROAS'], a.CPO, a['CROSS-SELL REVENUE'], a.CPL], [1000, 4, 1.4, 350, 6, 3, 2, 1100, 1.1, 500, 300, 250],
+  'المتسلم: أوردر 1 (اتزود عليه 300 بعد ما اتعمل) وأوردر 2؛ والقطع من شوبيفاي لأوردر 1');
+  if (today >= d2) {
+    const b = closingRow(sh, dayLabel(e.c, d2));
+    assert.deepEqual([b['TOTAL ORDERS'], b['CONFIRMED ORDERS'], b.REVENUE, b['ACTUAL ROAS']], [1, '', '', ''], 'بعد آخر قراية للحالة: فاضي');
+    const w = closingRow(sh, 'WEEK 1 TOTAL');
+    assert.deepEqual([w['TOTAL SPEND'], w['ACTUAL ROAS'], w.CPO], [1500, 1.1, 500], 'ACTUAL ROAS و CPO للأسبوع على صرف الأيام اللي ليها حالة بس');
+  }
+});
+
+test('Closing: الشهر اللي خلص بيتنقل مرة واحدة لتاب أرشيف ثابت، بعد ما التحديث اليومي يسحب آخر يوم فيه', () => {
+  const probe = env(), today = probe.c.todayKey_(), prev = probe.c.closingPrevMonth_(today.slice(0, 7)), last = prev + '-' + probe.c.closingDays_(prev);
+  const B = '(blank)', name = probe.c.closingArchiveName_(prev);
+  const e = env({ orderHead: FLOW_HEAD.slice(0, 17), ads: { [A1]: [adRow(prev + '-03', '111', 900), adRow(today, '111', 100)] },
+    orders: [['gid://shopify/Order/1', ' #1', ' N', B, 450, ' ' + prev + '-03T10:00:00+03:00', B, B, B, B, B, '', '', '', '', 'Lip Oil x2', 'web']] });
+  e.doc.SYNCED_THROUGH = e.c.shiftKey_(last, -1);
+  e.c.setupAll();
+  e.c.liveTick(); e.c.liveTick();
+  assert.equal(e.ss.getSheetByName(name), null, 'لسه التحديث اليومي ماسحبش آخر يوم في الشهر');
+  e.doc.SYNCED_THROUGH = last;
+  e.c.liveTick();
+  const arch = e.ss.getSheetByName(name);
+  assert.ok(arch, 'اتعمل تاب ' + name);
+  const m = closingRow(arch, 'MONTH TOTAL');
+  assert.deepEqual([m['TOTAL SPEND'], m['TOTAL ORDERS'], m['TOTAL UNITS']], [900, 1, 2]);
+  assert.match(String(arch.getRange(1, 1).getValue()), /CLOSING ARCHIVE/);
+  assert.equal(e.doc.CLOSING_ARCHIVED, prev);
+  assert.equal(closingRow(e.ss.getSheetByName('Closing'), 'MONTH TOTAL')['TOTAL SPEND'], 100, 'Closing فيه الشهر ده بس');
+  arch.getRange(1, 1).setValue('اتلمس');
+  e.c.liveTick();
+  assert.equal(arch.getRange(1, 1).getValue(), 'اتلمس', 'الأرشيف مابيتكتبش تاني لوحده');
 });
 
 test('تاب المنتجات: الستوك من شوبيفاي، والقطع المباعة، والإعلان الشغال', () => {
@@ -770,8 +838,8 @@ test('PRODUCT PERFORMANCE: أوردرات DIRECT والمانيول (Draft) دا
   assert.deepEqual(v.slice(i + 2, i + 5).map(r => r.slice(7, 14)), [
     ['Blush', 3, '', 1000, '', '', ''], ['Lip Oil', 2, '', 1000, '', '', ''], ['TOTAL', 5, 4, 2000, 600, 500, 3.33]],
     'أوردر Meta + أوردر DIRECT لنفس المنتج، وأوردر Draft داخل');
-  const cl = block(e.ss.getSheetByName('Closing'), 'شهر ').find(r => r[0] === today);
-  assert.deepEqual([cl[5], cl[6], cl[15]], [600, 3, 3.33], 'Closing: أوردرات Meta + DIRECT، و Shopify ROAS على كل الأوردرات');
+  const cl = closingRow(e.ss.getSheetByName('Closing'), dayLabel(e.c, today));
+  assert.deepEqual([cl['TOTAL SPEND'], cl['TOTAL ORDERS'], cl.ROAS, cl['TOTAL UNITS']], [600, 4, 3.33, 5], 'Closing: كل الأوردرات (Meta و DIRECT والمانيول)، و ROAS عليها');
 });
 
 test('Actual ROAS: الإلغاء والتأكيد والمرتجع والمتسلم والمبيعات الفعلية، بنفس تقسيمة الفانل', () => {
