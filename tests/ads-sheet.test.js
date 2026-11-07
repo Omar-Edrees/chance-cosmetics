@@ -299,6 +299,7 @@ function dayLabel(c, key) {
 
 test('Closing: يوم بيوم والأسبوع والشهر من نفس الأرقام، والشهر ده بس', () => {
   const e = scenario(), sh = e.ss.getSheetByName('Closing'), v = sh.getDataRange().getValues();
+  assert.equal(sh.getLastColumn(), 14, 'مفيش أعمدة زيادة جنب الجدول');
   const day = closingRow(sh, dayLabel(e.c, e.today)), month = closingRow(sh, 'MONTH TOTAL');
   assert.equal(day['TOTAL SPEND'], 1100);
   assert.equal(day['TOTAL ORDERS'], 3);
@@ -315,6 +316,13 @@ test('Closing: يوم بيوم والأسبوع والشهر من نفس الأ�
   if (next.slice(0, 7) === e.today.slice(0, 7)) assert.equal(closingRow(sh, dayLabel(e.c, next))['TOTAL SPEND'], '', 'الأيام اللي لسه ماجتش فاضية');
   assert.deepEqual(v.find(r => r[0] === 'DATE'), ['DATE', 'TOTAL SPEND', 'TOTAL ORDERS', 'ROAS', 'ACTUAL ROAS', 'AOV', 'REVENUE', 'TOTAL UNITS', 'UPO',
     'CONFIRMED ORDERS', 'DELIVERED ORDERS', 'CPL', 'CPO', 'CROSS-SELL REVENUE']);
+});
+
+test('Closing: الأعمدة اللي على يمين الجدول من الشكل القديم بتتمسح', () => {
+  const e = scenario(), sh = e.ss.getSheetByName('Closing');
+  sh.getRange(10, 15, 1, 2).setValues([['AOV قديم', 1313.4]]);
+  e.c.liveTick();
+  assert.equal(sh.getLastColumn(), 14);
 });
 
 test('Closing: المتأكد والمتسلم و REVENUE الفعلي والكروس سيل من حالة شوبيفاي، والأيام بعد آخر قراية فاضية', () => {

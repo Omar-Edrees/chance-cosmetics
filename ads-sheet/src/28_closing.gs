@@ -120,7 +120,9 @@ function closingGrid_(month, title, note, today, updated) {
 
 /* Column widths, wrap and frozen rows, after a redraw. */
 function closingLook_(sh) {
-  const W = 1 + CLOSING.COLS.length;
+  const W = 1 + CLOSING.COLS.length, extra = sh.getLastColumn() - W;
+  // Columns to the right of the table (left from the old, wider Closing) are emptied.
+  if (extra > 0) sh.getRange(1, W + 1, sh.getMaxRows(), extra).breakApart().clear();
   sh.setFrozenRows(2);
   sh.setColumnWidth(1, 120);
   for (let c = 2; c <= W; c++) sh.setColumnWidth(c, 100);
@@ -138,7 +140,7 @@ function writeClosing_() {
     '، والتاب دي بتبدأ الشهر الجديد من الأول.';
   const res = closingGrid_(month, (cfgStr_('business.name') || 'ADS').toUpperCase() + ' — WEEKLY & MONTHLY CLOSING', note, today, nowText_());
   res.g.live = [[2, 5]];
-  if (writeGrid_(sh, res.g)) closingLook_(sh);
+  if (writeGrid_(sh, res.g) || sh.getLastColumn() > 1 + CLOSING.COLS.length) closingLook_(sh);
   try { autoArchiveClosing_(today); } catch (e) { setStatus_('CLOSING_ARCHIVE', '✗ ' + errText_(e)); }
 }
 
