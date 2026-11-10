@@ -35,26 +35,31 @@ function shopifyHtml_(text) {
 /* Menu 🔑: Client ID + secret, then Shopify's approval page. */
 function shopifyConnect() {
   const ui = SpreadsheetApp.getUi(), up = shopifyProps_();
-  let url = '';
-  try { url = ScriptApp.getService().getUrl() || ''; } catch (e) { url = ''; }
-  if (!/\/exec$/.test(url)) {
-    const a = ui.prompt('ربط شوبيفاي (1 من 3)', 'الصق لينك الـ Web app اللي آخره /exec (من Deploy ← Manage deployments).', ui.ButtonSet.OK_CANCEL);
-    if (a.getSelectedButton() !== ui.Button.OK) return;
-    url = a.getResponseText().trim();
-    if (!/^https:\/\/script\.google\.com\/.+\/exec$/.test(url)) { ui.alert('ده مش لينك Web app. لازم يبدأ بـ https://script.google.com ويخلص بـ /exec'); return; }
-  }
-  const id = ui.prompt('ربط شوبيفاي (2 من 3)', 'الصق الـ Client ID من صفحة التطبيق في Dev Dashboard.', ui.ButtonSet.OK_CANCEL);
-  if (id.getSelectedButton() !== ui.Button.OK) return;
-  const sec = ui.prompt('ربط شوبيفاي (3 من 3)', 'الصق الـ Client secret. ماتبعتوش في أي شات.', ui.ButtonSet.OK_CANCEL);
-  if (sec.getSelectedButton() !== ui.Button.OK) return;
-  const clientId = id.getResponseText().trim(), secret = sec.getResponseText().trim();
+  // Always asked: ScriptApp.getService().getUrl() can return an ID that isn't the deployment's /exec link.
+  // An empty answer keeps what was saved last time (link, Client ID, secret).
+  const ask = (title, text, saved) => {
+    const a = ui.prompt(title, text + (saved ? '\n\nسيبها فاضية عشان يفضل اللي اتحفظ المرة اللي فاتت' + (saved.show ? ':\n' + saved.show : '.') : ''), ui.ButtonSet.OK_CANCEL);
+    if (a.getSelectedButton() !== ui.Button.OK) return null;
+    return String(a.getResponseText() || '').trim() || (saved ? saved.value : '');
+  };
+  const savedUrl = up.getProperty('SHOPIFY_REDIRECT') || '', savedId = up.getProperty('SHOPIFY_CLIENT_ID') || '',
+    savedSecret = up.getProperty('SHOPIFY_CLIENT_SECRET') || '';
+  const url = ask('ربط شوبيفاي (1 من 3)', 'الصق لينك الـ Web app اللي آخره /exec.\nمن Apps Script: Deploy ← Manage deployments ← Web app ← URL (زرار Copy).',
+    savedUrl ? { value: savedUrl, show: savedUrl } : null);
+  if (url === null) return;
+  if (!/^https:\/\/script\.google\.com\/.+\/exec$/.test(url)) { ui.alert('ده مش لينك Web app. لازم يبدأ بـ https://script.google.com ويخلص بـ /exec'); return; }
+  const clientId = ask('ربط شوبيفاي (2 من 3)', 'الصق الـ Client ID من صفحة التطبيق في Dev Dashboard (Settings).',
+    savedId ? { value: savedId, show: savedId } : null);
+  if (clientId === null) return;
+  const secret = ask('ربط شوبيفاي (3 من 3)', 'الصق الـ Client secret. ماتبعتوش في أي شات.', savedSecret ? { value: savedSecret } : null);
+  if (secret === null) return;
   if (!clientId || /\s/.test(clientId) || !secret || /\s/.test(secret)) { ui.alert('الـ Client ID أو الـ secret مش صحيح.'); return; }
   const state = Utilities.getUuid();
   up.setProperties({ SHOPIFY_CLIENT_ID: clientId, SHOPIFY_CLIENT_SECRET: secret, SHOPIFY_STATE: state, SHOPIFY_REDIRECT: url });
   const link = 'https://' + shopifyDomain_() + '/admin/oauth/authorize?client_id=' + encodeURIComponent(clientId) +
     '&scope=' + encodeURIComponent(SHOPIFY.SCOPES) + '&redirect_uri=' + encodeURIComponent(url) + '&state=' + encodeURIComponent(state);
   const html = '<div dir="rtl" style="font-family:Arial,sans-serif;font-size:15px;line-height:1.8">' +
-    '<p>1) اتأكد إن اللينك ده مكتوب في <b>Redirect URLs</b> في نسخة التطبيق، وإن النسخة دي اتعملها Release:</p>' +
+    '<p>1) اتأكد إن اللينك ده مكتوب في <b>Allowed redirection URL(s)</b> في نسخة التطبيق، وإن النسخة دي اتعملها Release:</p>' +
     '<p dir="ltr" style="background:#f3f4f6;padding:8px;word-break:break-all;font-family:monospace">' + url + '</p>' +
     '<p>2) دوس الزرار، ووافق في شوبيفاي. هيرجعك لصفحة مكتوب فيها "اتربط ✅".</p>' +
     '<p><a href="' + link + '" target="_blank" style="display:inline-block;background:#008060;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none">افتح صفحة الموافقة في شوبيفاي</a></p></div>';
