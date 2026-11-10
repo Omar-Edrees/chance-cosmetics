@@ -88,7 +88,7 @@ function closingGrid_(month, title, note, today, updated) {
   g.set(3, 1, 'TOTAL ORDERS = كل أوردرات شوبيفاي (ماعدا الأكاونت اللي مش معانا). ROAS = مبيعات كل الأوردرات ÷ الصرف، و AOV عليها. ' +
     'CONFIRMED = اتشحن. DELIVERED = اتسلم واتحصّل. REVENUE = مبيعات المتسلم بس، و ACTUAL ROAS = REVENUE ÷ الصرف. ' +
     'UPO = القطع ÷ الأوردرات. CPL = الصرف ÷ كل الأوردرات. CPO = الصرف ÷ المتسلم. CROSS-SELL REVENUE = اللي اتزود على الأوردرات المتسلمة بعد ما اتعملت (جوه REVENUE). ' +
-    'حالة الأوردرات من شوبيفاي لحد ' + ORDER_STATUS_AT + '، والأيام اللي بعدها أعمدة الحالة فيها فاضية لحد التحديث الجاي.', { fc: C.SOFT });
+    'حالة الأوردرات من شوبيفاي لحد ' + orderStatusAt_() + '، والأيام اللي بعدها أعمدة الحالة فيها فاضية لحد التحديث الجاي.', { fc: C.SOFT });
   g.merge(3, 1, 1, W);
   let r = 5;
   const line = (label, t, style, tint) => {

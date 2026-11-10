@@ -51,8 +51,8 @@ const EXT = {
   views: [slow => chanceViews_(slow)],
   edit: [(name, a1) => chanceEdit_(name, a1)],
   setup: [() => chanceSetup_()],
-  live: [() => refreshAccountNames_(), () => discoverAccounts_(), () => chanceLive_(), () => refreshTodayFunnel_(), () => refreshFunnel_(false)],
+  live: [() => syncShopifyStatus_(), () => refreshAccountNames_(), () => discoverAccounts_(), () => chanceLive_(), () => refreshTodayFunnel_(), () => refreshFunnel_(false)],
   today: [() => refreshTodayFunnel_(), () => refreshBalances_()],
   menu: [['📦 تحديث المنتجات والستوك وتوب 100', 'refreshProductsNow'], ['📈 تحديث Daily Account Funnel و Actual ROAS', 'refreshFunnelNow'],
-    ['🗄 أرشيف Closing لشهر خلص', 'archiveClosingMonth']]
+    ['🗄 أرشيف Closing لشهر خلص', 'archiveClosingMonth'], ['🔑 ربط أبليكيشن شوبيفاي', 'shopifyConnect']]
 };

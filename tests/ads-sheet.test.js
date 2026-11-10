@@ -22,7 +22,8 @@ function builder() {
 function env(options) {
   const opt = options || {};
   const doc = {}, user = { META_TOKEN: 'TOKEN' }, alerts = [], requests = [];
-  const store = o => ({ getProperty: k => (k in o ? o[k] : null), setProperty: (k, v) => { o[k] = v; }, deleteProperty: k => { delete o[k]; } });
+  const store = o => ({ getProperty: k => (k in o ? o[k] : null), setProperty: (k, v) => { o[k] = v; }, deleteProperty: k => { delete o[k]; },
+    setProperties: m => { Object.keys(m).forEach(k => { o[k] = String(m[k]); }); } });
   const active = new FakeSpreadsheet('Chance Ads');
   active.setActiveSheet = () => {};
   const source = new FakeSpreadsheet('Chance orders', ORDERS_ID);
@@ -99,7 +100,7 @@ function env(options) {
   if (opt.archive !== true) { const arch = typeof opt.archive === 'function' ? opt.archive(c) : opt.archive || []; c.archiveOrders_ = () => arch; }
   // The real stock read from Shopify (23_stock_snapshot.gs) only where a test asks for it; opt.snapshot = {title: units} gives a small one.
   if (opt.snapshot !== true) { const snap = opt.snapshot || {}; c.stockSnapshot_ = () => Object.assign({}, snap); }
-  return { c, ss: active, source, doc, alerts, requests, triggers };
+  return { c, ss: active, source, doc, user, alerts, requests, triggers };
 }
 
 const adRow = (date, adId, spend, ad) => ({ date_start: date, campaign_id: 'C1', campaign_name: 'Camp', adset_id: 'S1', adset_name: 'Set',
@@ -1001,4 +1002,109 @@ test('Today: الستوك يكفي كام يوم، جزء للمنتجات ال�
     ['منتجات من غير إعلانات — بتتباع 1 قطعة في اليوم أو أكتر وفاضلها 10 أيام أو أقل', '', '', '', '', ''],
     ['Blush', '', 5, 1, 5, 25], ['', '', '', '', '', '']]);
   assert.deepEqual([sh.attr(i + 4, 5).bg, sh.attr(i + 5, 5).bg, sh.attr(i + 7, 5).bg], ['#fff2cc', null, '#f4cccc']);
+});
+
+/* ---------- الربط بأبليكيشن شوبيفاي (29_shopify_api.gs) ---------- */
+
+/* شوبيفاي وهمي: صفحة الموافقة بترجع code، و access_token بيدّي مفتاح أو بيجدده، و graphql بيرجع الأوردرات اللي اتغيرت. */
+function fakeShopify(e, orders, opt) {
+  const o = opt || {}, calls = [], old = e.c.UrlFetchApp;
+  e.c.HtmlService = { createHtmlOutput: h => ({ html: h, setTitle() { return this; }, setWidth() { return this; }, setHeight() { return this; } }) };
+  e.c.UrlFetchApp = {
+    fetchAll: old.fetchAll,
+    fetch: (url, p) => {
+      if (!/chance-eg\.myshopify\.com/.test(url)) return old.fetch(url, p);
+      calls.push({ url, p });
+      const json = (code, body) => ({ getResponseCode: () => code, getContentText: () => JSON.stringify(body) });
+      if (/oauth\/access_token$/.test(url)) {
+        if (p.payload.grant_type === 'refresh_token') return json(200, { access_token: 'TOKEN2', expires_in: 3600, refresh_token: 'R2', refresh_token_expires_in: 7776000 });
+        return p.payload.code === 'GOOD' ? json(200, { access_token: 'TOKEN1', scope: 'read_orders', expires_in: 3600, refresh_token: 'R1', refresh_token_expires_in: 7776000 })
+          : json(400, { error: 'invalid_request' });
+      }
+      if (/graphql\.json$/.test(url)) {
+        const body = JSON.parse(p.payload), page = Number(body.variables.after || 0), size = o.pageSize || 100;
+        const nodes = orders.slice(page * size, page * size + size);
+        return json(200, { data: { orders: { nodes, pageInfo: { hasNextPage: (page + 1) * size < orders.length, endCursor: String(page + 1) } } } });
+      }
+      return json(404, {});
+    }
+  };
+  return calls;
+}
+function signed(c, params, secret) {
+  const msg = Object.keys(params).sort().map(k => k + '=' + params[k]).join('&');
+  return Object.assign({}, params, { hmac: require('crypto').createHmac('sha256', secret).update(msg).digest('hex') });
+}
+const shopOrder = (n, day, extra) => Object.assign({ id: 'gid://shopify/Order/' + n, createdAt: day + 'T10:00:00Z', updatedAt: day + 'T12:00:00Z',
+  cancelledAt: null, displayFinancialStatus: 'PENDING', returnStatus: 'NO_RETURN', subtotalLineItemsQuantity: 1,
+  originalTotalPriceSet: { shopMoney: { amount: '500.0' } }, currentTotalPriceSet: { shopMoney: { amount: '500.0' } }, fulfillments: [] }, extra || {});
+
+test('شوبيفاي: حالة الأوردر من بياناته (زي الملف الثابت)', () => {
+  const c = env().c, s = x => c.shopifyStatusCode_(shopOrder(1, '2026-11-01', x));
+  const done = [{ status: 'SUCCESS', displayStatus: 'DELIVERED' }], shipped = [{ status: 'SUCCESS', displayStatus: 'FULFILLED' }];
+  assert.equal(s({ cancelledAt: '2026-11-01T13:00:00Z', displayFinancialStatus: 'VOIDED' }), 'C', 'اتلغى قبل الشحن');
+  assert.equal(s({ cancelledAt: '2026-11-02T13:00:00Z', fulfillments: shipped }), 'R', 'اتلغى بعد الشحن');
+  assert.equal(s({ returnStatus: 'RETURNED', fulfillments: [{ status: 'SUCCESS', displayStatus: 'NOT_DELIVERED' }] }), 'R', 'رجع');
+  assert.equal(s({ displayFinancialStatus: 'PAID', fulfillments: done }), 'D', 'اتسلم واتحصّل');
+  assert.equal(s({ displayFinancialStatus: 'PAID', fulfillments: [{ status: 'CANCELLED', displayStatus: 'CANCELED' }] }), 'D', 'متحصّل وشحنته القديمة اتلغت');
+  assert.equal(s({ fulfillments: shipped }), 'S', 'في الشحن');
+  assert.equal(s({ returnStatus: 'IN_PROGRESS', fulfillments: shipped }), 'S', 'مرتجع لسه ماخلصش');
+  assert.equal(s({}), 'P', 'لسه مااتشحنش');
+  const row = c.shopifyStatusRow_(shopOrder(2, '2026-11-01', { displayFinancialStatus: 'PAID', fulfillments: done, subtotalLineItemsQuantity: 3,
+    currentTotalPriceSet: { shopMoney: { amount: '820.0' } } }));
+  assert.deepEqual(Array.from(row.slice(3)), ['D', 820, 320, 3], 'المتسلم: المبيعات الحالية، والكروس سيل 320، و3 قطع');
+});
+
+test('شوبيفاي: صفحة الرجوع بتتأكد من state و HMAC وبتاخد مفتاح بيتجدد لوحده', () => {
+  const e = env(), calls = fakeShopify(e, []);
+  Object.assign(e.user, { SHOPIFY_CLIENT_ID: 'CID', SHOPIFY_CLIENT_SECRET: 'SECRET', SHOPIFY_STATE: 'ST1' });
+  const base = { code: 'GOOD', shop: 'chance-eg.myshopify.com', state: 'ST1', timestamp: '1794066000', host: 'abc' };
+  assert.match(e.c.doGet({ parameter: signed(e.c, base, 'WRONG') }).html, /توقيع شوبيفاي مش مطابق/);
+  assert.match(e.c.doGet({ parameter: signed(e.c, Object.assign({}, base, { state: 'X' }), 'SECRET') }).html, /قديم أو مش من الشيت/);
+  assert.match(e.c.doGet({ parameter: signed(e.c, Object.assign({}, base, { shop: 'other.myshopify.com' }), 'SECRET') }).html, /مش متجر الشيت/);
+  assert.equal(e.user.SHOPIFY_TOKEN, undefined, 'مفيش مفتاح من غير state و HMAC صح');
+  assert.match(e.c.doGet({ parameter: signed(e.c, base, 'SECRET') }).html, /اتربط ✅/);
+  assert.equal(e.user.SHOPIFY_TOKEN, 'TOKEN1');
+  assert.equal(e.user.SHOPIFY_REFRESH, 'R1');
+  assert.equal(e.user.SHOPIFY_STATE, undefined, 'الـ state مابيتستخدمش مرتين');
+  const ex = calls.find(x => /access_token$/.test(x.url));
+  assert.equal(ex.p.payload.expiring, '1', 'مفتاح بيخلص (Shopify بيرفض المفتاح اللي مابيخلصش)');
+  e.user.SHOPIFY_TOKEN_EXP = String(Date.now() + 60000); // فاضل دقيقة
+  assert.equal(e.c.shopifyToken_(), 'TOKEN2', 'اتجدد قبل ما يخلص');
+  assert.equal(e.user.SHOPIFY_REFRESH, 'R2');
+  assert.match(e.c.doGet({ parameter: {} }).html, /ابدأ الربط من منيو الشيت/);
+});
+
+test('شوبيفاي: كل تحديث بيقرا الأوردرات اللي اتغيرت، و Closing و Actual ROAS بياخدوا منها', () => {
+  const probe = env(), today = probe.c.todayKey_(), d1 = today.slice(0, 8) + '01', B = '(blank)';
+  const flow = (id, total) => ['gid://shopify/Order/' + id, ' #' + id, ' N', B, total, ' ' + d1 + 'T10:00:00+03:00', B, B, B, B, B, '', '', '', '', 'Lip Oil x1', 'web'];
+  const e = env({ orderHead: FLOW_HEAD.slice(0, 17), ads: { [A1]: [adRow(d1, '111', 1000)] }, orders: [flow(1, 500), flow(2, 300), flow(3, 200)] });
+  const done = [{ status: 'SUCCESS', displayStatus: 'DELIVERED' }];
+  const calls = fakeShopify(e, [
+    shopOrder(1, d1, { displayFinancialStatus: 'PAID', fulfillments: done, subtotalLineItemsQuantity: 2, currentTotalPriceSet: { shopMoney: { amount: '800.0' } },
+      updatedAt: today + 'T08:00:00Z' }),
+    shopOrder(2, d1, { fulfillments: [{ status: 'SUCCESS', displayStatus: 'FULFILLED' }], updatedAt: today + 'T08:30:00Z' }),
+    shopOrder(3, d1, { cancelledAt: d1 + 'T11:00:00Z', updatedAt: today + 'T09:00:00Z' })], { pageSize: 2 });
+  Object.assign(e.user, { SHOPIFY_TOKEN: 'TOKEN1', SHOPIFY_TOKEN_EXP: String(Date.now() + 3600000) });
+  e.c.setupAll();
+  e.c.liveTick(); e.c.liveTick();
+  const q = calls.filter(x => /graphql/.test(x.url)).map(x => JSON.parse(x.p.payload));
+  assert.match(q[0].variables.q, /^updated_at:>='2026-11-07T15:00:00Z'$/, 'أول قراية من قبل الملف الثابت بشوية');
+  assert.equal(calls.find(x => /graphql/.test(x.url)).p.headers['X-Shopify-Access-Token'], 'TOKEN1');
+  assert.ok(q.every(x => /^query/.test(x.query)), 'قراية بس');
+  assert.equal(e.doc.SHOPIFY_SINCE, today + 'T09:00:00Z', 'المرة الجاية من آخر تغيير اتقرا');
+  assert.equal(e.doc.SHOPIFY_STATUS_DAY, today);
+  const st = e.ss.getSheetByName('Order Status');
+  assert.ok(st && st.hidden, 'تاب مخفي');
+  const a = closingRow(e.ss.getSheetByName('Closing'), dayLabel(e.c, d1));
+  assert.deepEqual([a['TOTAL ORDERS'], a['CONFIRMED ORDERS'], a['DELIVERED ORDERS'], a.REVENUE, a['CROSS-SELL REVENUE'], a['TOTAL UNITS']],
+    [3, 2, 1, 800, 300, 4], 'أوردر 1 اتسلم واتزود عليه 300 (قطعتين)، وأوردر 2 في الشحن، وأوردر 3 اتلغى');
+  assert.match(e.ss.getSheetByName('Health').getDataRange().getValues().map(r => r.join(' ')).join('\n'), /حالة الأوردرات من شوبيفاي \(الأبليكيشن\) .*✓/);
+});
+
+test('شوبيفاي: من غير ربط، التحديث مابيكلمش شوبيفاي خالص', () => {
+  const e = env(), calls = fakeShopify(e, []);
+  e.c.setupAll(); e.c.liveTick();
+  assert.equal(calls.length, 0);
+  assert.equal(e.ss.getSheetByName('Order Status'), null);
 });

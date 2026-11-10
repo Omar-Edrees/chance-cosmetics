@@ -23,8 +23,18 @@ function orderStatus_(id) {
       ORDER_STATUS_.set('gid://shopify/Order/' + n, { code: m[2], revenue: m[3] === '' ? null : Number(m[3]), cross: m[4] ? Number(m[4]) : 0,
         units: m[5] ? Number(m[5]) : null });
     });
+    // Read from Shopify by the sheet itself (29_shopify_api.gs): newer than the fixed file, so it wins.
+    liveOrderStatus_().forEach((v, k) => ORDER_STATUS_.set(k, v));
   }
   return ORDER_STATUS_.get(String(id)) || null;
 }
-/* The last whole day the status read covers: later days have no status yet. */
-function orderStatusDay_() { return ORDER_STATUS_DAY; }
+/* The last day the statuses cover: today when the sheet read Shopify itself today, else the fixed file's day. */
+function orderStatusDay_() {
+  const d = PropertiesService.getDocumentProperties().getProperty('SHOPIFY_STATUS_DAY') || '';
+  return d > ORDER_STATUS_DAY ? d : ORDER_STATUS_DAY;
+}
+/* When the statuses were read, for the notes in the tabs. */
+function orderStatusAt_() {
+  const d = PropertiesService.getDocumentProperties().getProperty('SHOPIFY_STATUS_AT') || '';
+  return d ? d + ' (من الربط بشوبيفاي)' : ORDER_STATUS_AT;
+}

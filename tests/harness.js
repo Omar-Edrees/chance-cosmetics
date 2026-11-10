@@ -59,6 +59,8 @@ function load(projectName, extra = {}, files) {
       /* زي جوجل: مصفوفة bytes بإشارة (-128..127) */
       computeDigest: (alg, text) => Array.from(require('crypto').createHash(alg).update(String(text), 'utf8').digest())
         .map(b => (b > 127 ? b - 256 : b)),
+      computeHmacSha256Signature: (value, key) => Array.from(require('crypto').createHmac('sha256', String(key)).update(String(value), 'utf8').digest())
+        .map(b => (b > 127 ? b - 256 : b)),
       base64EncodeWebSafe: bytes => Buffer.from(bytes.map(b => (b + 256) % 256)).toString('base64')
         .replace(/\+/g, '-').replace(/\//g, '_'),
     },

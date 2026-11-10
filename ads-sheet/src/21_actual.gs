@@ -57,7 +57,7 @@ function writeActual_(data) {
   g.set(2, 1, 'TOTAL ORDERS = أوردرات شوبيفاي (البيزنس كله: كلها ماعدا الأكاونت اللي مش معانا؛ الأكاونت: اللي جت من إعلاناته، و DIRECT على الأكاونت اللي بيصرف على المنتج، والمانيول على أكاونت المسيجات). ' +
     'CANCELLED = اتلغى قبل الشحن. CONFIRMED = اتشحن (RETURNED + IN SHIPPING + DELIVERED). RETURNED = اتشحن ورجع أو اتلغى بعد الشحن. ' +
     'IN SHIPPING = في الشحن ولسه ماتسلمش ولا رجع. DELIVERED = اتسلم واتحصّل. REVENUE = مبيعات المتسلم بس، و AOV عليه. ROAS = REVENUE ÷ SPEND. CPO = SPEND ÷ DELIVERED. ' +
-    'حالة الأوردرات من شوبيفاي لحد ' + ORDER_STATUS_AT + '، والأوردر الأحدث محسوب في TOTAL ORDERS بس.', { al: 'left' });
+    'حالة الأوردرات من شوبيفاي لحد ' + orderStatusAt_() + '، والأوردر الأحدث محسوب في TOTAL ORDERS بس.', { al: 'left' });
   g.merge(2, 1, 1, W);
   ['DATE', 'SPEND'].concat(A.COLS.map(c => c[0])).forEach((h, i) => g.set(3, 1 + i, h, { bg: '#fff200', b: 'bold', al: 'center' }));
   let r = 4;
