@@ -1193,6 +1193,7 @@ test('تاب Shopify: بيتقري من شوبيفاي مع التحديث وي�
   assert.deepEqual(blockOf('الشهر').length, 4);
   const charts = sh.getCharts(), title = ch => (ch.calls.find(x => x[0] === 'setOption' && x[1][0] === 'title') || [0, []])[1][1];
   assert.equal(charts.length, 13);
+  assert.ok(charts.every(ch => !ch.calls.some(x => x[0] === 'setOption' && x[1][0] === 'chartArea')), 'من غير chartArea: جوجل بيرسم برا البوكس');
   assert.ok(charts.every(ch => ch.calls.some(x => x[0] === 'setHiddenDimensionStrategy' && x[1][0] === 'SHOW_BOTH')), 'الرسوم بتعرض الداتا حتى لو صفوفها مخفية');
   assert.match(title(charts[0]), /^زيارات على منتجات خلصانة/);
   assert.match(title(charts[2]), /^Sessions over time/);

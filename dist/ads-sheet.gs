@@ -4431,17 +4431,17 @@ function shopTabChartList_(blocks) {
   const S = SHOPTAB, b = blocks;
   const base = (type, title, block, cols, opts) => ({ type: type, block: block, cols: cols,
     opts: Object.assign({ title: title, width: S.CHART_W, height: S.CHART_H, fontName: 'Arial', colors: S.COLORS, legend: { position: 'bottom' },
-      titleTextStyle: { fontSize: 13, bold: true, color: S.DARK }, chartArea: { left: 70, top: 40, width: '82%', height: '62%' } }, opts || {}) });
+      titleTextStyle: { fontSize: 13, bold: true, color: S.DARK } }, opts || {}) });
+  // No chartArea: Sheets reads its pixel left/top as fractions of the chart and draws the plot outside the box (empty charts).
   const line = (title, block, cols, fmt, opts) => base('LINE', title, block, cols, Object.assign({ curveType: 'function', lineWidth: 2, pointSize: 0,
     vAxis: { format: fmt, minValue: 0 }, hAxis: { showTextEvery: block === 'days' ? 5 : 2 } }, opts || {}));
-  const donut = (title, block) => base('PIE', title, block, [[0, 2]], { pieHole: 0.55, legend: { position: 'right' }, pieSliceText: 'percentage',
-    chartArea: { left: 20, top: 40, width: '90%', height: '75%' } });
+  const donut = (title, block) => base('PIE', title, block, [[0, 2]], { pieHole: 0.55, legend: { position: 'right' }, pieSliceText: 'percentage' });
   const bars = (title, block, opts) => base('BAR', title, block, [[0, b[block].head.length]], Object.assign({ legend: { position: 'none' },
-    hAxis: { minValue: 0, format: '#,##0' }, chartArea: { left: 190, top: 40, width: '62%', height: '75%' } }, opts || {}));
+    hAxis: { minValue: 0, format: '#,##0' } }, opts || {}));
   return [
-    b.stockless.rows.length ? bars('زيارات على منتجات خلصانة (الستوك صفر): فلوس إعلانات رايحة على الفاضي', 'stockless',
+    b.stockless.rows.length ? bars('زيارات على منتجات خلصانة (الستوك صفر)', 'stockless',
       { colors: ['#dc2626', '#fca5a5'], legend: { position: 'bottom' } }) : { text: '✅ مفيش زيارات النهارده ولا آخر 7 أيام على منتجات خلصانة' },
-    b.clicks.rows.length ? line('الكليكات اللي بتوصل الموقع: زيارات شوبيفاي ÷ Outbound clicks (لو وقعت: الموقع تقيل أو لينك باظ)', 'clicks',
+    b.clicks.rows.length ? line('الكليكات اللي بتوصل الموقع (Sessions ÷ Outbound clicks)', 'clicks',
       [[0, b.clicks.head.length]], '0%') : { text: 'مفيش أكاونتات Meta في تاب Accounts، أو الكليكات لسه ماتقرتش.' },
     line('Sessions over time — الزيارات', 'days', [[0, 2]], '#,##0', { legend: { position: 'none' } }),
     base('COMBO', 'Total sales و Orders — المبيعات والأوردرات', 'days', [[0, 1], [2, 2]], { seriesType: 'bars',
@@ -4450,7 +4450,7 @@ function shopTabChartList_(blocks) {
     line('Conversion rate over time — التحويل', 'days', [[0, 1], [4, 1]], '0.0%', { legend: { position: 'none' } }),
     base('COLUMN', 'Conversion rate breakdown — خطوات الشراء (% من الزيارات)', 'steps', [[0, 3]], { vAxis: { format: '0.0%', minValue: 0 } }),
     line('Bounce rate over time — خرجوا من أول صفحة', 'days', [[0, 1], [5, 1]], '0%', { legend: { position: 'none' }, colors: ['#f59e0b'] }),
-    line('نسبة مبيعات العملاء الراجعين — كل ما تقل، البيزنس بيعتمد أكتر على الإعلانات', 'days', [[0, 1], [6, 1]], '0%',
+    line('نسبة مبيعات العملاء الراجعين', 'days', [[0, 1], [6, 1]], '0%',
       { legend: { position: 'none' }, colors: ['#7c3aed'] }),
     donut('New vs returning customers — المبيعات آخر 30 يوم', 'kinds'),
     donut('Sessions by device type — آخر 30 يوم', 'device'),
