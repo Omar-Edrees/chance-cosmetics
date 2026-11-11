@@ -183,6 +183,7 @@ class FakeSheet {
     return img;
   }
   hideSheet() { this.hidden = true; return this; }
+  getSheetId() { return this.sheetId || (this.sheetId = 1000 + this.name.length * 7 + this.name.charCodeAt(0)); }
   isSheetHidden() { return !!this.hidden; }
   /* رسوم بيانية: الـ builder بيسجل كل نداء، و build بيرجعهم */
   newChart() {

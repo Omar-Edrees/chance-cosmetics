@@ -1171,6 +1171,18 @@ test('تاب Shopify: بيتقري من شوبيفاي مع التحديث وي�
     ? { getResponseCode: () => 200, getContentText: () => JSON.stringify({ data: reqs[i].url.indexOf('act_' + A1) >= 0
       ? [{ date_start: today, outbound_clicks: [{ action_type: 'outbound_click', value: '400' }] }] : [] }) } : r));
   Object.assign(e.user, { SHOPIFY_TOKEN: 'TOKEN1', SHOPIFY_TOKEN_EXP: String(Date.now() + 3600000) });
+  const api = [];
+  let chartId = 500;
+  e.c.Sheets = { Spreadsheets: { batchUpdate: (body, id) => { // Sheets API (الخدمة المتقدمة): كروت Scorecard في Today
+    api.push(body.requests);
+    const today = e.ss.getSheetByName('Today');
+    return { replies: body.requests.map(r => {
+      if (!r.addChart) return {};
+      const ch = { getChartId: () => ch.id, id: ++chartId, spec: r.addChart.chart.spec };
+      (today.charts = today.charts || []).push(ch);
+      return { addChart: { chart: { chartId: ch.id } } };
+    }) };
+  } } };
   e.c.setupAll();
   e.c.liveTick();
   const sh = e.ss.getSheetByName('Shopify'), data = e.ss.getSheetByName('Shopify Data');
@@ -1204,15 +1216,32 @@ test('تاب Shopify: بيتقري من شوبيفاي مع التحديث وي�
   assert.equal(v[heatAt[0]][4 + 20], 3, 'السبت 8 بالليل: 12 أوردر ÷ 4 أسابيع');
   assert.match(e.ss.getSheetByName('Health').getDataRange().getValues().map(r => r.join(' ')).join('\n'), /تاب Shopify .*✓ اتقرا/);
   const tv = e.ss.getSheetByName('Today').getDataRange().getValues();
-  assert.deepEqual(tv[0].slice(0, 8), ['Ad spend (Meta)', 'Sessions', 'Total sales', 'Orders', 'Conversion rate', 'AOV', 'Bounce rate', ''],
-    'الكروت أول حاجة في Today من غير عنوان: الصرف الأول، وبعده كروت شوبيفاي');
-  assert.deepEqual([tv[1][0], tv[1][1], tv[1][3]], [300, 1000, 20], 'صرف Meta بالساعة (100 لكل أكاونت من التلاتة)');
-  assert.match(String(tv[2][1]), /^إمبارح: /);
-  assert.match(String(tv[5][0]), /DAILY AD CLOSING/, 'وتحتهم جدول الصرف بتاع كل أكاونت');
+  assert.match(String(tv[0][0]), /DAILY AD CLOSING/, 'Today زي ما هو من فوق');
+  assert.deepEqual(tv.slice(7, 14).map(r => r.slice(0, 2)), [['Ad spend (Meta)', 300], ['Sessions', 1000], ['Total sales', 19500], ['Orders', 20],
+    ['Conversion rate', 0.02], ['AOV', 1000], ['Bounce rate', 0.5]], 'أرقام الكروت في الخلايا اللي تحتها، من صف 8 (صرف Meta بالساعة: 100 لكل أكاونت)');
+  assert.equal(tv[17][0], 'PLATFORM', 'جدول الأكاونتات تحت الكروت بـ 10 صفوف');
+  assert.equal(api.length, 1);
+  const adds = api[0].filter(r => r.addChart).map(r => r.addChart.chart);
+  assert.equal(adds.length, 7, '7 كروت');
+  assert.deepEqual(Array.from(adds.map(a => a.spec.title)), ['Ad spend (Meta)', 'Sessions', 'Total sales', 'Orders', 'Conversion rate', 'AOV', 'Bounce rate']);
+  const sc = adds[1].spec.scorecardChart, src = x => x.sourceRange.sources[0];
+  assert.deepEqual([src(sc.keyValueData).startRowIndex, src(sc.keyValueData).startColumnIndex, src(sc.baselineValueData).startColumnIndex], [8, 1, 2],
+    'Sessions: النهارده من B9 وإمبارح من C9');
+  assert.equal(sc.baselineValueFormat.comparisonType, 'PERCENTAGE_DIFFERENCE');
+  assert.match(adds[1].spec.subtitle, /^الأربع اللي فات: 1,000/);
+  const cpos = adds.map(a => a.position.overlayPosition);
+  assert.deepEqual([cpos[0].anchorCell.rowIndex, cpos[0].anchorCell.columnIndex, cpos[3].offsetXPixels, cpos[4].offsetYPixels], [7, 0, 654, 102], '4 في الصف تحت عنوان الجدول');
   assert.equal(String(v[3][0]), 'Sessions', 'تاب Shopify من غير كارت الصرف ومن غير عنوان');
   assert.ok(!v.some(r => /^النهارده لحد/.test(String(r[0]))), 'مفيش عنوان فوق الكروت');
   const n = queries.length;
   e.c.liveTick();
   assert.equal(queries.length - n, 5, 'التحديث الجاي بيقرا النهارده بس، والباقي كل 3 ساعات');
   assert.equal(sh.getCharts()[0], charts[0], 'الرسوم مااتعملتش تاني: الداتا تحتها بتتحدث لوحدها');
+  const later = api.slice(1).reduce((a, x) => a.concat(x), []);
+  assert.ok(later.every(r => r.updateChartSpec), 'التحديث بيغير أرقام الكروت بس، مكانها وحجمها زي ما هم');
+  const td = e.ss.getSheetByName('Today');
+  td.charts = td.charts.slice(1); // حد مسح كارت الصرف
+  e.doc.TODAY_CARD_CHARTS_SIG = 'x'; e.doc['GH_Today'] = 'x';
+  e.c.liveTick();
+  assert.deepEqual(Array.from(api[api.length - 1].filter(r => r.addChart).map(r => r.addChart.chart.spec.title)), ['Ad spend (Meta)'], 'الكارت اللي اتمسح بيرجع لوحده');
 });

@@ -1447,7 +1447,7 @@ function writeHealth_() {
     ['إعلانات ❌ / ⚠️ / ✅', st['❌'] + ' / ' + st['⚠️'] + ' / ' + st['✅']],
     ['أوردرات الشهر مش معروف منصتها', unk.p], ['أوردرات الشهر مش معروف منتجها', unk.pr],
     ['صفحات منتجات مش متسجلة', PropertiesService.getDocumentProperties().getProperty('UNASSIGNED_SLUGS') || 'مفيش ✅'],
-    ['حسابات إعلانية لقيتها من الأوردرات', getStatus_('ACC_DISCOVER')], ['Daily Account Funnel', getStatus_('FUNNEL')], ['صرف الكتالوج', getStatus_('CATALOG')], ['حالة الأوردرات من شوبيفاي (الأبليكيشن)', getStatus_('SHOPIFY')], ['تاب Shopify', getStatus_('SHOPTAB')]];
+    ['حسابات إعلانية لقيتها من الأوردرات', getStatus_('ACC_DISCOVER')], ['Daily Account Funnel', getStatus_('FUNNEL')], ['صرف الكتالوج', getStatus_('CATALOG')], ['حالة الأوردرات من شوبيفاي (الأبليكيشن)', getStatus_('SHOPIFY')], ['تاب Shopify', getStatus_('SHOPTAB')], ['كروت Today', typeof Sheets === 'undefined' ? '⚠️ فعّل Google Sheets API من Services في Apps Script' : getStatus_('TODAY_CARDS')]];
   writeRows_(ensureTab_(APP.T.HEALTH, ['البند', 'الحالة']), rows, 2, []);
 }
 
@@ -2997,7 +2997,7 @@ function todayAccounts_(today) {
 }
 
 /* Left side: the Daily Ad Closing table. */
-function todayClosing_(g, today, sum, rows) {
+function todayClosing_(g, today, sum, rows, gap) {
   const S = TODAY, pixel = cfgStr_('orders.method') === 'pixel';
   g.set(1, 1, (cfgStr_('business.name') || 'ADS').toUpperCase() + ' — DAILY AD CLOSING', { bg: S.DARK, fc: '#ffffff', b: 'bold', al: 'center' });
   g.fill(1, 2, 5, { bg: S.DARK });
@@ -3010,7 +3010,7 @@ function todayClosing_(g, today, sum, rows) {
   });
   g.live = [[5, 2]]; // Last Update: written every time, even when nothing else changed
   const totalNote = '(ACCOUNT: PLATFORM / TOTAL: SHOPIFY)';
-  let r = 8;
+  let r = 8 + (gap || 0); // gap: rows kept for the cards under the heading (30_shopify_tab.gs)
   ['PLATFORM', 'AD ACCOUNT NAME', 'AMOUNT SPENT', 'ORDERS ' + totalNote, 'CPP ' + totalNote, 'ROAS (ACCOUNT: META ROAS / TOTAL: SHOPIFY ROAS)']
     .forEach((h, i) => g.set(r, 1 + i, h, { bg: S.YELLOW, b: 'bold', al: 'center' }));
   r++;
@@ -3192,22 +3192,21 @@ function writeToday_() {
   const sh = ensureTab_(APP.T.TODAY), today = todayKey_(), rows = dailyRows_(), sum = summarize_(rows, today, today), g = todayGrid_();
   const p = today.split('-').map(Number), noon = new Date(Date.UTC(p[0], p[1] - 1, p[2], 12));
   const shown = Utilities.formatDate(noon, 'UTC', 'dd-MMM-yyyy'), month = Utilities.formatDate(noon, 'UTC', 'MMM-yyyy');
-  todayStockCover_(g, todayBalances_(g, todayClosing_(g, today, sum, rows) + 2, today) + 1, today);
+  const gap = todayCardRows_(), model = gap ? todayCardCells_(g) : null;
+  todayStockCover_(g, todayBalances_(g, todayClosing_(g, today, sum, rows, gap) + 2, today) + 1, today);
   let r = todaySlots_(g, 1, today) + 1;
   r = todayBenchmark_(g, r, today, shown) + 1;
   const orders = todayOrders_(today.slice(0, 8) + '01', true);
   r = todayProducts_(g, r, 'PRODUCT PERFORMANCE — TODAY | ' + shown, today, today, rows, orders) + 1;
   todayProducts_(g, r, 'PRODUCT PERFORMANCE — THIS MONTH | ' + month, today.slice(0, 8) + '01', today, rows, orders);
-  const top = todayShopCards_(g); // the Shopify cards above everything (30_shopify_tab.gs)
   if (!writeGrid_(sh, g)) return;
   sh.setFrozenRows(0);
   [[1, 150], [2, 210], [3, 120], [4, 130], [5, 130], [6, 130], [7, 24], [8, 300], [9, 260]].forEach(w => sh.setColumnWidth(w[0], w[1]));
   for (let col = 10; col <= TODAY.WIDTH; col++) sh.setColumnWidth(col, 125);
-  sh.getRange(8 + top, 1, 1, 6).setWrap(true);
-  // The cards: big numbers in row 2, smaller comparisons in rows 3-4 (all back to normal when there are no cards).
-  sh.getRange(1, 1, 6, 8).setFontSize(10);
+  sh.getRange(8 + gap, 1, 1, 6).setWrap(true);
+  sh.getRange(1, 1, 6, 8).setFontSize(10); // the cards were cells here before (1.45): back to normal
   [2, 3].forEach(row => sh.setRowHeight(row, 21));
-  if (top) { sh.getRange(2, 1, 1, 8).setFontSize(18); sh.setRowHeight(2, 34); sh.getRange(3, 1, 2, 8).setFontSize(9); }
+  if (gap) todayCardCharts_(sh, model);
 }
 
 /* ======== 21_actual.gs ======== */
@@ -4101,11 +4100,13 @@ function liveOrderStatus_() {
  * day, kept in document properties. Drawn with the views (after Daily Log), only in a run that read Shopify.
  */
 const SHOPTAB = {
-  TAB: 'Shopify', DATA: 'Shopify Data', SLOW_KEY: 'SHOPTAB_SLOW', CHARTS_KEY: 'SHOPTAB_CHARTS', CARDS_KEY: 'SHOPTAB_CARDS', SPEND_KEY: 'SHOPTAB_SPEND_PAST', LAYOUT_KEY: 'SHOPTAB_LAYOUT', LAYOUT: 2,
+  TAB: 'Shopify', DATA: 'Shopify Data', SLOW_KEY: 'SHOPTAB_SLOW', CHARTS_KEY: 'SHOPTAB_CHARTS', TC_KEY: 'TODAY_CARD_CHARTS', CARDS_KEY: 'SHOPTAB_CARDS', SPEND_KEY: 'SHOPTAB_SPEND_PAST', LAYOUT_KEY: 'SHOPTAB_LAYOUT', LAYOUT: 2,
   EVERY_MS: 3 * 3600000, PART: 8000, V: 1,
   MONTHS: 3, DAYS: 30, CLICK_DAYS: 14, HEAT_DAYS: 28, STEP: 0.05, MIN_SESSIONS: 300, MIN_ORDERS: 10, TOP: 10, MAX_STOCKLESS: 15,
   /* The page: COLS narrow columns (CW px each); a card is 8 columns, a chart half the page (W × H px, SLOT_ROWS rows). */
   COLS: 48, CW: 25, CARD: 8, SLOT_ROWS: 17, CHART_W: 590, CHART_H: 320,
+  /* Today's cards: from row TC_ROW, TC_ROWS rows kept; TC_PER_ROW cards a row, TC_W × TC_H px each (the accounts table is ~870px wide). */
+  TC_ROW: 8, TC_ROWS: 10, TC_PER_ROW: 4, TC_W: 214, TC_H: 98, TC_GAP: 4,
   DARK: '#1f2937', LABEL: '#f3f4f6', SOFT: '#4b5563', UP: '#15803d', DOWN: '#b91c1c',
   HEAT: ['#ffffff', '#e8eefc', '#c7d6fa', '#9db7f5', '#6f93ee', '#3f6be3'],
   COLORS: ['#2563eb', '#16a34a', '#f59e0b', '#7c3aed', '#dc2626', '#0891b2'],
@@ -4370,16 +4371,79 @@ function shopTabDrawCards_(g, r, model, slots) {
   return r + 4;
 }
 
-/* Today: the cards (with the spend first) above everything, so the page moves down. Returns the rows added (0: no cards). */
-function todayShopCards_(g) {
-  const model = shopTabCards_();
-  if (!model) return 0;
-  const K = 5; // 4 card rows and a blank one
-  g.rows = Array.from({ length: K }, () => []).concat(g.rows);
-  g.merges = g.merges.map(m => [m[0] + K, m[1], m[2], m[3]]);
-  g.live = (g.live || []).map(x => [x[0] + K, x[1]]);
-  shopTabDrawCards_(g, 1, model, [[1, 1], [2, 1], [3, 1], [4, 1], [5, 1], [6, 1], [7, 2]]);
-  return K;
+/* ---------- Today: the cards as Google Sheets scorecard charts (moved and sized by hand, and kept so) ---------- */
+
+/*
+ * Under the DAILY AD CLOSING heading (Closing Date ... Orders Source), SHOPTAB.TC_ROWS rows are kept free for the cards, as
+ * wide as the accounts table, and the table starts under them. Each card is a scorecard chart (Sheets API, the advanced
+ * service "Google Sheets API"): today's number big, the change from yesterday until the same time under it (green better,
+ * red worse; the spend grey), and last week's in the subtitle. A card is made once, where SHOPTAB.TC_* say; after that only
+ * its numbers and subtitle change (updateChartSpec), so a card moved or sized by hand stays so. A deleted card comes back.
+ * The numbers sit in the cells under the cards (white on white): a scorecard reads cells.
+ */
+/* [key, title, percent?, up is good? (null: neither)] — the order of the cards. */
+function todayCardDefs_() {
+  return [['spend', 'Ad spend (Meta)', false, null], ['sessions', 'Sessions', false, true], ['total', 'Total sales', false, true],
+    ['orders', 'Orders', false, true], ['cr', 'Conversion rate', true, true], ['aov', 'AOV', false, true], ['bounce', 'Bounce rate', true, false]];
+}
+/* Rows kept for the cards in Today (0: no cards — the sheet isn't connected to Shopify, or the Sheets API service is off). */
+function todayCardRows_() {
+  return shopifyProps_().getProperty('SHOPIFY_TOKEN') && typeof Sheets !== 'undefined' && Sheets.Spreadsheets ? SHOPTAB.TC_ROWS : 0;
+}
+/* The cards' numbers in the cells under them: row SHOPTAB.TC_ROW + i = [title, today, yesterday, last week]. */
+function todayCardCells_(g) {
+  const S = SHOPTAB, model = shopTabCards_(), hide = { fc: '#ffffff', bg: '#ffffff' };
+  for (let r = S.TC_ROW; r < S.TC_ROW + S.TC_ROWS; r++) g.fill(r, 1, 6, hide);
+  todayCardDefs_().forEach((d, i) => {
+    const c = model && model.cards.find(x => x.key === d[0]), v = c ? c.values : ['', '', ''];
+    g.set(S.TC_ROW + i, 1, d[1], hide);
+    v.forEach((x, j) => g.set(S.TC_ROW + i, 2 + j, x, Object.assign({ nf: d[2] ? S.PCT : S.COUNT }, hide)));
+  });
+  return model;
+}
+function shopTabRgb_(hex) { return { red: parseInt(hex.slice(1, 3), 16) / 255, green: parseInt(hex.slice(3, 5), 16) / 255, blue: parseInt(hex.slice(5, 7), 16) / 255 }; }
+/* A card's chart: key value = today (column B), baseline = yesterday (column C), last week in the subtitle. */
+function todayCardSpec_(d, i, sheetId, model) {
+  const S = SHOPTAB, row = S.TC_ROW - 1 + i, c = model && model.cards.find(x => x.key === d[0]);
+  const cell = col => ({ sourceRange: { sources: [{ sheetId: sheetId, startRowIndex: row, endRowIndex: row + 1, startColumnIndex: col, endColumnIndex: col + 1 }] } });
+  let sub = ' ';
+  if (c) {
+    const chg = shopTabChange_(c.values[0], c.values[2]);
+    sub = model.wName + ': ' + shopTabShow_(c.values[2], d[2]) + (chg === '' ? '' : '   ' + (chg > 0 ? '+' : chg < 0 ? '-' : '') + Math.round(Math.abs(chg) * 100) + '%');
+  }
+  const good = d[3] === null ? S.SOFT : d[3] ? S.UP : S.DOWN, bad = d[3] === null ? S.SOFT : d[3] ? S.DOWN : S.UP;
+  return { title: d[1], subtitle: sub, fontName: 'Arial',
+    titleTextFormat: { bold: true, fontSize: 11, foregroundColor: shopTabRgb_(S.DARK) }, titleTextPosition: { horizontalAlignment: 'CENTER' },
+    subtitleTextFormat: { fontSize: 9, foregroundColor: shopTabRgb_(S.SOFT) }, subtitleTextPosition: { horizontalAlignment: 'CENTER' },
+    scorecardChart: { keyValueData: cell(1), baselineValueData: cell(2), numberFormatSource: 'FROM_DATA',
+      keyValueFormat: { textFormat: { bold: true, fontSize: 24, foregroundColor: shopTabRgb_(S.DARK) }, position: { horizontalAlignment: 'CENTER' } },
+      baselineValueFormat: { comparisonType: 'PERCENTAGE_DIFFERENCE', description: 'عن إمبارح', textFormat: { fontSize: 10 },
+        position: { horizontalAlignment: 'CENTER' }, positiveColor: shopTabRgb_(good), negativeColor: shopTabRgb_(bad) } } };
+}
+/* Makes the missing cards and updates the others (after Today is written). Errors go to Health. */
+function todayCardCharts_(sh, model) {
+  const S = SHOPTAB, props = PropertiesService.getDocumentProperties(), sheetId = sh.getSheetId(), defs = todayCardDefs_();
+  let ids = {};
+  try { ids = JSON.parse(props.getProperty(S.TC_KEY) || '{}'); } catch (e) { ids = {}; }
+  const have = new Set(sh.getCharts().map(c => String(c.getChartId()))), reqs = [], made = [];
+  defs.forEach((d, i) => {
+    const spec = todayCardSpec_(d, i, sheetId, model), id = ids[d[0]];
+    if (id !== undefined && have.has(String(id))) { reqs.push({ updateChartSpec: { chartId: id, spec: spec } }); return; }
+    made.push([reqs.length, d[0]]);
+    reqs.push({ addChart: { chart: { spec: spec, position: { overlayPosition: {
+      anchorCell: { sheetId: sheetId, rowIndex: S.TC_ROW - 1, columnIndex: 0 },
+      offsetXPixels: (i % S.TC_PER_ROW) * (S.TC_W + S.TC_GAP), offsetYPixels: Math.floor(i / S.TC_PER_ROW) * (S.TC_H + S.TC_GAP),
+      widthPixels: S.TC_W, heightPixels: S.TC_H } } } } });
+  });
+  const sig = sha_(JSON.stringify(reqs));
+  if (!made.length && props.getProperty(S.TC_KEY + '_SIG') === sig) return;
+  try {
+    const res = Sheets.Spreadsheets.batchUpdate({ requests: reqs }, ss_().getId());
+    made.forEach(m => { const r = (res.replies || [])[m[0]] || {}; if (r.addChart) ids[m[1]] = r.addChart.chart.chartId; });
+    props.setProperty(S.TC_KEY, JSON.stringify(ids));
+    props.setProperty(S.TC_KEY + '_SIG', sig);
+  } catch (e) { setStatus_('TODAY_CARDS', '✗ ' + errText_(e)); return; }
+  setStatus_('TODAY_CARDS', '✓' + (made.length ? ' اتعمل ' + made.length + ' كارت' : ''));
 }
 
 /* ---------- Drawing: a dashboard like Shopify's ---------- */

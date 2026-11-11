@@ -175,7 +175,7 @@ function todayAccounts_(today) {
 }
 
 /* Left side: the Daily Ad Closing table. */
-function todayClosing_(g, today, sum, rows) {
+function todayClosing_(g, today, sum, rows, gap) {
   const S = TODAY, pixel = cfgStr_('orders.method') === 'pixel';
   g.set(1, 1, (cfgStr_('business.name') || 'ADS').toUpperCase() + ' — DAILY AD CLOSING', { bg: S.DARK, fc: '#ffffff', b: 'bold', al: 'center' });
   g.fill(1, 2, 5, { bg: S.DARK });
@@ -188,7 +188,7 @@ function todayClosing_(g, today, sum, rows) {
   });
   g.live = [[5, 2]]; // Last Update: written every time, even when nothing else changed
   const totalNote = '(ACCOUNT: PLATFORM / TOTAL: SHOPIFY)';
-  let r = 8;
+  let r = 8 + (gap || 0); // gap: rows kept for the cards under the heading (30_shopify_tab.gs)
   ['PLATFORM', 'AD ACCOUNT NAME', 'AMOUNT SPENT', 'ORDERS ' + totalNote, 'CPP ' + totalNote, 'ROAS (ACCOUNT: META ROAS / TOTAL: SHOPIFY ROAS)']
     .forEach((h, i) => g.set(r, 1 + i, h, { bg: S.YELLOW, b: 'bold', al: 'center' }));
   r++;
@@ -370,20 +370,19 @@ function writeToday_() {
   const sh = ensureTab_(APP.T.TODAY), today = todayKey_(), rows = dailyRows_(), sum = summarize_(rows, today, today), g = todayGrid_();
   const p = today.split('-').map(Number), noon = new Date(Date.UTC(p[0], p[1] - 1, p[2], 12));
   const shown = Utilities.formatDate(noon, 'UTC', 'dd-MMM-yyyy'), month = Utilities.formatDate(noon, 'UTC', 'MMM-yyyy');
-  todayStockCover_(g, todayBalances_(g, todayClosing_(g, today, sum, rows) + 2, today) + 1, today);
+  const gap = todayCardRows_(), model = gap ? todayCardCells_(g) : null;
+  todayStockCover_(g, todayBalances_(g, todayClosing_(g, today, sum, rows, gap) + 2, today) + 1, today);
   let r = todaySlots_(g, 1, today) + 1;
   r = todayBenchmark_(g, r, today, shown) + 1;
   const orders = todayOrders_(today.slice(0, 8) + '01', true);
   r = todayProducts_(g, r, 'PRODUCT PERFORMANCE — TODAY | ' + shown, today, today, rows, orders) + 1;
   todayProducts_(g, r, 'PRODUCT PERFORMANCE — THIS MONTH | ' + month, today.slice(0, 8) + '01', today, rows, orders);
-  const top = todayShopCards_(g); // the Shopify cards above everything (30_shopify_tab.gs)
   if (!writeGrid_(sh, g)) return;
   sh.setFrozenRows(0);
   [[1, 150], [2, 210], [3, 120], [4, 130], [5, 130], [6, 130], [7, 24], [8, 300], [9, 260]].forEach(w => sh.setColumnWidth(w[0], w[1]));
   for (let col = 10; col <= TODAY.WIDTH; col++) sh.setColumnWidth(col, 125);
-  sh.getRange(8 + top, 1, 1, 6).setWrap(true);
-  // The cards: big numbers in row 2, smaller comparisons in rows 3-4 (all back to normal when there are no cards).
-  sh.getRange(1, 1, 6, 8).setFontSize(10);
+  sh.getRange(8 + gap, 1, 1, 6).setWrap(true);
+  sh.getRange(1, 1, 6, 8).setFontSize(10); // the cards were cells here before (1.45): back to normal
   [2, 3].forEach(row => sh.setRowHeight(row, 21));
-  if (top) { sh.getRange(2, 1, 1, 8).setFontSize(18); sh.setRowHeight(2, 34); sh.getRange(3, 1, 2, 8).setFontSize(9); }
+  if (gap) todayCardCharts_(sh, model);
 }
