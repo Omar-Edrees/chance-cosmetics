@@ -1228,7 +1228,7 @@ test('تاب Shopify: بيتقري من شوبيفاي مع التحديث وي�
   assert.deepEqual([src(sc.keyValueData).startRowIndex, src(sc.keyValueData).startColumnIndex, src(sc.baselineValueData).startColumnIndex], [8, 1, 2],
     'Sessions: النهارده من B9 وإمبارح من C9');
   assert.equal(sc.baselineValueFormat.comparisonType, 'PERCENTAGE_DIFFERENCE');
-  assert.match(adds[1].spec.subtitle, /^الأربع اللي فات: 1,000/);
+  assert.match(adds[1].spec.subtitle, /^\u200F\u202Bالأربع اللي فات: 1,000/);
   const cpos = adds.map(a => a.position.overlayPosition);
   assert.deepEqual([cpos[0].anchorCell.rowIndex, cpos[0].anchorCell.columnIndex, cpos[3].offsetXPixels, cpos[4].offsetYPixels], [7, 0, 654, 102], '4 في الصف تحت عنوان الجدول');
   assert.equal(String(v[3][0]), 'Sessions', 'تاب Shopify من غير كارت الصرف ومن غير عنوان');

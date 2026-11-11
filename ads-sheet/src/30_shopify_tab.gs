@@ -340,15 +340,17 @@ function todayCardSpec_(d, i, sheetId, model) {
   let sub = ' ';
   if (c) {
     const chg = shopTabChange_(c.values[0], c.values[2]);
-    sub = model.wName + ': ' + shopTabShow_(c.values[2], d[2]) + (chg === '' ? '' : '   ' + (chg > 0 ? '+' : chg < 0 ? '-' : '') + Math.round(Math.abs(chg) * 100) + '%');
+    // RLM + RLE … PDF: the chart writes left to right, and without them the Arabic and the numbers come out jumbled.
+    sub = '\u200F\u202B' + model.wName + ': ' + shopTabShow_(c.values[2], d[2]) +
+      (chg === '' ? '' : ' (' + (chg > 0 ? '+' : chg < 0 ? '-' : '') + Math.round(Math.abs(chg) * 100) + '%)') + '\u202C';
   }
   const good = d[3] === null ? S.SOFT : d[3] ? S.UP : S.DOWN, bad = d[3] === null ? S.SOFT : d[3] ? S.DOWN : S.UP;
   return { title: d[1], subtitle: sub, fontName: 'Arial',
-    titleTextFormat: { bold: true, fontSize: 11, foregroundColor: shopTabRgb_(S.DARK) }, titleTextPosition: { horizontalAlignment: 'CENTER' },
-    subtitleTextFormat: { fontSize: 9, foregroundColor: shopTabRgb_(S.SOFT) }, subtitleTextPosition: { horizontalAlignment: 'CENTER' },
+    titleTextFormat: { bold: true, fontSize: 12, foregroundColor: shopTabRgb_('#000000') }, titleTextPosition: { horizontalAlignment: 'CENTER' },
+    subtitleTextFormat: { bold: true, fontSize: 10, foregroundColor: shopTabRgb_('#374151') }, subtitleTextPosition: { horizontalAlignment: 'CENTER' },
     scorecardChart: { keyValueData: cell(1), baselineValueData: cell(2), numberFormatSource: 'FROM_DATA',
-      keyValueFormat: { textFormat: { bold: true, fontSize: 24, foregroundColor: shopTabRgb_(S.DARK) }, position: { horizontalAlignment: 'CENTER' } },
-      baselineValueFormat: { comparisonType: 'PERCENTAGE_DIFFERENCE', description: 'عن إمبارح', textFormat: { fontSize: 10 },
+      keyValueFormat: { textFormat: { bold: true, fontSize: 24, foregroundColor: shopTabRgb_('#000000') }, position: { horizontalAlignment: 'CENTER' } },
+      baselineValueFormat: { comparisonType: 'PERCENTAGE_DIFFERENCE', description: 'عن إمبارح', textFormat: { bold: true, fontSize: 11 },
         position: { horizontalAlignment: 'CENTER' }, positiveColor: shopTabRgb_(good), negativeColor: shopTabRgb_(bad) } } };
 }
 /* Makes the missing cards and updates the others (after Today is written). Errors go to Health. */
