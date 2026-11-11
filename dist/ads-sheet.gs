@@ -3198,11 +3198,14 @@ function writeToday_() {
   const orders = todayOrders_(today.slice(0, 8) + '01', true);
   r = todayProducts_(g, r, 'PRODUCT PERFORMANCE — TODAY | ' + shown, today, today, rows, orders) + 1;
   todayProducts_(g, r, 'PRODUCT PERFORMANCE — THIS MONTH | ' + month, today.slice(0, 8) + '01', today, rows, orders);
+  const top = todayShopCards_(g); // the Shopify cards above everything (30_shopify_tab.gs)
   if (!writeGrid_(sh, g)) return;
   sh.setFrozenRows(0);
   [[1, 150], [2, 210], [3, 120], [4, 130], [5, 130], [6, 130], [7, 24], [8, 300], [9, 260]].forEach(w => sh.setColumnWidth(w[0], w[1]));
   for (let col = 10; col <= TODAY.WIDTH; col++) sh.setColumnWidth(col, 125);
-  sh.getRange(8, 1, 1, 6).setWrap(true);
+  sh.getRange(8 + top, 1, 1, 6).setWrap(true);
+  sh.getRange(3, 1, 1, 8).setFontSize(top ? 18 : 10); // the cards' numbers, or back to normal when there are no cards
+  sh.setRowHeight(3, top ? 34 : 21);
 }
 
 /* ======== 21_actual.gs ======== */
@@ -4096,7 +4099,7 @@ function liveOrderStatus_() {
  * day, kept in document properties. Drawn with the views (after Daily Log), only in a run that read Shopify.
  */
 const SHOPTAB = {
-  TAB: 'Shopify', DATA: 'Shopify Data', SLOW_KEY: 'SHOPTAB_SLOW', CHARTS_KEY: 'SHOPTAB_CHARTS', LAYOUT_KEY: 'SHOPTAB_LAYOUT', LAYOUT: 2,
+  TAB: 'Shopify', DATA: 'Shopify Data', SLOW_KEY: 'SHOPTAB_SLOW', CHARTS_KEY: 'SHOPTAB_CHARTS', CARDS_KEY: 'SHOPTAB_CARDS', SPEND_KEY: 'SHOPTAB_SPEND_PAST', LAYOUT_KEY: 'SHOPTAB_LAYOUT', LAYOUT: 2,
   EVERY_MS: 3 * 3600000, PART: 8000, V: 1,
   MONTHS: 3, DAYS: 30, CLICK_DAYS: 14, HEAT_DAYS: 28, STEP: 0.05, MIN_SESSIONS: 300, MIN_ORDERS: 10, TOP: 10, MAX_STOCKLESS: 15,
   /* The page: COLS narrow columns (CW px each); a card is 8 columns, a chart half the page (W × H px, SLOT_ROWS rows). */
@@ -4140,8 +4143,9 @@ function shopTabKind_(r) {
   return {};
 }
 
-/* Every update: today and the 7 days before it hour by hour, product landing pages (today, last 7 days), today's customers. */
-function shopTabFetchFast_() {
+/* Every update: today and the 7 days before it hour by hour, product landing pages (today, last 7 days), today's customers.
+ * hoursOnly (⚡): the hours only, for the cards. */
+function shopTabFetchFast_(hoursOnly) {
   const today = todayKey_(), week = shiftKey_(today, -7), hours = {}, tz = tz_();
   const put = (ts, vals) => {
     const d = new Date(ts);
@@ -4154,6 +4158,7 @@ function shopTabFetchFast_() {
     'bounce_rate TIMESERIES hour' + range + ' LIMIT 1000').forEach(r => put(r.hour, shopTabSessions_(r)));
   shopTabQl_('FROM sales SHOW orders, gross_sales, discounts, sales_reversals, total_sales TIMESERIES hour' + range + ' LIMIT 1000')
     .forEach(r => put(r.hour, shopTabSales_(r)));
+  if (hoursOnly) return { atMs: Date.now(), today: today, hours: hours };
   const pages = from => {
     const out = {};
     shopTabQl_("FROM sessions SHOW sessions WHERE landing_page_path CONTAINS '/products/' GROUP BY landing_page_path SINCE " + from +
@@ -4260,6 +4265,7 @@ function refreshShopTab_(force) {
       try { shopTabSave_(time_('Shopify tab — slow', () => shopTabFetchSlow_())); }
       catch (e) { note = ' — الجزء اللي بيتقري كل 3 ساعات ماتقراش: ' + errText_(e); }
     }
+    note += shopTabSaveCards_(fast);
     SHOPTAB_FAST_ = fast;
     setStatus_('SHOPTAB', (note ? '⚠️ اتقرا' + note : '✓ اتقرا'));
     return true;
@@ -4274,6 +4280,109 @@ function refreshShopTabNow() {
     alert_('اتحدث تاب ' + SHOPTAB.TAB + ' ✅\n' + getStatus_('SHOPTAB'));
     ss_().setActiveSheet(tab_(SHOPTAB.TAB));
   } catch (e) { alert_('تاب ' + SHOPTAB.TAB + ' ماتحدثش:\n' + errText_(e)); }
+}
+
+/* ---------- The cards (the Shopify tab and Today) ---------- */
+
+/*
+ * Meta spend hour by hour (all Meta accounts, the accounts' time zone): {day: [24]} for today, yesterday and the same
+ * weekday last week. The two past days are read once a day (SHOPTAB.SPEND_KEY).
+ */
+function shopTabSpendHours_(today) {
+  const accs = accounts_('META'), y = shiftKey_(today, -1), w = shiftKey_(today, -7), props = PropertiesService.getDocumentProperties(), out = {};
+  if (!accs.length) return out;
+  let past = null;
+  try { past = JSON.parse(props.getProperty(SHOPTAB.SPEND_KEY) || 'null'); } catch (e) { past = null; }
+  const have = past && past.day === today, days = have ? [today] : [today, y, w], reqs = [];
+  days.forEach(d => { out[d] = new Array(24).fill(0); accs.forEach(a => reqs.push({ d: d, path: 'act_' + a.id + '/insights', params: { level: 'account',
+    fields: 'spend', breakdowns: 'hourly_stats_aggregated_by_advertiser_time_zone', time_range: JSON.stringify({ since: d, until: d }), limit: 100 } })); });
+  const res = metaMany_(reqs.map(x => ({ path: x.path, params: x.params })));
+  res.forEach((x, i) => {
+    if (x.error) throw new Error('صرف Meta بالساعة: ' + x.error);
+    (x.payload.data || []).forEach(r => {
+      const h = Number(String(r.hourly_stats_aggregated_by_advertiser_time_zone || '').slice(0, 2));
+      if (h >= 0 && h < 24) out[reqs[i].d][h] += num_(r.spend);
+    });
+  });
+  if (have) Object.assign(out, past.hours);
+  else props.setProperty(SHOPTAB.SPEND_KEY, JSON.stringify({ day: today, hours: { [y]: out[y], [w]: out[w] } }));
+  return out;
+}
+
+/*
+ * The cards: today until now, yesterday and the same weekday last week until the same time, and what the changes mean.
+ * spend (or null): Meta spend by hour. Saved in SHOPTAB.CARDS_KEY for the Shopify tab and Today.
+ */
+function shopTabCardModel_(fast, spend) {
+  const S = SHOPTAB, R = shopTabRatio_, now = new Date(fast.atMs), tz = tz_(), H = Number(Utilities.formatDate(now, tz, 'H'));
+  const f = Number(Utilities.formatDate(now, tz, 'm')) / 60, today = fast.today, y = shiftKey_(today, -1), w = shiftKey_(today, -7);
+  const a = shopTabCut_(fast.hours, today, H, 1), b = shopTabCut_(fast.hours, y, H, f), c = shopTabCut_(fast.hours, w, H, f);
+  const cut = (d, part) => { const x = (spend || {})[d]; if (!x) return ''; let t = 0; for (let h = 0; h <= H; h++) t += num_(x[h]) * (h < H ? 1 : part); return round2_(t); };
+  const wName = S.DAY_NAMES[shopTabWeekday_(w)] + ' اللي فات';
+  /* {key, title, values [today, yesterday, last week], pct, up: up is good (null: neither)} */
+  const cards = [];
+  if (spend) cards.push({ key: 'spend', title: 'Ad spend (Meta)', values: [cut(today, 1), cut(y, f), cut(w, f)], pct: false, up: null });
+  [['sessions', 'Sessions', t => t.sessions, false, true], ['total', 'Total sales', t => t.total, false, true], ['orders', 'Orders', t => t.orders, false, true],
+    ['cr', 'Conversion rate', t => R(t.done, t.sessions), true, true], ['aov', 'AOV', t => R(t.value, t.orders), false, true],
+    ['bounce', 'Bounce rate', t => R(t.bounced, t.sessions), true, false]]
+    .forEach(m => cards.push({ key: m[0], title: m[1], values: [a, b, c].map(m[2]), pct: m[3], up: m[4] }));
+  return { day: today, atMs: fast.atMs, at: Utilities.formatDate(now, tz, 'HH:mm'), wName: wName, wDate: Number(w.slice(8, 10)) + '/' + Number(w.slice(5, 7)),
+    cards: cards, diag: [['قدام إمبارح: ', shopTabDiagnose_(a, b)], ['قدام ' + wName + ': ', shopTabDiagnose_(a, c)]] };
+}
+/* Reads Meta's spend by hour and saves the cards. Returns a note for the status ('' when all went well). */
+function shopTabSaveCards_(fast) {
+  let spend = null, note = '';
+  try { spend = time_('Meta spend by hour', () => shopTabSpendHours_(fast.today)); } catch (e) { note = ' — كارت الصرف ماتقراش: ' + errText_(e); }
+  PropertiesService.getDocumentProperties().setProperty(SHOPTAB.CARDS_KEY, JSON.stringify(shopTabCardModel_(fast, spend)));
+  return note;
+}
+function shopTabCards_() {
+  try { const m = JSON.parse(PropertiesService.getDocumentProperties().getProperty(SHOPTAB.CARDS_KEY) || 'null'); return m && m.day === todayKey_() ? m : null; }
+  catch (e) { return null; }
+}
+/* EXT.today (⚡): the cards only (Shopify by hour + Meta spend by hour), so Today shows them fresh. */
+function refreshShopCards_() {
+  if (!shopifyProps_().getProperty('SHOPIFY_TOKEN')) return;
+  try { shopTabSaveCards_(shopTabFetchFast_(true)); } catch (e) { setStatus_('SHOPTAB', '✗ الكروت: ' + errText_(e)); }
+}
+
+/*
+ * Draws the cards: a dark band over `width` columns, then for each card (slots[i] = [column, columns wide]) its title,
+ * today's number, yesterday and last week with the change (green better, red worse, grey under SHOPTAB.STEP).
+ * Returns the row after the cards; the number row is r + 1.
+ */
+function shopTabDrawCards_(g, r, model, slots, width) {
+  const S = SHOPTAB;
+  g.set(r, 1, 'النهارده لحد ' + model.at + ' — قدام إمبارح و' + model.wName + ' (' + model.wDate + ') لحد نفس الساعة',
+    { bg: S.DARK, fc: '#ffffff', b: 'bold', al: 'center' });
+  g.fill(r, 2, width - 1, { bg: S.DARK });
+  g.merge(r, 1, 1, width);
+  r++;
+  model.cards.slice(0, slots.length).forEach((m, i) => {
+    const col = slots[i][0], span = slots[i][1], va = m.values[0];
+    g.set(r, col, m.title, { bg: S.LABEL, b: 'bold', al: 'center' });
+    g.set(r + 1, col, va, { nf: m.pct ? S.PCT : S.COUNT, b: 'bold', al: 'center' });
+    [['إمبارح', 1], [model.wName, 2]].forEach((x, j) => {
+      const vb = m.values[x[1]], chg = shopTabChange_(va, vb), big = chg !== '' && Math.abs(chg) > S.STEP;
+      const pctText = chg === '' ? '' : '   ' + (chg > 0 ? '+' : chg < 0 ? '-' : '') + Math.round(Math.abs(chg) * 100) + '%';
+      g.set(r + 2 + j, col, x[0] + ': ' + shopTabShow_(vb, m.pct) + pctText,
+        { al: 'center', fc: !big || m.up === null ? S.SOFT : (chg > 0) === m.up ? S.UP : S.DOWN, b: big ? 'bold' : 'normal' });
+    });
+    if (span > 1) for (let k = 0; k < 4; k++) { g.fill(r + k, col + 1, span - 1, k ? {} : { bg: S.LABEL }); g.merge(r + k, col, 1, span); }
+  });
+  return r + 4;
+}
+
+/* Today: the cards (with the spend first) above everything, so the page moves down. Returns the rows added (0: no cards). */
+function todayShopCards_(g) {
+  const model = shopTabCards_();
+  if (!model) return 0;
+  const K = 6;
+  g.rows = Array.from({ length: K }, () => []).concat(g.rows);
+  g.merges = g.merges.map(m => [m[0] + K, m[1], m[2], m[3]]);
+  g.live = (g.live || []).map(x => [x[0] + K, x[1]]);
+  shopTabDrawCards_(g, 1, model, [[1, 1], [2, 1], [3, 1], [4, 1], [5, 1], [6, 1], [8, 1]], 8);
+  return K;
 }
 
 /* ---------- Drawing: a dashboard like Shopify's ---------- */
@@ -4492,44 +4601,18 @@ function shopTabLayout_(sh) {
   props.setProperty(S.LAYOUT_KEY, String(S.LAYOUT));
 }
 
-/* 1) The cards and what the changes mean. Returns {r: the next free row, value: the cards' number row}. */
-function shopTabCards_(g, r, fast) {
-  const S = SHOPTAB, R = shopTabRatio_, now = new Date(fast.atMs), tz = tz_(), H = Number(Utilities.formatDate(now, tz, 'H'));
-  const f = Number(Utilities.formatDate(now, tz, 'm')) / 60, today = fast.today, y = shiftKey_(today, -1), w = shiftKey_(today, -7);
-  const a = shopTabCut_(fast.hours, today, H, 1), b = shopTabCut_(fast.hours, y, H, f), c = shopTabCut_(fast.hours, w, H, f);
-  const wName = S.DAY_NAMES[shopTabWeekday_(w)] + ' اللي فات';
-  g.set(r, 1, 'النهارده لحد ' + Utilities.formatDate(now, tz, 'HH:mm') + ' — قدام إمبارح و' + wName + ' (' + Number(w.slice(8, 10)) + '/' +
-    Number(w.slice(5, 7)) + ') لحد نفس الساعة', { bg: S.DARK, fc: '#ffffff', b: 'bold', al: 'center' });
-  g.fill(r, 2, S.COLS - 1, { bg: S.DARK });
-  g.merge(r, 1, 1, S.COLS);
-  r++;
-  /* [title, value(t), percent?, up is good?] */
-  [['Sessions', t => t.sessions, false, true], ['Total sales', t => t.total, false, true], ['Orders', t => t.orders, false, true],
-    ['Conversion rate', t => R(t.done, t.sessions), true, true], ['AOV', t => R(t.value, t.orders), false, true],
-    ['Bounce rate', t => R(t.bounced, t.sessions), true, false]].forEach((m, i) => {
-    const col = 1 + i * S.CARD, va = m[1](a);
-    g.set(r, col, m[0], { bg: S.LABEL, b: 'bold', al: 'center' });
-    g.set(r + 1, col, va, { nf: m[2] ? S.PCT : S.COUNT, b: 'bold', al: 'center' });
-    [[b, 'إمبارح'], [c, wName]].forEach((x, j) => {
-      const vb = m[1](x[0]), chg = shopTabChange_(va, vb), big = chg !== '' && Math.abs(chg) > S.STEP;
-      const pctText = chg === '' ? '' : '   ' + (chg > 0 ? '+' : chg < 0 ? '-' : '') + Math.round(Math.abs(chg) * 100) + '%';
-      g.set(r + 2 + j, col, x[1] + ': ' + shopTabShow_(vb, m[2]) + pctText,
-        { al: 'center', fc: !big ? S.SOFT : (chg > 0) === m[3] ? S.UP : S.DOWN, b: big ? 'bold' : 'normal' });
-    });
-    for (let k = 0; k < 4; k++) { if (k) g.fill(r + k, col + 1, S.CARD - 1, {}); g.merge(r + k, col, 1, S.CARD); }
-    g.fill(r, col + 1, S.CARD - 1, { bg: S.LABEL });
-  });
-  const value = r + 1;
-  r += 5;
-  [['قدام إمبارح: ', b], ['قدام ' + wName + ': ', c]].forEach(x => {
-    shopTabDiagnose_(a, x[1]).forEach((line, i) => {
-      if (!line) return;
-      g.set(r, 1, (i ? '' : x[0]) + line, { b: i ? 'normal' : 'bold', bg: S.LABEL });
-      g.fill(r, 2, S.COLS - 1, { bg: S.LABEL });
-      g.merge(r, 1, 1, S.COLS);
-      r++;
-    });
-  });
+/* 1) The cards (without the spend: this page is Shopify's) and what the changes mean. Returns {r, value: the number row}. */
+function shopTabTop_(g, r, model) {
+  const S = SHOPTAB, own = { day: model.day, at: model.at, wName: model.wName, wDate: model.wDate, cards: model.cards.filter(c => c.key !== 'spend') };
+  const value = r + 2;
+  r = shopTabDrawCards_(g, r, own, own.cards.map((c, i) => [1 + i * S.CARD, S.CARD]), S.COLS) + 1;
+  model.diag.forEach(x => x[1].forEach((line, i) => {
+    if (!line) return;
+    g.set(r, 1, (i ? '' : x[0]) + line, { b: i ? 'normal' : 'bold', bg: S.LABEL });
+    g.fill(r, 2, S.COLS - 1, { bg: S.LABEL });
+    g.merge(r, 1, 1, S.COLS);
+    r++;
+  }));
   return { r: r + 1, value: value };
 }
 
@@ -4585,7 +4668,7 @@ function writeShopTab_() {
     'الأرقام زي شوبيفاي: كل أوردرات المتجر، و Total sales بعد المرتجعات اللي اتسجلت في اليوم. AOV = قيمة الأوردرات ÷ عددها، قبل المرتجعات. ' +
     'فورم الطلب بيعمل الأوردر في زيارة لوحدها، فالتحويل صح للمتجر كله بس.' + (slow.clickErr ? ' ⚠️ ' + slow.clickErr : ''), { fc: S.SOFT });
   g.merge(2, 1, 1, S.COLS);
-  const cards = shopTabCards_(g, 4, fast), list = shopTabChartList_(blocks), specs = [];
+  const model = shopTabCards_() || shopTabCardModel_(fast, null), cards = shopTabTop_(g, 4, model), list = shopTabChartList_(blocks), specs = [];
   const top = cards.r;
   list.forEach((x, k) => {
     const row = top + Math.floor(k / 2) * S.SLOT_ROWS, col = k % 2 ? S.COLS / 2 + 1 : 1;
@@ -4667,7 +4750,7 @@ const EXT = {
   setup: [() => chanceSetup_()],
   live: [() => syncShopifyStatus_(), () => refreshAccountNames_(), () => discoverAccounts_(), () => chanceLive_(), () => refreshTodayFunnel_(), () => refreshFunnel_(false),
     () => refreshShopTab_(false)],
-  today: [() => refreshTodayFunnel_(), () => refreshBalances_()],
+  today: [() => refreshTodayFunnel_(), () => refreshBalances_(), () => refreshShopCards_()],
   menu: [['📦 تحديث المنتجات والستوك وتوب 100', 'refreshProductsNow'], ['📈 تحديث Daily Account Funnel و Actual ROAS', 'refreshFunnelNow'],
     ['🗄 أرشيف Closing لشهر خلص', 'archiveClosingMonth'], ['🛍 تحديث تاب Shopify', 'refreshShopTabNow'], ['🔑 ربط أبليكيشن شوبيفاي', 'shopifyConnect']]
 };

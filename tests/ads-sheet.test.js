@@ -1166,7 +1166,8 @@ test('تاب Shopify: بيتقري من شوبيفاي مع التحديث وي�
   };
   fakeShopify(e, [], { ql: ql });
   const all = e.c.UrlFetchApp.fetchAll;
-  e.c.UrlFetchApp.fetchAll = reqs => all(reqs).map((r, i) => (/fields=outbound_clicks/.test(reqs[i].url) // الكليكات من Meta
+  const hourly = () => ({ getResponseCode: () => 200, getContentText: () => JSON.stringify({ data: [{ hourly_stats_aggregated_by_advertiser_time_zone: '00:00:00 - 00:59:59', spend: '100' }] }) });
+  e.c.UrlFetchApp.fetchAll = reqs => all(reqs).map((r, i) => (/hourly_stats/.test(reqs[i].url) ? hourly() : /fields=outbound_clicks/.test(reqs[i].url) // الكليكات من Meta
     ? { getResponseCode: () => 200, getContentText: () => JSON.stringify({ data: reqs[i].url.indexOf('act_' + A1) >= 0
       ? [{ date_start: today, outbound_clicks: [{ action_type: 'outbound_click', value: '400' }] }] : [] }) } : r));
   Object.assign(e.user, { SHOPIFY_TOKEN: 'TOKEN1', SHOPIFY_TOKEN_EXP: String(Date.now() + 3600000) });
@@ -1202,6 +1203,12 @@ test('تاب Shopify: بيتقري من شوبيفاي مع التحديث وي�
   const heatAt = at('السبت');
   assert.equal(v[heatAt[0]][4 + 20], 3, 'السبت 8 بالليل: 12 أوردر ÷ 4 أسابيع');
   assert.match(e.ss.getSheetByName('Health').getDataRange().getValues().map(r => r.join(' ')).join('\n'), /تاب Shopify .*✓ اتقرا/);
+  const tv = e.ss.getSheetByName('Today').getDataRange().getValues();
+  assert.match(String(tv[0][0]), /^النهارده لحد .* قدام إمبارح/, 'الكروت أول حاجة في Today');
+  assert.deepEqual(tv[1].slice(0, 8), ['Ad spend (Meta)', 'Sessions', 'Total sales', 'Orders', 'Conversion rate', 'AOV', '', 'Bounce rate'], 'الصرف الأول، وبعده كروت شوبيفاي');
+  assert.deepEqual([tv[2][0], tv[2][1], tv[2][3]], [300, 1000, 20], 'صرف Meta بالساعة (100 لكل أكاونت من التلاتة)');
+  assert.match(String(tv[6][0]), /DAILY AD CLOSING/, 'وتحتهم جدول الصرف بتاع كل أكاونت');
+  assert.equal(String(v[4][0]), 'Sessions', 'تاب Shopify من غير كارت الصرف');
   const n = queries.length;
   e.c.liveTick();
   assert.equal(queries.length - n, 5, 'التحديث الجاي بيقرا النهارده بس، والباقي كل 3 ساعات');

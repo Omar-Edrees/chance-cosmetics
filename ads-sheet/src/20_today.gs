@@ -376,9 +376,12 @@ function writeToday_() {
   const orders = todayOrders_(today.slice(0, 8) + '01', true);
   r = todayProducts_(g, r, 'PRODUCT PERFORMANCE — TODAY | ' + shown, today, today, rows, orders) + 1;
   todayProducts_(g, r, 'PRODUCT PERFORMANCE — THIS MONTH | ' + month, today.slice(0, 8) + '01', today, rows, orders);
+  const top = todayShopCards_(g); // the Shopify cards above everything (30_shopify_tab.gs)
   if (!writeGrid_(sh, g)) return;
   sh.setFrozenRows(0);
   [[1, 150], [2, 210], [3, 120], [4, 130], [5, 130], [6, 130], [7, 24], [8, 300], [9, 260]].forEach(w => sh.setColumnWidth(w[0], w[1]));
   for (let col = 10; col <= TODAY.WIDTH; col++) sh.setColumnWidth(col, 125);
-  sh.getRange(8, 1, 1, 6).setWrap(true);
+  sh.getRange(8 + top, 1, 1, 6).setWrap(true);
+  sh.getRange(3, 1, 1, 8).setFontSize(top ? 18 : 10); // the cards' numbers, or back to normal when there are no cards
+  sh.setRowHeight(3, top ? 34 : 21);
 }
