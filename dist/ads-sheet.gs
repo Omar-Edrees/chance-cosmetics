@@ -4075,36 +4075,35 @@ function liveOrderStatus_() {
 
 /* ======== 30_shopify_tab.gs ======== */
 /*
- * Tab "Shopify": Shopify's own Analytics numbers (ShopifyQL through the app in 29_shopify_api.gs, read-only) and what they mean.
- * From the top:
- *  1) Today until now against yesterday and the same weekday last week until the same time (their hour of now counts by the
- *     minutes gone), and two lines that say what the change means: visits against orders (conversion), then the AOV.
- *     A change under SHOPTAB.STEP counts as no change.
- *  2) Visits to product pages whose stock is 0 or less (stock as in المنتجات), with the Meta ads running on the product now
- *     and the spend on it (Daily Log): money paid for visits that can't buy.
- *  3) Clicks that don't reach the site: Shopify sessions from each Meta account's ads ÷ Meta's outbound clicks, day by day.
- *     A session's account comes from utm_term (the ad set ID) the way the funnel does it: the ID in Ads Raw, else its last
- *     4 digits. Sessions with no utm_term (the in-app browser drops it sometimes) aren't counted, so the level matters
- *     less than a day that falls (red under 80% of the account's median day, yellow under 90%).
- *  4) Day by day (this month, each of the 3 months before it, those 3 together, then the last 30 days): sessions, the steps
- *     to an order, conversion rate, bounce rate, orders, total sales, AOV and the returning customers' share of the sales.
- *  5) Orders by hour and weekday (the last 4 full weeks), new vs returning customers, sessions by device and governorate,
- *     sales by referrer.
+ * Tab "Shopify": a dashboard like Shopify's Analytics page, from Shopify's own numbers (ShopifyQL through the app in
+ * 29_shopify_api.gs, read-only), with what the changes mean. From the top:
+ *  1) Cards: today until now against yesterday and the same weekday last week until the same time (their hour of now
+ *     counts by the minutes gone), and two lines per comparison that say what the change means: visits against
+ *     conversion (and the step that fell), then the AOV. A change under SHOPTAB.STEP counts as no change.
+ *  2) Charts, two a row: visits to product pages whose stock is 0 or less (stock as in المنتجات; the label says the Meta ads
+ *     running on it now and today's spend from Daily Log), and clicks that don't reach the site (Shopify sessions from each
+ *     Meta account's ads ÷ Meta's outbound clicks, day by day; the account from utm_term = the ad set ID: the ID in Ads Raw,
+ *     else its last 4 digits). Then the last 30 days: sessions, total sales with orders, conversion rate, the steps to an
+ *     order, bounce rate, the returning customers' share of sales; new vs returning, device, governorate, referrer, months.
+ *  3) Orders by weekday and hour (the last 4 full weeks, an average day), colored like Shopify's "Weekly sales patterns".
+ * The charts read the hidden tab SHOPTAB.DATA, and are made again only when what they read moves (SHOPTAB_CHARTS).
  * These are Shopify's numbers, not the sheet's: orders are every store order (the outside account's too), and total sales is
  * as Shopify shows it (returns and cancellations recorded that day come off). AOV = (gross sales − discounts) ÷ orders, the
  * value of the orders placed, so returns of older orders don't move it. The COD form places its orders in a session of its
  * own (device "other", no governorate, landing on the home page), so conversion is right for the store as a whole only.
- * Reads: 1) and 2) on every update; the rest every SHOPTAB.EVERY_MS and on the first update of a day, kept in document
- * properties. Drawn with the views (after Daily Log), only in a run that read Shopify.
+ * Reads: the cards and the out-of-stock pages on every update; the rest every SHOPTAB.EVERY_MS and on the first update of a
+ * day, kept in document properties. Drawn with the views (after Daily Log), only in a run that read Shopify.
  */
 const SHOPTAB = {
-  TAB: 'Shopify', SLOW_KEY: 'SHOPTAB_SLOW', EVERY_MS: 3 * 3600000, PART: 8000, V: 1,
-  MONTHS: 3, DAYS: 30, CLICK_DAYS: 14, HEAT_DAYS: 28, STEP: 0.05, MIN_SESSIONS: 300, MIN_ORDERS: 10, TOP: 10, MAX_STOCKLESS: 25,
-  CLICK_RED: 0.8, CLICK_AMBER: 0.9, WIDTH: 13,
-  DARK: '#1f2937', YELLOW: '#fff200', LABEL: '#f3f4f6', AVG3_BG: '#e8eefc', TODAY_BG: '#fff7d6',
-  GREEN: '#d9ead3', RED: '#f4cccc', AMBER: '#fff2cc', SOFT: '#4b5563',
+  TAB: 'Shopify', DATA: 'Shopify Data', SLOW_KEY: 'SHOPTAB_SLOW', CHARTS_KEY: 'SHOPTAB_CHARTS', LAYOUT_KEY: 'SHOPTAB_LAYOUT', LAYOUT: 2,
+  EVERY_MS: 3 * 3600000, PART: 8000, V: 1,
+  MONTHS: 3, DAYS: 30, CLICK_DAYS: 14, HEAT_DAYS: 28, STEP: 0.05, MIN_SESSIONS: 300, MIN_ORDERS: 10, TOP: 10, MAX_STOCKLESS: 15,
+  /* The page: COLS narrow columns (CW px each); a card is 8 columns, a chart half the page (W × H px, SLOT_ROWS rows). */
+  COLS: 48, CW: 25, CARD: 8, SLOT_ROWS: 17, CHART_W: 590, CHART_H: 320,
+  DARK: '#1f2937', LABEL: '#f3f4f6', SOFT: '#4b5563', UP: '#15803d', DOWN: '#b91c1c',
   HEAT: ['#ffffff', '#e8eefc', '#c7d6fa', '#9db7f5', '#6f93ee', '#3f6be3'],
-  COUNT: '#,##0', MONEY: '#,##0', PCT: '0.00%', CHG: '+0%;-0%;0%',
+  COLORS: ['#2563eb', '#16a34a', '#f59e0b', '#7c3aed', '#dc2626', '#0891b2'],
+  COUNT: '#,##0', MONEY: '#,##0', PCT: '0.00%',
   /* Sunday first, as Date.getUTCDay(). Shopify's day_of_week is 0 = Monday. */
   DAY_NAMES: ['الأحد', 'الاتنين', 'التلات', 'الأربع', 'الخميس', 'الجمعة', 'السبت'],
   KEYS: ['sessions', 'atc', 'checkout', 'done', 'bounced', 'orders', 'value', 'reversals', 'total', 'newOrders', 'retOrders', 'newSales', 'retSales'],
@@ -4276,7 +4275,7 @@ function refreshShopTabNow() {
   } catch (e) { alert_('تاب ' + SHOPTAB.TAB + ' ماتحدثش:\n' + errText_(e)); }
 }
 
-/* ---------- Drawing ---------- */
+/* ---------- Drawing: a dashboard like Shopify's ---------- */
 
 function shopTabWeekday_(key) { return new Date(key + 'T12:00:00Z').getUTCDay(); }
 function shopTabDayLabel_(key) { return SHOPTAB.DAY_NAMES[shopTabWeekday_(key)] + ' ' + Number(key.slice(8, 10)) + '/' + Number(key.slice(5, 7)); }
@@ -4288,22 +4287,6 @@ function shopTabCut_(hours, day, H, f) {
   for (let h = 0; h <= H; h++) if (x[h]) shopTabAdd_(t, x[h], h < H ? 1 : f);
   return t;
 }
-function shopTabBand_(g, r, title, width) {
-  g.set(r, 1, title, { bg: SHOPTAB.DARK, fc: '#ffffff', b: 'bold', al: 'center' });
-  g.fill(r, 2, width - 1, { bg: SHOPTAB.DARK });
-  g.merge(r, 1, 1, width);
-  return r + 1;
-}
-function shopTabHead_(g, r, headers) {
-  headers.forEach((h, i) => g.set(r, 1 + i, h, { bg: SHOPTAB.YELLOW, b: 'bold', al: 'center' }));
-  return r + 1;
-}
-function shopTabText_(g, r, text, style) {
-  g.set(r, 1, text, Object.assign({ fc: SHOPTAB.SOFT }, style || {}));
-  g.merge(r, 1, 1, SHOPTAB.WIDTH);
-  return r + 1;
-}
-
 /* What a change means (the rules in the tab's note). a = today, b = the day it's compared with, both until the same time. */
 function shopTabDiagnose_(a, b) {
   const S = SHOPTAB;
@@ -4345,268 +4328,281 @@ function shopTabDiagnose_(a, b) {
   return [one, two];
 }
 
-/* 1) Today until now vs yesterday and the same weekday last week, and what it means. */
-function shopTabCompare_(g, r, fast) {
-  const S = SHOPTAB, now = new Date(fast.atMs), tz = tz_(), H = Number(Utilities.formatDate(now, tz, 'H'));
-  const f = Number(Utilities.formatDate(now, tz, 'm')) / 60, today = fast.today, y = shiftKey_(today, -1), w = shiftKey_(today, -7);
-  const a = shopTabCut_(fast.hours, today, H, 1), b = shopTabCut_(fast.hours, y, H, f), c = shopTabCut_(fast.hours, w, H, f);
-  const wName = S.DAY_NAMES[shopTabWeekday_(w)] + ' اللي فات (' + Number(w.slice(8, 10)) + '/' + Number(w.slice(5, 7)) + ')';
-  r = shopTabBand_(g, r, 'النهارده لحد ' + Utilities.formatDate(now, tz, 'HH:mm') + ' قدام إمبارح و' + wName + ' لحد نفس الساعة', 6);
-  r = shopTabHead_(g, r, ['المؤشر', 'النهارده', 'إمبارح', 'التغيير', wName, 'التغيير']);
-  const R = shopTabRatio_;
-  /* [label, value(t), format, up is good?] */
-  [['Sessions (الزيارات)', t => t.sessions, S.COUNT, true],
-    ['Orders (الأوردرات)', t => t.orders, S.COUNT, true],
-    ['Conversion rate (التحويل)', t => R(t.done, t.sessions), S.PCT, true],
-    ['Total sales (المبيعات)', t => t.total, S.MONEY, true],
-    ['AOV (متوسط الأوردر)', t => R(t.value, t.orders), S.MONEY, true],
-    ['Added to cart ÷ Sessions', t => R(t.atc, t.sessions), S.PCT, true],
-    ['Reached checkout ÷ Added to cart', t => R(t.checkout, t.atc), S.PCT, true],
-    ['Completed ÷ Reached checkout', t => R(t.done, t.checkout), S.PCT, true],
-    ['Bounce rate (خرجوا من أول صفحة)', t => R(t.bounced, t.sessions), S.PCT, false],
-    ['مرتجعات وإلغاء اتسجلوا (Sales reversals)', t => t.reversals, S.MONEY, false]].forEach(m => {
-    const va = m[1](a);
-    g.set(r, 1, m[0], { bg: S.LABEL, b: 'bold' });
-    g.set(r, 2, va, { nf: m[2], al: 'right', b: 'bold' });
-    [[b, 3], [c, 5]].forEach(x => {
-      const vb = m[1](x[0]), chg = shopTabChange_(va, vb);
-      const good = chg === '' || Math.abs(chg) <= S.STEP ? null : (chg > 0) === m[3] ? S.GREEN : S.RED;
-      g.set(r, x[1], vb, { nf: m[2], al: 'right' });
-      g.set(r, x[1] + 1, chg, { nf: S.CHG, al: 'center', bg: good });
-    });
-    r++;
-  });
-  [['التشخيص قدام إمبارح', b], ['التشخيص قدام ' + wName, c]].forEach(x => {
-    shopTabDiagnose_(a, x[1]).forEach((line, i) => {
-      if (!line) return;
-      g.set(r, 1, i ? '' : x[0], { bg: S.LABEL, b: 'bold' });
-      g.set(r, 2, line, { b: i ? 'normal' : 'bold' });
-      g.merge(r, 2, 1, S.WIDTH - 1);
-      r++;
-    });
-  });
-  return r;
+/* A number for a card's text: 1,234 or 2.35%. */
+function shopTabShow_(v, pct) {
+  if (typeof v !== 'number' || !isFinite(v)) return '—';
+  return pct ? (Math.round(v * 10000) / 100).toFixed(2) + '%' : String(Math.round(v)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
-
-/* 2) Visits to product pages that are out of stock. */
-function shopTabStockless_(g, r, fast) {
-  const S = SHOPTAB, rx = new RegExp(cfgStr_('business.product_url_regex') || '/products?/([^/]+)', 'i');
+/* Day → numbers: the slow part's days, today from this run's hours. */
+function shopTabDaysMap_(fast, slow) {
+  const S = SHOPTAB, days = {};
+  Object.keys(slow.days || {}).forEach(k => { const t = shopTabZero_(); S.KEYS.forEach((x, i) => { t[x] = slow.days[k][i] || 0; }); days[k] = t; });
+  const t0 = shopTabCut_(fast.hours, fast.today, 23, 1);
+  S.KEYS.slice(9).forEach(k => { t0[k] = fast.kinds[k] || 0; });
+  days[fast.today] = t0;
+  return days;
+}
+/* Product pages with visits (today, last 7 days) whose stock is 0 or less: [{name, today, week, active, spendToday}]. */
+function shopTabStockless_(fast) {
+  const rx = new RegExp(cfgStr_('business.product_url_regex') || '/products?/([^/]+)', 'i');
   const prods = products_(), stock = stockByName_().by, raw = readStock_().byHandle, active = activeMap_(), by = {};
   const nameOf = h => { const p = prods.find(x => x.slugs.indexOf(h) >= 0); return p ? p.name : raw[h] && raw[h].title ? productNameOf_(raw[h].title) : ''; };
   const add = (pages, k) => Object.keys(pages || {}).forEach(path => {
     const m = path.toLowerCase().match(rx), n = m ? nameOf(m[1]) : '';
     if (!n || stock[n] === undefined || stock[n] > 0) return;
-    (by[n] = by[n] || { name: n, today: 0, week: 0, spendToday: 0, spendWeek: 0 })[k] += pages[path];
+    (by[n] = by[n] || { name: n, today: 0, week: 0, active: active[n] || 0, spendToday: 0 })[k] += pages[path];
   });
   add(fast.pagesToday, 'today');
   add(fast.pagesWeek, 'week');
-  const from = shiftKey_(fast.today, -6);
-  if (Object.keys(by).length && ss_().getSheetByName(APP.T.DAILY)) dailyRows_().forEach(d => {
-    const x = by[d[2]];
-    if (!x || d[0] < from || d[0] > fast.today) return;
-    x.spendWeek += num_(d[3]);
-    if (d[0] === fast.today) x.spendToday += num_(d[3]);
-  });
-  const list = Object.keys(by).map(n => by[n]).sort((p, q) => ((active[q.name] || 0) - (active[p.name] || 0)) || (q.spendToday - p.spendToday) ||
-    (q.today - p.today) || (q.week - p.week)).slice(0, S.MAX_STOCKLESS);
-  r = shopTabBand_(g, r, 'زيارات على منتجات خلصانة (الستوك صفر) — فلوس إعلانات رايحة على الفاضي', 7);
-  r = shopTabHead_(g, r, ['المنتج', 'الستوك', 'زيارات النهارده', 'زيارات آخر 7 أيام', 'إعلانات Meta شغالة دلوقتي', 'صرف النهارده', 'صرف آخر 7 أيام']);
-  if (!list.length) return shopTabText_(g, r, 'مفيش زيارات على منتجات خلصانة ✅');
-  list.forEach(x => {
-    const hot = (active[x.name] || 0) > 0 || x.spendToday > 0, bg = hot ? S.RED : null;
-    g.set(r, 1, x.name, { b: 'bold', bg: bg });
-    g.set(r, 2, 'نفد', { al: 'center', bg: bg });
-    [x.today, x.week, active[x.name] || 0, round2_(x.spendToday), round2_(x.spendWeek)]
-      .forEach((v, i) => g.set(r, 3 + i, v, { nf: S.COUNT, al: 'right', bg: bg, b: i === 2 && v > 0 ? 'bold' : 'normal' }));
-    r++;
-  });
-  return shopTabText_(g, r, 'الأحمر: عليه إعلان شغال أو اتصرف عليه النهارده، يعني بتدفع دلوقتي في زيارات مش هتشتري. الستوك من تاب المنتجات، والصرف من Daily Log.');
+  if (Object.keys(by).length && ss_().getSheetByName(APP.T.DAILY)) dailyRows_().forEach(d => { if (by[d[2]] && d[0] === fast.today) by[d[2]].spendToday += num_(d[3]); });
+  return Object.keys(by).map(n => by[n]).sort((p, q) => (q.active - p.active) || (q.spendToday - p.spendToday) || (q.today - p.today) || (q.week - p.week))
+    .slice(0, SHOPTAB.MAX_STOCKLESS);
 }
 
-/* 3) Sessions from each Meta account's ads ÷ Meta's outbound clicks, day by day. */
-function shopTabClicks_(g, r, slow) {
-  const S = SHOPTAB, accs = slow.accounts || [], W = 1 + 3 * (accs.length + 1);
-  r = shopTabBand_(g, r, 'الكليكات اللي بتضيع: زيارات شوبيفاي من إعلانات كل أكاونت ÷ Outbound clicks في Meta (اتقرا ' + slow.at + ')', Math.max(W, 4));
-  if (!accs.length) return shopTabText_(g, r, slow.clickErr || 'مفيش أكاونتات Meta في تاب Accounts.');
-  const cols = accs.concat([{ id: '', name: 'الأكاونتات كلها' }]), today = slow.day;
-  g.set(r, 1, 'اليوم', { bg: S.YELLOW, b: 'bold', al: 'center' });
-  cols.forEach((a, i) => { g.set(r, 2 + 3 * i, a.name, { bg: S.YELLOW, b: 'bold', al: 'center' }); g.fill(r, 3 + 3 * i, 2, { bg: S.YELLOW }); g.merge(r, 2 + 3 * i, 1, 3); });
-  r++;
-  g.set(r, 1, '', { bg: S.YELLOW });
-  cols.forEach((a, i) => ['زيارات', 'Outbound clicks', 'وصل الموقع'].forEach((h, j) => g.set(r, 2 + 3 * i + j, h, { bg: S.YELLOW, b: 'bold', al: 'center' })));
-  r++;
-  const days = [];
-  for (let i = 0; i < S.CLICK_DAYS; i++) days.push(shiftKey_(today, -i));
-  const val = (a, d) => {
-    if (a.id) return (slow.clicks[a.id] || {})[d] || [0, 0];
-    return accs.reduce((t, x) => { const v = (slow.clicks[x.id] || {})[d] || [0, 0]; return [t[0] + v[0], t[1] + v[1]]; }, [0, 0]);
-  };
-  const median = a => {
-    const v = days.filter(d => d !== today).map(d => val(a, d)).filter(x => x[1] > 0).map(x => x[0] / x[1]).sort((p, q) => p - q);
-    return v.length ? v[Math.floor(v.length / 2)] : 0;
-  };
-  const meds = cols.map(median);
-  days.forEach(d => {
-    g.set(r, 1, d === today ? 'النهارده (لحد ' + slow.at.slice(11) + ')' : shopTabDayLabel_(d), { b: 'bold', bg: d === today ? S.TODAY_BG : S.LABEL });
-    cols.forEach((a, i) => {
-      const v = val(a, d), ratio = v[1] > 0 ? v[0] / v[1] : '', m = meds[i];
-      const bg = ratio === '' || !(m > 0) ? null : ratio < m * S.CLICK_RED ? S.RED : ratio < m * S.CLICK_AMBER ? S.AMBER : null;
-      g.set(r, 2 + 3 * i, v[0], { nf: S.COUNT, al: 'right' });
-      g.set(r, 3 + 3 * i, v[1], { nf: S.COUNT, al: 'right' });
-      g.set(r, 4 + 3 * i, ratio, { nf: '0%', al: 'center', b: 'bold', bg: bg });
-    });
-    r++;
-  });
-  if (slow.clickErr) r = shopTabText_(g, r, '⚠️ ' + slow.clickErr);
-  return shopTabText_(g, r, 'لو النسبة وقعت يوم عن باقي أيام الأكاونت (أحمر: أقل من ' + Math.round(S.CLICK_RED * 100) + '% من يومه العادي، أصفر: أقل من ' +
-    Math.round(S.CLICK_AMBER * 100) + '%)، يبقى الموقع تقيل أو لينك باظ، أو الكليكات نفسها بالغلط. الزيارات اللي من غير utm_term مش محسوبة، فالمهم التغيير مش الرقم.');
-}
-
-/* 4) Month by month and day by day. */
-function shopTabDays_(g, r, fast, slow) {
-  const S = SHOPTAB, today = fast.today, days = {};
-  Object.keys(slow.days || {}).forEach(k => { const t = shopTabZero_(); S.KEYS.forEach((x, i) => { t[x] = slow.days[k][i] || 0; }); days[k] = t; });
-  const t0 = shopTabCut_(fast.hours, today, 23, 1);
-  S.KEYS.slice(9).forEach(k => { t0[k] = fast.kinds[k]; });
-  days[today] = t0;
+/* What the charts read: {name: {head, rows, fmt}}, in the order they sit in the data tab. */
+function shopTabData_(fast, slow) {
+  const S = SHOPTAB, R = shopTabRatio_, today = fast.today, days = shopTabDaysMap_(fast, slow), out = {};
   const sum = (from, to) => Object.keys(days).filter(k => k >= from && k <= to).reduce((t, k) => shopTabAdd_(t, days[k]), shopTabZero_());
-  const R = shopTabRatio_;
-  /* [header, value(t), format] */
-  const COLS = [['SESSIONS', t => t.sessions, S.COUNT], ['ADDED TO CART', t => t.atc, S.COUNT], ['REACHED CHECKOUT', t => t.checkout, S.COUNT],
-    ['COMPLETED CHECKOUT', t => t.done, S.COUNT], ['ATC %', t => R(t.atc, t.sessions), S.PCT], ['CHECKOUT %', t => R(t.checkout, t.sessions), S.PCT],
-    ['CONVERSION RATE', t => R(t.done, t.sessions), S.PCT], ['BOUNCE RATE', t => R(t.bounced, t.sessions), S.PCT], ['ORDERS', t => t.orders, S.COUNT],
-    ['TOTAL SALES', t => t.total, S.MONEY], ['AOV', t => R(t.value, t.orders), S.MONEY], ['RETURNING SALES %', t => R(t.retSales, t.newSales + t.retSales), S.PCT]];
-  r = shopTabBand_(g, r, 'أرقام شوبيفاي يوم بيوم' + (slow.at ? ' (الأيام اللي فاتت اتقرت ' + slow.at + '، والنهارده دلوقتي)' : ''), COLS.length + 1);
-  r = shopTabHead_(g, r, ['DATE'].concat(COLS.map(c => c[0])));
-  const line = (label, t, bg) => {
-    g.set(r, 1, label, { b: 'bold', bg: bg || S.LABEL });
-    COLS.forEach((c, i) => g.set(r, 2 + i, c[1](t), { nf: c[2], al: 'right', bg: bg || null }));
-    r++;
-  };
-  const p = today.split('-').map(Number), months = [];
-  for (let i = 0; i <= S.MONTHS; i++) months.push(new Date(Date.UTC(p[0], p[1] - 1 - i, 1)).toISOString().slice(0, 7));
-  const end = ym => { const q = ym.split('-').map(Number); return new Date(Date.UTC(q[0], q[1], 0)).toISOString().slice(0, 10); };
-  months.forEach((ym, i) => line(funnelMonthName_(ym) + (i ? '' : ' (لحد النهارده)'), sum(ym + '-01', i ? end(ym) : today), S.LABEL));
-  const last = months[S.MONTHS], first = months[1];
-  line('آخر ' + S.MONTHS + ' شهور (' + funnelMonthName_(last).slice(0, 3) + '–' + funnelMonthName_(first) + ')', sum(last + '-01', end(first)), S.AVG3_BG);
-  for (let i = 0; i < S.DAYS; i++) {
-    const d = shiftKey_(today, -i);
-    line(i ? shopTabDayLabel_(d) : 'النهارده ' + shopTabDayLabel_(d), days[d] || shopTabZero_(), i ? null : S.TODAY_BG);
+  const label = d => (d === today ? 'النهارده' : Number(d.slice(8, 10)) + '/' + Number(d.slice(5, 7)));
+  const rows = [];
+  for (let i = S.DAYS - 1; i >= 0; i--) {
+    const d = shiftKey_(today, -i), t = days[d] || shopTabZero_();
+    rows.push([label(d), t.sessions, round2_(t.total), t.orders, R(t.done, t.sessions), R(t.bounced, t.sessions), R(t.retSales, t.newSales + t.retSales)]);
   }
-  return shopTabText_(g, r, 'ATC % و CHECKOUT % من الزيارات، زي كارت Conversion rate breakdown في شوبيفاي. AOV = (المبيعات قبل المرتجعات − الخصم) ÷ الأوردرات. ' +
-    'RETURNING SALES % = مبيعات العملاء الراجعين ÷ مبيعات الكل: كل ما يقل، البيزنس بيعتمد أكتر على الإعلانات الجديدة.');
+  out.days = { head: ['اليوم', 'Sessions', 'Total sales', 'Orders', 'Conversion rate', 'Bounce rate', 'مبيعات العملاء الراجعين'], rows: rows,
+    fmt: ['@', S.COUNT, S.MONEY, S.COUNT, S.PCT, '0.0%', '0.0%'] };
+  const t0 = days[today] || shopTabZero_(), m = sum(shiftKey_(today, 1 - S.DAYS), today);
+  out.steps = { head: ['', 'النهارده', 'آخر ' + S.DAYS + ' يوم'], fmt: ['@', S.PCT, S.PCT],
+    rows: [['Added to cart', 'atc'], ['Reached checkout', 'checkout'], ['Completed checkout', 'done']].map(x => [x[0], R(t0[x[1]], t0.sessions), R(m[x[1]], m.sessions)]) };
+  const money = v => shopTabShow_(v, false);
+  out.stockless = { head: ['المنتج', 'زيارات النهارده', 'زيارات آخر 7 أيام'], fmt: ['@', S.COUNT, S.COUNT],
+    rows: shopTabStockless_(fast).map(x => [x.name + (x.active ? ' — ' + x.active + ' إعلان شغال' : '') + (x.spendToday ? '، صرف النهارده ' + money(x.spendToday) : ''), x.today, x.week]) };
+  const accs = slow.accounts || [], clicks = [];
+  for (let i = S.CLICK_DAYS - 1; i >= 0; i--) {
+    const d = shiftKey_(slow.day || today, -i), v = accs.map(a => (slow.clicks[a.id] || {})[d] || [0, 0]);
+    const all = v.reduce((t, x) => [t[0] + x[0], t[1] + x[1]], [0, 0]);
+    clicks.push([d === (slow.day || today) ? 'النهارده' : Number(d.slice(8, 10)) + '/' + Number(d.slice(5, 7))]
+      .concat(v.map(x => R(x[0], x[1])), [R(all[0], all[1])]));
+  }
+  out.clicks = { head: ['اليوم'].concat(accs.map(a => a.name), ['الأكاونتات كلها']), rows: accs.length ? clicks : [],
+    fmt: ['@'].concat(accs.map(() => '0%'), ['0%']) };
+  out.kinds = { head: ['', 'المبيعات'], fmt: ['@', S.MONEY], rows: [['عملاء جداد', round2_(m.newSales)], ['عملاء راجعين', round2_(m.retSales)]] };
+  const devName = n => (n === 'other' ? 'other (أوردرات الفورم)' : n || 'مش معروف');
+  out.device = { head: ['الجهاز', 'Sessions'], fmt: ['@', S.COUNT], rows: (slow.device || []).slice().sort((a, b) => b[1] - a[1]).map(x => [devName(x[0]), x[1]]) };
+  out.region = { head: ['المحافظة', 'Sessions'], fmt: ['@', S.COUNT], rows: (slow.region || []).filter(x => x[0]).slice(0, S.TOP).map(x => [x[0], x[1]]) };
+  const refName = x => (x[0] || x[1] ? [x[0], x[1]].filter(Boolean).join(' · ') : 'مش معروف (أغلبه الفورم)');
+  out.ref = { head: ['المصدر', 'Total sales'], fmt: ['@', S.MONEY], rows: (slow.ref || []).slice(0, S.TOP).map(x => [refName(x), round2_(x[3])]) };
+  const p = today.split('-').map(Number), months = [];
+  for (let i = S.MONTHS; i >= 0; i--) {
+    const ym = new Date(Date.UTC(p[0], p[1] - 1 - i, 1)).toISOString().slice(0, 7), q = ym.split('-').map(Number);
+    const t = sum(ym + '-01', i ? new Date(Date.UTC(q[0], q[1], 0)).toISOString().slice(0, 10) : today);
+    months.push([funnelMonthName_(ym) + (i ? '' : ' (لحد النهارده)'), round2_(t.total), R(t.done, t.sessions)]);
+  }
+  out.months = { head: ['الشهر', 'Total sales', 'Conversion rate'], fmt: ['@', S.MONEY, S.PCT], rows: months };
+  return out;
 }
 
-/* 5) Orders by hour (rows) and weekday (columns, Saturday first), the last 4 full weeks. */
+/* Writes the blocks side by side (a blank column between) in the hidden data tab; each block gets its column (b.col). */
+function shopTabWriteData_(blocks) {
+  const sh = ensureTab_(SHOPTAB.DATA), keys = Object.keys(blocks);
+  let col = 1, H = 1;
+  keys.forEach(k => { const b = blocks[k]; b.col = col; col += b.head.length + 1; H = Math.max(H, b.rows.length + 1); });
+  const W = col - 1, v = [], f = [];
+  for (let i = 0; i < H; i++) { v.push(new Array(W).fill('')); f.push(new Array(W).fill('@')); }
+  keys.forEach(k => {
+    const b = blocks[k];
+    b.head.forEach((h, j) => { v[0][b.col - 1 + j] = h; });
+    b.rows.forEach((row, i) => row.forEach((x, j) => { v[i + 1][b.col - 1 + j] = x === null || x === undefined ? '' : x; f[i + 1][b.col - 1 + j] = b.fmt[j] || 'General'; }));
+  });
+  if (sh.getMaxColumns() < W) sh.insertColumnsAfter(sh.getMaxColumns(), W - sh.getMaxColumns());
+  if (sh.getMaxRows() < H) sh.insertRowsAfter(sh.getMaxRows(), H - sh.getMaxRows());
+  const oldR = sh.getLastRow(), oldC = sh.getLastColumn();
+  sh.getRange(1, 1, H, W).setNumberFormats(f).setValues(v);
+  if (oldR > H) sh.getRange(H + 1, 1, oldR - H, Math.max(oldC, W)).clearContent();
+  if (oldC > W) sh.getRange(1, W + 1, Math.max(oldR, H), oldC - W).clearContent();
+  try { sh.hideSheet(); } catch (e) { /* مش مهم */ }
+  return sh;
+}
+
+/* The charts, in their order on the page: {type, title, block, cols: [[first, count]], opts} or {text} for an empty one. */
+function shopTabChartList_(blocks) {
+  const S = SHOPTAB, b = blocks;
+  const base = (type, title, block, cols, opts) => ({ type: type, block: block, cols: cols,
+    opts: Object.assign({ title: title, width: S.CHART_W, height: S.CHART_H, fontName: 'Arial', colors: S.COLORS, legend: { position: 'bottom' },
+      titleTextStyle: { fontSize: 13, bold: true, color: S.DARK }, chartArea: { left: 70, top: 40, width: '82%', height: '62%' } }, opts || {}) });
+  const line = (title, block, cols, fmt, opts) => base('LINE', title, block, cols, Object.assign({ curveType: 'function', lineWidth: 2, pointSize: 0,
+    vAxis: { format: fmt, minValue: 0 }, hAxis: { showTextEvery: block === 'days' ? 5 : 2 } }, opts || {}));
+  const donut = (title, block) => base('PIE', title, block, [[0, 2]], { pieHole: 0.55, legend: { position: 'right' }, pieSliceText: 'percentage',
+    chartArea: { left: 20, top: 40, width: '90%', height: '75%' } });
+  const bars = (title, block, opts) => base('BAR', title, block, [[0, b[block].head.length]], Object.assign({ legend: { position: 'none' },
+    hAxis: { minValue: 0, format: '#,##0' }, chartArea: { left: 190, top: 40, width: '62%', height: '75%' } }, opts || {}));
+  return [
+    b.stockless.rows.length ? bars('زيارات على منتجات خلصانة (الستوك صفر): فلوس إعلانات رايحة على الفاضي', 'stockless',
+      { colors: ['#dc2626', '#fca5a5'], legend: { position: 'bottom' } }) : { text: '✅ مفيش زيارات النهارده ولا آخر 7 أيام على منتجات خلصانة' },
+    b.clicks.rows.length ? line('الكليكات اللي بتوصل الموقع: زيارات شوبيفاي ÷ Outbound clicks (لو وقعت: الموقع تقيل أو لينك باظ)', 'clicks',
+      [[0, b.clicks.head.length]], '0%') : { text: 'مفيش أكاونتات Meta في تاب Accounts، أو الكليكات لسه ماتقرتش.' },
+    line('Sessions over time — الزيارات', 'days', [[0, 2]], '#,##0', { legend: { position: 'none' } }),
+    base('COMBO', 'Total sales و Orders — المبيعات والأوردرات', 'days', [[0, 1], [2, 2]], { seriesType: 'bars',
+      series: { 1: { type: 'line', targetAxisIndex: 1, curveType: 'function', lineWidth: 2 } }, vAxes: { 0: { format: '#,##0' }, 1: { format: '#,##0' } },
+      hAxis: { showTextEvery: 5 } }),
+    line('Conversion rate over time — التحويل', 'days', [[0, 1], [4, 1]], '0.0%', { legend: { position: 'none' } }),
+    base('COLUMN', 'Conversion rate breakdown — خطوات الشراء (% من الزيارات)', 'steps', [[0, 3]], { vAxis: { format: '0.0%', minValue: 0 } }),
+    line('Bounce rate over time — خرجوا من أول صفحة', 'days', [[0, 1], [5, 1]], '0%', { legend: { position: 'none' }, colors: ['#f59e0b'] }),
+    line('نسبة مبيعات العملاء الراجعين — كل ما تقل، البيزنس بيعتمد أكتر على الإعلانات', 'days', [[0, 1], [6, 1]], '0%',
+      { legend: { position: 'none' }, colors: ['#7c3aed'] }),
+    donut('New vs returning customers — المبيعات آخر 30 يوم', 'kinds'),
+    donut('Sessions by device type — آخر 30 يوم', 'device'),
+    bars('Sessions by location — أكتر 10 محافظات، آخر 30 يوم', 'region'),
+    bars('Total sales by referrer — آخر 30 يوم', 'ref', { colors: ['#16a34a'] }),
+    base('COMBO', 'شهر بشهر: Total sales و Conversion rate', 'months', [[0, 3]], { seriesType: 'bars',
+      series: { 1: { type: 'line', targetAxisIndex: 1, lineWidth: 2, pointSize: 6 } }, vAxes: { 0: { format: '#,##0' }, 1: { format: '0.0%' } } })
+  ];
+}
+
+/* Charts are made again only when what they read or look like changed (the data under them updates by itself). */
+function shopTabDrawCharts_(sh, data, specs) {
+  const props = PropertiesService.getDocumentProperties(), sig = sha_(JSON.stringify(specs));
+  if (props.getProperty(SHOPTAB.CHARTS_KEY) === sig && sh.getCharts().length === specs.length) return false;
+  sh.getCharts().forEach(c => sh.removeChart(c));
+  specs.forEach(s => {
+    let b = sh.newChart().setChartType(Charts.ChartType[s.type]).setNumHeaders(1).setPosition(s.row, s.col, 4, 4);
+    s.ranges.forEach(rg => { b = b.addRange(data.getRange(rg[0], rg[1], rg[2], rg[3])); });
+    Object.keys(s.opts).forEach(k => { b = b.setOption(k, s.opts[k]); });
+    sh.insertChart(b.build());
+  });
+  props.setProperty(SHOPTAB.CHARTS_KEY, sig);
+  return true;
+}
+
+/* Once per page layout (SHOPTAB.LAYOUT): the old page and charts go, narrow columns, no grid lines. */
+function shopTabLayout_(sh) {
+  const S = SHOPTAB, props = PropertiesService.getDocumentProperties();
+  if (props.getProperty(S.LAYOUT_KEY) === String(S.LAYOUT)) return;
+  if (sh.getMaxColumns() < S.COLS) sh.insertColumnsAfter(sh.getMaxColumns(), S.COLS - sh.getMaxColumns());
+  sh.getRange(1, 1, sh.getMaxRows(), sh.getMaxColumns()).breakApart().clear();
+  sh.getCharts().forEach(c => sh.removeChart(c));
+  ['GH_', 'GM_'].forEach(p => props.deleteProperty(p + sh.getName()));
+  props.deleteProperty(S.CHARTS_KEY);
+  sh.setColumnWidths(1, S.COLS, S.CW);
+  try { sh.setHiddenGridlines(true); } catch (e) { /* مش مهم */ }
+  props.setProperty(S.LAYOUT_KEY, String(S.LAYOUT));
+}
+
+/* 1) The cards and what the changes mean. Returns {r: the next free row, value: the cards' number row}. */
+function shopTabCards_(g, r, fast) {
+  const S = SHOPTAB, R = shopTabRatio_, now = new Date(fast.atMs), tz = tz_(), H = Number(Utilities.formatDate(now, tz, 'H'));
+  const f = Number(Utilities.formatDate(now, tz, 'm')) / 60, today = fast.today, y = shiftKey_(today, -1), w = shiftKey_(today, -7);
+  const a = shopTabCut_(fast.hours, today, H, 1), b = shopTabCut_(fast.hours, y, H, f), c = shopTabCut_(fast.hours, w, H, f);
+  const wName = S.DAY_NAMES[shopTabWeekday_(w)] + ' اللي فات';
+  g.set(r, 1, 'النهارده لحد ' + Utilities.formatDate(now, tz, 'HH:mm') + ' — قدام إمبارح و' + wName + ' (' + Number(w.slice(8, 10)) + '/' +
+    Number(w.slice(5, 7)) + ') لحد نفس الساعة', { bg: S.DARK, fc: '#ffffff', b: 'bold', al: 'center' });
+  g.fill(r, 2, S.COLS - 1, { bg: S.DARK });
+  g.merge(r, 1, 1, S.COLS);
+  r++;
+  /* [title, value(t), percent?, up is good?] */
+  [['Sessions', t => t.sessions, false, true], ['Total sales', t => t.total, false, true], ['Orders', t => t.orders, false, true],
+    ['Conversion rate', t => R(t.done, t.sessions), true, true], ['AOV', t => R(t.value, t.orders), false, true],
+    ['Bounce rate', t => R(t.bounced, t.sessions), true, false]].forEach((m, i) => {
+    const col = 1 + i * S.CARD, va = m[1](a);
+    g.set(r, col, m[0], { bg: S.LABEL, b: 'bold', al: 'center' });
+    g.set(r + 1, col, va, { nf: m[2] ? S.PCT : S.COUNT, b: 'bold', al: 'center' });
+    [[b, 'إمبارح'], [c, wName]].forEach((x, j) => {
+      const vb = m[1](x[0]), chg = shopTabChange_(va, vb), big = chg !== '' && Math.abs(chg) > S.STEP;
+      const pctText = chg === '' ? '' : '   ' + (chg > 0 ? '+' : chg < 0 ? '-' : '') + Math.round(Math.abs(chg) * 100) + '%';
+      g.set(r + 2 + j, col, x[1] + ': ' + shopTabShow_(vb, m[2]) + pctText,
+        { al: 'center', fc: !big ? S.SOFT : (chg > 0) === m[3] ? S.UP : S.DOWN, b: big ? 'bold' : 'normal' });
+    });
+    for (let k = 0; k < 4; k++) { if (k) g.fill(r + k, col + 1, S.CARD - 1, {}); g.merge(r + k, col, 1, S.CARD); }
+    g.fill(r, col + 1, S.CARD - 1, { bg: S.LABEL });
+  });
+  const value = r + 1;
+  r += 5;
+  [['قدام إمبارح: ', b], ['قدام ' + wName + ': ', c]].forEach(x => {
+    shopTabDiagnose_(a, x[1]).forEach((line, i) => {
+      if (!line) return;
+      g.set(r, 1, (i ? '' : x[0]) + line, { b: i ? 'normal' : 'bold', bg: S.LABEL });
+      g.fill(r, 2, S.COLS - 1, { bg: S.LABEL });
+      g.merge(r, 1, 1, S.COLS);
+      r++;
+    });
+  });
+  return { r: r + 1, value: value };
+}
+
+/* 3) Orders by weekday (rows, Saturday first) and hour (columns), an average day of the last 4 full weeks. */
 function shopTabHeat_(g, r, slow) {
-  const S = SHOPTAB, heat = slow.heat || [], order = [6, 0, 1, 2, 3, 4, 5]; // JS weekdays, Saturday first
-  const of = (js, h) => num_(((heat[(js + 6) % 7]) || [])[h]); // Shopify: 0 = Monday
-  r = shopTabBand_(g, r, 'الأوردرات بالساعة ويوم الأسبوع (آخر ' + S.HEAT_DAYS / 7 + ' أسابيع كاملة)', 9);
-  r = shopTabHead_(g, r, ['الساعة'].concat(order.map(d => S.DAY_NAMES[d]), ['الإجمالي']));
+  const S = SHOPTAB, heat = slow.heat || [], weeks = S.HEAT_DAYS / 7, order = [6, 0, 1, 2, 3, 4, 5]; // JS weekdays, Saturday first
+  const of = (js, h) => num_((heat[(js + 6) % 7] || [])[h]) / weeks; // Shopify: 0 = Monday
+  g.set(r, 1, 'Weekly sales patterns — الأوردرات بالساعة ويوم الأسبوع (متوسط يوم في آخر ' + weeks + ' أسابيع، الأغمق = أوردرات أكتر)',
+    { bg: S.DARK, fc: '#ffffff', b: 'bold', al: 'center' });
+  g.fill(r, 2, S.COLS - 1, { bg: S.DARK });
+  g.merge(r, 1, 1, S.COLS);
+  r++;
+  const first = r;
+  g.set(r, 1, 'اليوم / الساعة', { b: 'bold', al: 'center', fc: S.SOFT });
+  g.merge(r, 1, 1, 4);
+  for (let h = 0; h < 24; h++) g.set(r, 5 + h, h, { al: 'center', fc: S.SOFT });
+  g.set(r, 30, 'أوردرات اليوم', { b: 'bold', al: 'center', fc: S.SOFT });
+  g.merge(r, 30, 1, 4);
+  r++;
   let max = 0;
   order.forEach(d => { for (let h = 0; h < 24; h++) max = Math.max(max, of(d, h)); });
-  const shade = v => { const i = max > 0 ? Math.min(S.HEAT.length - 1, Math.ceil(v / max * (S.HEAT.length - 1))) : 0; return { bg: S.HEAT[i], fc: i >= S.HEAT.length - 1 ? '#ffffff' : '#000000' }; };
-  for (let h = 0; h < 24; h++) {
-    g.set(r, 1, (h < 10 ? '0' : '') + h + ':00', { b: 'bold', bg: S.LABEL, al: 'center' });
+  order.forEach(d => {
+    g.set(r, 1, S.DAY_NAMES[d], { b: 'bold', al: 'center' });
+    g.merge(r, 1, 1, 4);
     let tot = 0;
-    order.forEach((d, i) => { const v = of(d, h); tot += v; g.set(r, 2 + i, v, Object.assign({ nf: S.COUNT, al: 'center' }, shade(v))); });
-    g.set(r, 9, tot, { nf: S.COUNT, al: 'center', b: 'bold', bg: S.LABEL });
-    r++;
-  }
-  g.set(r, 1, 'الإجمالي', { b: 'bold', bg: S.LABEL, al: 'center' });
-  let all = 0;
-  order.forEach((d, i) => { let t = 0; for (let h = 0; h < 24; h++) t += of(d, h); all += t; g.set(r, 2 + i, t, { nf: S.COUNT, al: 'center', b: 'bold', bg: S.LABEL }); });
-  g.set(r, 9, all, { nf: S.COUNT, al: 'center', b: 'bold', bg: S.LABEL });
-  return shopTabText_(g, r + 1, 'الأغمق = أوردرات أكتر. ينفع تستخدمه في وقت رفع الميزانية أو تشغيل إعلان جديد.');
-}
-
-/* 6) New vs returning customers: today, this month, last 30 days. */
-function shopTabKinds_(g, r, fast, slow) {
-  const S = SHOPTAB, today = fast.today, R = shopTabRatio_;
-  const sum = (from, to) => {
-    const t = shopTabZero_();
-    Object.keys(slow.days || {}).forEach(k => { if (k >= from && k <= to && k !== today) S.KEYS.forEach((x, i) => { t[x] += slow.days[k][i] || 0; }); });
-    return shopTabAdd_(t, fast.kinds);
-  };
-  r = shopTabBand_(g, r, 'العملاء الجداد والراجعين', 7);
-  r = shopTabHead_(g, r, ['الفترة', 'أوردرات جداد', 'أوردرات راجعين', 'مبيعات الجداد', 'مبيعات الراجعين', 'نسبة مبيعات الراجعين', 'نسبة أوردرات الراجعين']);
-  [['النهارده', fast.kinds], ['الشهر ده', sum(today.slice(0, 8) + '01', today)], ['آخر ' + S.DAYS + ' يوم', sum(shiftKey_(today, 1 - S.DAYS), today)]].forEach(x => {
-    const t = x[1];
-    g.set(r, 1, x[0], { b: 'bold', bg: S.LABEL });
-    [[t.newOrders, S.COUNT], [t.retOrders, S.COUNT], [t.newSales, S.MONEY], [t.retSales, S.MONEY],
-      [R(t.retSales, t.newSales + t.retSales), S.PCT], [R(t.retOrders, t.newOrders + t.retOrders), S.PCT]]
-      .forEach((v, i) => g.set(r, 2 + i, v[0], { nf: v[1], al: 'right', b: i >= 4 ? 'bold' : 'normal' }));
+    for (let h = 0; h < 24; h++) {
+      const v = of(d, h), i = max > 0 ? Math.min(S.HEAT.length - 1, Math.ceil(v / max * (S.HEAT.length - 1))) : 0;
+      tot += v;
+      g.set(r, 5 + h, v ? Math.round(v * 10) / 10 : '', { nf: '0', al: 'center', bg: S.HEAT[i], fc: i >= S.HEAT.length - 2 ? '#ffffff' : S.SOFT });
+    }
+    g.set(r, 30, Math.round(tot), { nf: S.COUNT, al: 'center', b: 'bold' });
+    g.merge(r, 30, 1, 4);
     r++;
   });
-  return r;
+  return { r: r, first: first };
 }
 
-/* 7) A list with each row's share: [[label, value]]. */
-function shopTabShares_(g, r, title, head, rows, total, fmt) {
-  const S = SHOPTAB;
-  r = shopTabBand_(g, r, title, 3);
-  r = shopTabHead_(g, r, head.concat(['النسبة']));
-  if (!rows.length) return shopTabText_(g, r, 'مفيش داتا لسه.');
-  rows.forEach(x => {
-    g.set(r, 1, x[0], { b: 'bold', bg: S.LABEL });
-    g.set(r, 2, x[1], { nf: fmt || S.COUNT, al: 'right' });
-    g.set(r, 3, shopTabRatio_(x[1], total), { nf: '0.0%', al: 'right' });
-    r++;
-  });
-  return r;
-}
-function shopTabOthers_(g, r, slow) {
-  const S = SHOPTAB, dev = slow.device || [], all = dev.reduce((n, x) => n + x[1], 0);
-  const devName = n => (n === 'other' ? 'other (أغلبه أوردرات فورم الطلب، مش زيارات)' : n || 'مش معروف');
-  r = shopTabShares_(g, r, 'الزيارات حسب الجهاز (آخر ' + S.DAYS + ' يوم)', ['الجهاز', 'الزيارات'],
-    dev.slice().sort((a, b) => b[1] - a[1]).map(x => [devName(x[0]), x[1]]), all) + 1;
-  const reg = (slow.region || []).filter(x => x[0]).slice(0, S.TOP);
-  r = shopTabShares_(g, r, 'الزيارات حسب المحافظة (أكتر ' + S.TOP + '، آخر ' + S.DAYS + ' يوم)', ['المحافظة', 'الزيارات'], reg.map(x => [x[0], x[1]]), all) + 1;
-  const ref = slow.ref || [], sales = ref.reduce((n, x) => n + x[3], 0);
-  const refName = x => (x[0] || x[1] ? [x[0], x[1]].filter(Boolean).join(' · ') : 'مش معروف (أغلبه أوردرات فورم الطلب)');
-  r = shopTabBand_(g, r, 'المبيعات حسب المصدر (Order referrer، آخر ' + S.DAYS + ' يوم)', 4);
-  r = shopTabHead_(g, r, ['المصدر', 'الأوردرات', 'المبيعات', 'النسبة من المبيعات']);
-  if (!ref.length) return shopTabText_(g, r, 'مفيش داتا لسه.');
-  ref.slice(0, S.TOP).forEach(x => {
-    g.set(r, 1, refName(x), { b: 'bold', bg: S.LABEL });
-    g.set(r, 2, x[2], { nf: S.COUNT, al: 'right' });
-    g.set(r, 3, x[3], { nf: S.MONEY, al: 'right' });
-    g.set(r, 4, shopTabRatio_(x[3], sales), { nf: '0.0%', al: 'right' });
-    r++;
-  });
-  return shopTabText_(g, r, 'أغلب أوردرات فورم الطلب شوبيفاي مابيعرفش مصدرها. المصدر الأدق من الـ UTM في تاب Today.');
-}
-
-/* EXT.views (inside the lock): draws the tab from what this run read. */
+/* EXT.views (inside the lock): draws the page from what this run read. */
 function writeShopTab_() {
   const fast = SHOPTAB_FAST_;
   if (!fast) return false;
   const S = SHOPTAB, slow = shopTabSlow_() || { days: {}, at: '', day: fast.today, accounts: [], clicks: {}, clickErr: 'لسه ماتقراش' };
-  const sh = ensureTab_(S.TAB), g = todayGrid_();
-  g.width = Math.max(S.WIDTH, 1 + 3 * ((slow.accounts || []).length + 1));
-  g.set(1, 1, 'SHOPIFY — أرقام شوبيفاي نفسها (Analytics) | آخر تحديث ' + Utilities.formatDate(new Date(fast.atMs), tz_(), 'yyyy-MM-dd HH:mm'),
-    { bg: S.DARK, fc: '#ffffff', b: 'bold', al: 'center' });
-  g.fill(1, 2, g.width - 1, { bg: S.DARK });
-  g.merge(1, 1, 1, g.width);
-  g.set(2, 1, 'الأوردرات هنا كل أوردرات المتجر زي شوبيفاي (حتى الأكاونت اللي مش معانا)، و Total sales زي شوبيفاي (المرتجعات والإلغاء اللي اتسجلوا في اليوم بيتطرحوا منه). ' +
-    'التحويل (Conversion rate) = اللي خلّصوا الطلب ÷ الزيارات. الأوردرات = الزيارات × التحويل، والمبيعات = الأوردرات × متوسط الأوردر: ' +
-    'فالزيارات قدام الأوردرات بتقولك المشكلة في الإعلانات ولا الموقع، والأوردرات قدام المبيعات بتقولك حجم الأوردر اتغير ولا لأ. التغيير أقل من ' +
-    Math.round(S.STEP * 100) + '% = زي ما هو.', { fc: S.SOFT });
-  g.merge(2, 1, 1, g.width);
-  let r = 4;
-  r = shopTabCompare_(g, r, fast) + 1;
-  r = shopTabStockless_(g, r, fast) + 1;
-  r = shopTabClicks_(g, r, slow) + 1;
-  r = shopTabDays_(g, r, fast, slow) + 1;
-  r = shopTabHeat_(g, r, slow) + 1;
-  r = shopTabKinds_(g, r, fast, slow) + 1;
-  shopTabOthers_(g, r, slow);
-  if (writeGrid_(sh, g)) {
-    sh.setColumnWidth(1, 230);
-    for (let c = 2; c <= g.width; c++) sh.setColumnWidth(c, 100);
-    sh.getRange(2, 1).setWrap(true);
-    sh.setRowHeight(2, 60);
-  }
+  const sh = ensureTab_(S.TAB);
+  shopTabLayout_(sh);
+  const blocks = shopTabData_(fast, slow), data = shopTabWriteData_(blocks), g = todayGrid_();
+  g.width = S.COLS;
+  g.set(1, 1, 'SHOPIFY — أرقام شوبيفاي نفسها (Analytics) | آخر تحديث ' + Utilities.formatDate(new Date(fast.atMs), tz_(), 'yyyy-MM-dd HH:mm') +
+    (slow.at ? ' | الرسوم اتقرت ' + slow.at.slice(11) : ''), { bg: S.DARK, fc: '#ffffff', b: 'bold', al: 'center' });
+  g.fill(1, 2, S.COLS - 1, { bg: S.DARK });
+  g.merge(1, 1, 1, S.COLS);
+  g.set(2, 1, 'الأوردرات = الزيارات × التحويل، والمبيعات = الأوردرات × متوسط الأوردر. فالزيارات قدام الأوردرات بتقولك المشكلة في الإعلانات ولا الموقع، ' +
+    'والأوردرات قدام المبيعات بتقولك حجم الأوردر اتغير ولا لأ. التغيير أقل من ' + Math.round(S.STEP * 100) + '% = زي ما هو. ' +
+    'الأرقام زي شوبيفاي: كل أوردرات المتجر، و Total sales بعد المرتجعات اللي اتسجلت في اليوم. AOV = قيمة الأوردرات ÷ عددها، قبل المرتجعات. ' +
+    'فورم الطلب بيعمل الأوردر في زيارة لوحدها، فالتحويل صح للمتجر كله بس.' + (slow.clickErr ? ' ⚠️ ' + slow.clickErr : ''), { fc: S.SOFT });
+  g.merge(2, 1, 1, S.COLS);
+  const cards = shopTabCards_(g, 4, fast), list = shopTabChartList_(blocks), specs = [];
+  const top = cards.r;
+  list.forEach((x, k) => {
+    const row = top + Math.floor(k / 2) * S.SLOT_ROWS, col = k % 2 ? S.COLS / 2 + 1 : 1;
+    if (x.text) {
+      g.set(row + 1, col, x.text, { b: 'bold', al: 'center', bg: S.LABEL });
+      g.fill(row + 1, col + 1, S.COLS / 2 - 2, { bg: S.LABEL });
+      g.merge(row + 1, col, 1, S.COLS / 2 - 1);
+      return;
+    }
+    const bl = blocks[x.block], n = bl.rows.length + 1;
+    specs.push({ type: x.type, row: row, col: col, opts: x.opts, ranges: x.cols.map(cc => [1, bl.col + cc[0], n, cc[1]]) });
+  });
+  const heat = shopTabHeat_(g, top + Math.ceil(list.length / 2) * S.SLOT_ROWS, slow);
+  g.set(heat.r + 1, 1, '');
+  writeGrid_(sh, g);
+  sh.getRange(cards.value, 1, 1, S.COLS).setFontSize(20);
+  sh.setRowHeight(cards.value, 40);
+  sh.getRange(heat.first, 5, 8, 24).setFontSize(8);
+  sh.getRange(2, 1).setWrap(true);
+  sh.setRowHeight(2, 48);
+  shopTabDrawCharts_(sh, data, specs);
   return true;
 }
 

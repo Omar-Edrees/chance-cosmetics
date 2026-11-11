@@ -183,6 +183,15 @@ class FakeSheet {
     return img;
   }
   hideSheet() { this.hidden = true; return this; }
+  /* رسوم بيانية: الـ builder بيسجل كل نداء، و build بيرجعهم */
+  newChart() {
+    const calls = [], b = new Proxy({}, { get: (_, k) => (k === 'build' ? () => ({ calls }) : (...a) => { calls.push([k, a]); return b; }) });
+    return b;
+  }
+  insertChart(c) { (this.charts = this.charts || []).push(c); }
+  getCharts() { return (this.charts || []).slice(); }
+  removeChart(c) { this.charts = (this.charts || []).filter(x => x !== c); }
+  setHiddenGridlines(v) { this.noGridlines = v; return this; }
   setTabColor(c) { this.tabColor = c; return this; }
   getConditionalFormatRules() { return (this.cfRules || []).slice(); }
   setConditionalFormatRules(r) { this.cfRules = r.slice(); }

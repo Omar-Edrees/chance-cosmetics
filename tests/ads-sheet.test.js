@@ -94,6 +94,7 @@ function env(options) {
     PropertiesService: { getDocumentProperties: () => store(doc), getUserProperties: () => store(user) },
     LockService: { getScriptLock: () => ({ tryLock: () => true, releaseLock: () => {} }) },
     UrlFetchApp: { fetch: url => response(url), fetchAll: reqs => reqs.map(r => response(r.url)) },
+    Charts: { ChartType: { LINE: 'LINE', COLUMN: 'COLUMN', BAR: 'BAR', PIE: 'PIE', COMBO: 'COMBO' } },
     ScriptApp: { getProjectTriggers: () => triggers.slice(), deleteTrigger: t => triggers.splice(triggers.indexOf(t), 1), newTrigger: trigger },
   });
   // The real archive (12k old orders) only where a test asks for it; opt.archive = [orders] gives a small one.
@@ -1171,32 +1172,36 @@ test('تاب Shopify: بيتقري من شوبيفاي مع التحديث وي�
   Object.assign(e.user, { SHOPIFY_TOKEN: 'TOKEN1', SHOPIFY_TOKEN_EXP: String(Date.now() + 3600000) });
   e.c.setupAll();
   e.c.liveTick();
-  const sh = e.ss.getSheetByName('Shopify');
-  assert.ok(sh, 'التاب اتعمل');
+  const sh = e.ss.getSheetByName('Shopify'), data = e.ss.getSheetByName('Shopify Data');
+  assert.ok(sh && data && data.hidden, 'التاب اتعمل، وداتا الرسوم في تاب مخفي');
   assert.ok(queries.length >= 12 && queries.every(q => /^FROM /.test(q)), 'تقارير بس');
-  const v = sh.getDataRange().getValues(), row = label => v.find(r => String(r[0]).indexOf(label) === 0) || [];
-  assert.deepEqual(row('Sessions').slice(1, 2), [1000]);
-  assert.deepEqual(row('Orders').slice(1, 2), [20]);
-  assert.equal(row('AOV')[1], 1000, '(21000 − 1000) ÷ 20');
-  assert.equal(row('Conversion rate')[1], 0.02);
-  assert.ok(v.some(r => r[0] === 'التشخيص قدام إمبارح' && String(r[1]).length > 10), 'سطر التشخيص');
-  const stockless = block(sh, 'زيارات على منتجات خلصانة');
-  assert.deepEqual(stockless[0].slice(0, 5), ['Lip Oil', 'نفد', 50, 300, 0], 'Lip Oil خلص، و Blush لسه فيه ستوك');
-  assert.equal(stockless.length, 2, 'المنتج + سطر الشرح');
-  const clicks = block(sh, 'الكليكات اللي بتضيع').slice(1);
-  assert.deepEqual(clicks[0].slice(1, 4), [300, 400, 0.75], 'الـ Ad set من Ads Raw على A1، والحساب اللي مش معانا مش محسوب');
-  assert.deepEqual(clicks[0].slice(10, 13), [300, 400, 0.75], 'الأكاونتات كلها');
-  const days = block(sh, 'أرقام شوبيفاي يوم بيوم'), head = v[v.findIndex(r => String(r[0]).indexOf('أرقام شوبيفاي يوم بيوم') === 0) + 1];
-  const col = h => head.indexOf(h), today0 = days.find(r => String(r[0]).indexOf('النهارده') === 0), y0 = days.find(r => r[0] === e.c.shopTabDayLabel_(y));
-  assert.deepEqual([today0[col('SESSIONS')], today0[col('ORDERS')], today0[col('TOTAL SALES')], today0[col('RETURNING SALES %')]], [1000, 20, 19500, 4500 / 19500]);
-  assert.deepEqual([y0[col('SESSIONS')], y0[col('CONVERSION RATE')], y0[col('RETURNING SALES %')]], [800, 0.025, 0.25]);
-  const heat = block(sh, 'الأوردرات بالساعة');
-  assert.deepEqual(heat[20].slice(0, 2), ['20:00', 12], 'السبت أول عمود');
-  assert.equal(heat[24][8], 15, 'الإجمالي');
-  const kinds = block(sh, 'العملاء الجداد والراجعين');
-  assert.deepEqual(kinds[0].slice(0, 5), ['النهارده', 12, 8, 15000, 4500]);
+  const v = sh.getDataRange().getValues(), at = t => { for (let r = 0; r < v.length; r++) { const c = v[r].indexOf(t); if (c >= 0) return [r, c]; } return null; };
+  const card = t => { const p = at(t); return [v[p[0] + 1][p[1]], v[p[0] + 2][p[1]], v[p[0] + 3][p[1]]]; };
+  assert.equal(card('Sessions')[0], 1000);
+  assert.match(card('Sessions')[1], /^إمبارح: /);
+  assert.equal(card('Orders')[0], 20);
+  assert.equal(card('AOV')[0], 1000, '(21000 − 1000) ÷ 20');
+  assert.equal(card('Conversion rate')[0], 0.02);
+  assert.ok(v.some(r => /^قدام إمبارح: الزيارات/.test(String(r[0]))), 'سطر التشخيص');
+  const dv = data.getDataRange().getValues(), blockOf = h => { const c = dv[0].indexOf(h); const out = []; for (let r = 1; r < dv.length && dv[r][c] !== ''; r++) out.push(dv[r].slice(c, c + 3)); return out; };
+  assert.deepEqual(blockOf('المنتج'), [['Lip Oil', 50, 300]], 'Lip Oil خلص، و Blush لسه فيه ستوك');
+  const days = blockOf('اليوم'), t0 = days[days.length - 1], y0 = days[days.length - 2];
+  assert.deepEqual(t0, ['النهارده', 1000, 19500]);
+  assert.deepEqual(y0, [Number(y.slice(8, 10)) + '/' + Number(y.slice(5, 7)), 800, 20000]);
+  const ci = dv[0].indexOf('الأكاونتات كلها');
+  assert.equal(dv[14][ci], 0.75, 'النهارده: 300 زيارة من الـ Ad set اللي في Ads Raw ÷ 400 كليك، والحساب اللي مش معانا مش محسوب');
+  assert.deepEqual(blockOf('الشهر').length, 4);
+  const charts = sh.getCharts(), title = ch => (ch.calls.find(x => x[0] === 'setOption' && x[1][0] === 'title') || [0, []])[1][1];
+  assert.equal(charts.length, 13);
+  assert.match(title(charts[0]), /^زيارات على منتجات خلصانة/);
+  assert.match(title(charts[2]), /^Sessions over time/);
+  const pos = charts.map(ch => ch.calls.find(x => x[0] === 'setPosition')[1].slice(0, 2));
+  assert.deepEqual([pos[0][1], pos[1][1], pos[0][0] === pos[1][0]], [1, 25, true], 'رسمتين في الصف');
+  const heatAt = at('السبت');
+  assert.equal(v[heatAt[0]][4 + 20], 3, 'السبت 8 بالليل: 12 أوردر ÷ 4 أسابيع');
   assert.match(e.ss.getSheetByName('Health').getDataRange().getValues().map(r => r.join(' ')).join('\n'), /تاب Shopify .*✓ اتقرا/);
   const n = queries.length;
   e.c.liveTick();
   assert.equal(queries.length - n, 5, 'التحديث الجاي بيقرا النهارده بس، والباقي كل 3 ساعات');
+  assert.equal(sh.getCharts()[0], charts[0], 'الرسوم مااتعملتش تاني: الداتا تحتها بتتحدث لوحدها');
 });
