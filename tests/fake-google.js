@@ -183,6 +183,7 @@ class FakeSheet {
     return img;
   }
   hideSheet() { this.hidden = true; return this; }
+  isSheetHidden() { return !!this.hidden; }
   /* رسوم بيانية: الـ builder بيسجل كل نداء، و build بيرجعهم */
   newChart() {
     const calls = [], b = new Proxy({}, { get: (_, k) => (k === 'build' ? () => ({ calls }) : (...a) => { calls.push([k, a]); return b; }) });

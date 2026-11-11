@@ -94,7 +94,7 @@ function env(options) {
     PropertiesService: { getDocumentProperties: () => store(doc), getUserProperties: () => store(user) },
     LockService: { getScriptLock: () => ({ tryLock: () => true, releaseLock: () => {} }) },
     UrlFetchApp: { fetch: url => response(url), fetchAll: reqs => reqs.map(r => response(r.url)) },
-    Charts: { ChartType: { LINE: 'LINE', COLUMN: 'COLUMN', BAR: 'BAR', PIE: 'PIE', COMBO: 'COMBO' } },
+    Charts: { ChartType: { LINE: 'LINE', COLUMN: 'COLUMN', BAR: 'BAR', PIE: 'PIE', COMBO: 'COMBO' }, ChartHiddenDimensionStrategy: { SHOW_BOTH: 'SHOW_BOTH' } },
     ScriptApp: { getProjectTriggers: () => triggers.slice(), deleteTrigger: t => triggers.splice(triggers.indexOf(t), 1), newTrigger: trigger },
   });
   // The real archive (12k old orders) only where a test asks for it; opt.archive = [orders] gives a small one.
@@ -1173,7 +1173,7 @@ test('تاب Shopify: بيتقري من شوبيفاي مع التحديث وي�
   e.c.setupAll();
   e.c.liveTick();
   const sh = e.ss.getSheetByName('Shopify'), data = e.ss.getSheetByName('Shopify Data');
-  assert.ok(sh && data && data.hidden, 'التاب اتعمل، وداتا الرسوم في تاب مخفي');
+  assert.ok(sh && data && !data.hidden, 'التاب اتعمل، وداتا الرسوم في تاب ظاهر (الرسوم بتطلع فاضية من تاب مخفي)');
   assert.ok(queries.length >= 12 && queries.every(q => /^FROM /.test(q)), 'تقارير بس');
   const v = sh.getDataRange().getValues(), at = t => { for (let r = 0; r < v.length; r++) { const c = v[r].indexOf(t); if (c >= 0) return [r, c]; } return null; };
   const card = t => { const p = at(t); return [v[p[0] + 1][p[1]], v[p[0] + 2][p[1]], v[p[0] + 3][p[1]]]; };
@@ -1193,6 +1193,7 @@ test('تاب Shopify: بيتقري من شوبيفاي مع التحديث وي�
   assert.deepEqual(blockOf('الشهر').length, 4);
   const charts = sh.getCharts(), title = ch => (ch.calls.find(x => x[0] === 'setOption' && x[1][0] === 'title') || [0, []])[1][1];
   assert.equal(charts.length, 13);
+  assert.ok(charts.every(ch => ch.calls.some(x => x[0] === 'setHiddenDimensionStrategy' && x[1][0] === 'SHOW_BOTH')), 'الرسوم بتعرض الداتا حتى لو صفوفها مخفية');
   assert.match(title(charts[0]), /^زيارات على منتجات خلصانة/);
   assert.match(title(charts[2]), /^Sessions over time/);
   const pos = charts.map(ch => ch.calls.find(x => x[0] === 'setPosition')[1].slice(0, 2));

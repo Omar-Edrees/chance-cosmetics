@@ -10,7 +10,8 @@
  *     else its last 4 digits). Then the last 30 days: sessions, total sales with orders, conversion rate, the steps to an
  *     order, bounce rate, the returning customers' share of sales; new vs returning, device, governorate, referrer, months.
  *  3) Orders by weekday and hour (the last 4 full weeks, an average day), colored like Shopify's "Weekly sales patterns".
- * The charts read the hidden tab SHOPTAB.DATA, and are made again only when what they read moves (SHOPTAB_CHARTS).
+ * The charts read the tab SHOPTAB.DATA (grey, not hidden: charts on a hidden tab came out empty), and are made again only
+ * when what they read moves (SHOPTAB_CHARTS).
  * These are Shopify's numbers, not the sheet's: orders are every store order (the outside account's too), and total sales is
  * as Shopify shows it (returns and cancellations recorded that day come off). AOV = (gross sales − discounts) ÷ orders, the
  * value of the orders placed, so returns of older orders don't move it. The COD form places its orders in a session of its
@@ -344,7 +345,8 @@ function shopTabWriteData_(blocks) {
   sh.getRange(1, 1, H, W).setNumberFormats(f).setValues(v);
   if (oldR > H) sh.getRange(H + 1, 1, oldR - H, Math.max(oldC, W)).clearContent();
   if (oldC > W) sh.getRange(1, W + 1, Math.max(oldR, H), oldC - W).clearContent();
-  try { sh.hideSheet(); } catch (e) { /* مش مهم */ }
+  // Shown, not hidden: charts on a hidden data tab came out empty. Grey, at the end, with a note not to edit it.
+  try { if (sh.isSheetHidden()) sh.showSheet(); sh.setTabColor('#9ca3af'); } catch (e) { /* مش مهم */ }
   return sh;
 }
 
@@ -389,7 +391,9 @@ function shopTabDrawCharts_(sh, data, specs) {
   if (props.getProperty(SHOPTAB.CHARTS_KEY) === sig && sh.getCharts().length === specs.length) return false;
   sh.getCharts().forEach(c => sh.removeChart(c));
   specs.forEach(s => {
-    let b = sh.newChart().setChartType(Charts.ChartType[s.type]).setNumHeaders(1).setPosition(s.row, s.col, 4, 4);
+    // SHOW_BOTH: a chart made from code skips hidden rows and columns by default, and then shows nothing.
+    let b = sh.newChart().setChartType(Charts.ChartType[s.type]).setNumHeaders(1).setPosition(s.row, s.col, 4, 4)
+      .setHiddenDimensionStrategy(Charts.ChartHiddenDimensionStrategy[s.hidden]);
     s.ranges.forEach(rg => { b = b.addRange(data.getRange(rg[0], rg[1], rg[2], rg[3])); });
     Object.keys(s.opts).forEach(k => { b = b.setOption(k, s.opts[k]); });
     sh.insertChart(b.build());
@@ -516,7 +520,7 @@ function writeShopTab_() {
       return;
     }
     const bl = blocks[x.block], n = bl.rows.length + 1;
-    specs.push({ type: x.type, row: row, col: col, opts: x.opts, ranges: x.cols.map(cc => [1, bl.col + cc[0], n, cc[1]]) });
+    specs.push({ type: x.type, hidden: 'SHOW_BOTH', row: row, col: col, opts: x.opts, ranges: x.cols.map(cc => [1, bl.col + cc[0], n, cc[1]]) });
   });
   const heat = shopTabHeat_(g, top + Math.ceil(list.length / 2) * S.SLOT_ROWS, slow);
   g.set(heat.r + 1, 1, '');
