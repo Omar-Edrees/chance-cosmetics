@@ -234,9 +234,9 @@ test('Today: بنشمارك Meta، أحسن شهر من التلات شهور ا
   const head = values.find(r => r[7] === 'METRIC');
   assert.deepEqual(head.slice(7, 12), ['METRIC', 'BEST MONTH (LAST 3 MONTHS)', 'Chance 26', 'Chance Golden Era', 'chance store . egy3']);
   const metrics = values.map(r => r[7]), first = metrics.indexOf('METRIC') + 1;
-  assert.deepEqual(metrics.slice(first, first + 18), ['Meta ROAS', 'CPM', 'CPC (all)', 'CPC (link)', 'CTR (all)', 'CTR (link)', 'Hook rate',
-    'Hold rate', 'Cost per content view', 'Link click → LPV', 'Cost per LPV', 'Content view → ATC', 'ATC → Checkout', 'Checkout → Purchase',
-    'LPV → Purchase', 'CVR', 'AOV', '']);
+  assert.deepEqual(metrics.slice(first, first + 18), ['Meta ROAS', 'AOV', 'CVR', 'CPM', 'CPC (all)', 'CPC (link)', 'CTR (all)', 'CTR (link)',
+    'Hook rate', 'Hold rate', 'Cost per content view', 'Link click → LPV', 'Cost per LPV', 'Content view → ATC', 'ATC → Checkout',
+    'Checkout → Purchase', 'LPV → Purchase', '']);
   const row = l => values.find(r => r[7] === l).slice(7, 12);
   // أحسن شهر: أقل CPM (200) من التلات شهور، مش الشهر الرابع (50)؛ والنهارده 600 أسوأ
   assert.deepEqual(row('CPM'), ['CPM', 200, 600, '—', '—']);
