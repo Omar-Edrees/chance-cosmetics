@@ -11,7 +11,7 @@
  * Ad accounts and stores are read-only from here: no writes to Meta, TikTok or order sources.
  */
 const APP = {
-  VERSION: '1.45.0',
+  VERSION: '1.46.0',
   T: {
     SETTINGS: 'Settings', ACCOUNTS: 'Accounts', PRODUCTS: 'Products', ADMAP: 'Ad Map',
     ADS: 'Ads Raw', ACC_RAW: 'Account Raw', ORDERS: 'Orders Raw', DAILY: 'Daily Log',
@@ -4745,6 +4745,9 @@ function writeShopTab_() {
   const heat = shopTabHeat_(g, top + Math.ceil(list.length / 2) * S.SLOT_ROWS, slow);
   g.set(heat.r + 1, 1, '');
   writeGrid_(sh, g);
+  // The card rows: back to normal first (older versions had the numbers a row lower), then the big numbers.
+  sh.getRange(cards.value - 1, 1, 5, S.COLS).setFontSize(10);
+  for (let row = cards.value - 1; row <= cards.value + 3; row++) sh.setRowHeight(row, 21);
   sh.getRange(cards.value, 1, 1, S.COLS).setFontSize(20);
   sh.setRowHeight(cards.value, 40);
   sh.getRange(heat.first, 5, 8, 24).setFontSize(8);
