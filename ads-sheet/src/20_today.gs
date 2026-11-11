@@ -382,6 +382,8 @@ function writeToday_() {
   [[1, 150], [2, 210], [3, 120], [4, 130], [5, 130], [6, 130], [7, 24], [8, 300], [9, 260]].forEach(w => sh.setColumnWidth(w[0], w[1]));
   for (let col = 10; col <= TODAY.WIDTH; col++) sh.setColumnWidth(col, 125);
   sh.getRange(8 + top, 1, 1, 6).setWrap(true);
-  sh.getRange(3, 1, 1, 8).setFontSize(top ? 18 : 10); // the cards' numbers, or back to normal when there are no cards
-  sh.setRowHeight(3, top ? 34 : 21);
+  // The cards: big numbers in row 2, smaller comparisons in rows 3-4 (all back to normal when there are no cards).
+  sh.getRange(1, 1, 6, 8).setFontSize(10);
+  [2, 3].forEach(row => sh.setRowHeight(row, 21));
+  if (top) { sh.getRange(2, 1, 1, 8).setFontSize(18); sh.setRowHeight(2, 34); sh.getRange(3, 1, 2, 8).setFontSize(9); }
 }

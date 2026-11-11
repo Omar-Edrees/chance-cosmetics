@@ -1204,11 +1204,13 @@ test('تاب Shopify: بيتقري من شوبيفاي مع التحديث وي�
   assert.equal(v[heatAt[0]][4 + 20], 3, 'السبت 8 بالليل: 12 أوردر ÷ 4 أسابيع');
   assert.match(e.ss.getSheetByName('Health').getDataRange().getValues().map(r => r.join(' ')).join('\n'), /تاب Shopify .*✓ اتقرا/);
   const tv = e.ss.getSheetByName('Today').getDataRange().getValues();
-  assert.match(String(tv[0][0]), /^النهارده لحد .* قدام إمبارح/, 'الكروت أول حاجة في Today');
-  assert.deepEqual(tv[1].slice(0, 8), ['Ad spend (Meta)', 'Sessions', 'Total sales', 'Orders', 'Conversion rate', 'AOV', '', 'Bounce rate'], 'الصرف الأول، وبعده كروت شوبيفاي');
-  assert.deepEqual([tv[2][0], tv[2][1], tv[2][3]], [300, 1000, 20], 'صرف Meta بالساعة (100 لكل أكاونت من التلاتة)');
-  assert.match(String(tv[6][0]), /DAILY AD CLOSING/, 'وتحتهم جدول الصرف بتاع كل أكاونت');
-  assert.equal(String(v[4][0]), 'Sessions', 'تاب Shopify من غير كارت الصرف');
+  assert.deepEqual(tv[0].slice(0, 8), ['Ad spend (Meta)', 'Sessions', 'Total sales', 'Orders', 'Conversion rate', 'AOV', 'Bounce rate', ''],
+    'الكروت أول حاجة في Today من غير عنوان: الصرف الأول، وبعده كروت شوبيفاي');
+  assert.deepEqual([tv[1][0], tv[1][1], tv[1][3]], [300, 1000, 20], 'صرف Meta بالساعة (100 لكل أكاونت من التلاتة)');
+  assert.match(String(tv[2][1]), /^إمبارح: /);
+  assert.match(String(tv[5][0]), /DAILY AD CLOSING/, 'وتحتهم جدول الصرف بتاع كل أكاونت');
+  assert.equal(String(v[3][0]), 'Sessions', 'تاب Shopify من غير كارت الصرف ومن غير عنوان');
+  assert.ok(!v.some(r => /^النهارده لحد/.test(String(r[0]))), 'مفيش عنوان فوق الكروت');
   const n = queries.length;
   e.c.liveTick();
   assert.equal(queries.length - n, 5, 'التحديث الجاي بيقرا النهارده بس، والباقي كل 3 ساعات');

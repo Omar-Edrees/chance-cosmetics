@@ -3204,8 +3204,10 @@ function writeToday_() {
   [[1, 150], [2, 210], [3, 120], [4, 130], [5, 130], [6, 130], [7, 24], [8, 300], [9, 260]].forEach(w => sh.setColumnWidth(w[0], w[1]));
   for (let col = 10; col <= TODAY.WIDTH; col++) sh.setColumnWidth(col, 125);
   sh.getRange(8 + top, 1, 1, 6).setWrap(true);
-  sh.getRange(3, 1, 1, 8).setFontSize(top ? 18 : 10); // the cards' numbers, or back to normal when there are no cards
-  sh.setRowHeight(3, top ? 34 : 21);
+  // The cards: big numbers in row 2, smaller comparisons in rows 3-4 (all back to normal when there are no cards).
+  sh.getRange(1, 1, 6, 8).setFontSize(10);
+  [2, 3].forEach(row => sh.setRowHeight(row, 21));
+  if (top) { sh.getRange(2, 1, 1, 8).setFontSize(18); sh.setRowHeight(2, 34); sh.getRange(3, 1, 2, 8).setFontSize(9); }
 }
 
 /* ======== 21_actual.gs ======== */
@@ -4347,28 +4349,23 @@ function refreshShopCards_() {
 }
 
 /*
- * Draws the cards: a dark band over `width` columns, then for each card (slots[i] = [column, columns wide]) its title,
- * today's number, yesterday and last week with the change (green better, red worse, grey under SHOPTAB.STEP).
- * Returns the row after the cards; the number row is r + 1.
+ * Draws the cards from row r: for each card (slots[i] = [column, columns wide]) its title, today's number, then yesterday and
+ * last week until the same time with the change (green better, red worse, grey under SHOPTAB.STEP). White under the
+ * numbers, so no grid lines show. Returns the row after the cards; the number row is r + 1, the comparisons r + 2 and r + 3.
  */
-function shopTabDrawCards_(g, r, model, slots, width) {
-  const S = SHOPTAB;
-  g.set(r, 1, 'النهارده لحد ' + model.at + ' — قدام إمبارح و' + model.wName + ' (' + model.wDate + ') لحد نفس الساعة',
-    { bg: S.DARK, fc: '#ffffff', b: 'bold', al: 'center' });
-  g.fill(r, 2, width - 1, { bg: S.DARK });
-  g.merge(r, 1, 1, width);
-  r++;
+function shopTabDrawCards_(g, r, model, slots) {
+  const S = SHOPTAB, W = { bg: '#ffffff' };
   model.cards.slice(0, slots.length).forEach((m, i) => {
     const col = slots[i][0], span = slots[i][1], va = m.values[0];
     g.set(r, col, m.title, { bg: S.LABEL, b: 'bold', al: 'center' });
-    g.set(r + 1, col, va, { nf: m.pct ? S.PCT : S.COUNT, b: 'bold', al: 'center' });
+    g.set(r + 1, col, va, { nf: m.pct ? S.PCT : S.COUNT, b: 'bold', al: 'center', bg: W.bg });
     [['إمبارح', 1], [model.wName, 2]].forEach((x, j) => {
       const vb = m.values[x[1]], chg = shopTabChange_(va, vb), big = chg !== '' && Math.abs(chg) > S.STEP;
       const pctText = chg === '' ? '' : '   ' + (chg > 0 ? '+' : chg < 0 ? '-' : '') + Math.round(Math.abs(chg) * 100) + '%';
       g.set(r + 2 + j, col, x[0] + ': ' + shopTabShow_(vb, m.pct) + pctText,
-        { al: 'center', fc: !big || m.up === null ? S.SOFT : (chg > 0) === m.up ? S.UP : S.DOWN, b: big ? 'bold' : 'normal' });
+        { al: 'center', bg: W.bg, fc: !big || m.up === null ? S.SOFT : (chg > 0) === m.up ? S.UP : S.DOWN, b: big ? 'bold' : 'normal' });
     });
-    if (span > 1) for (let k = 0; k < 4; k++) { g.fill(r + k, col + 1, span - 1, k ? {} : { bg: S.LABEL }); g.merge(r + k, col, 1, span); }
+    if (span > 1) for (let k = 0; k < 4; k++) { g.fill(r + k, col + 1, span - 1, k ? W : { bg: S.LABEL }); g.merge(r + k, col, 1, span); }
   });
   return r + 4;
 }
@@ -4377,11 +4374,11 @@ function shopTabDrawCards_(g, r, model, slots, width) {
 function todayShopCards_(g) {
   const model = shopTabCards_();
   if (!model) return 0;
-  const K = 6;
+  const K = 5; // 4 card rows and a blank one
   g.rows = Array.from({ length: K }, () => []).concat(g.rows);
   g.merges = g.merges.map(m => [m[0] + K, m[1], m[2], m[3]]);
   g.live = (g.live || []).map(x => [x[0] + K, x[1]]);
-  shopTabDrawCards_(g, 1, model, [[1, 1], [2, 1], [3, 1], [4, 1], [5, 1], [6, 1], [8, 1]], 8);
+  shopTabDrawCards_(g, 1, model, [[1, 1], [2, 1], [3, 1], [4, 1], [5, 1], [6, 1], [7, 2]]);
   return K;
 }
 
@@ -4604,8 +4601,8 @@ function shopTabLayout_(sh) {
 /* 1) The cards (without the spend: this page is Shopify's) and what the changes mean. Returns {r, value: the number row}. */
 function shopTabTop_(g, r, model) {
   const S = SHOPTAB, own = { day: model.day, at: model.at, wName: model.wName, wDate: model.wDate, cards: model.cards.filter(c => c.key !== 'spend') };
-  const value = r + 2;
-  r = shopTabDrawCards_(g, r, own, own.cards.map((c, i) => [1 + i * S.CARD, S.CARD]), S.COLS) + 1;
+  const value = r + 1;
+  r = shopTabDrawCards_(g, r, own, own.cards.map((c, i) => [1 + i * S.CARD, S.CARD])) + 1;
   model.diag.forEach(x => x[1].forEach((line, i) => {
     if (!line) return;
     g.set(r, 1, (i ? '' : x[0]) + line, { b: i ? 'normal' : 'bold', bg: S.LABEL });
