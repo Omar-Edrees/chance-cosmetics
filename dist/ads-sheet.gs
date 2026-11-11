@@ -11,7 +11,7 @@
  * Ad accounts and stores are read-only from here: no writes to Meta, TikTok or order sources.
  */
 const APP = {
-  VERSION: '1.46.0',
+  VERSION: '1.46.1',
   T: {
     SETTINGS: 'Settings', ACCOUNTS: 'Accounts', PRODUCTS: 'Products', ADMAP: 'Ad Map',
     ADS: 'Ads Raw', ACC_RAW: 'Account Raw', ORDERS: 'Orders Raw', DAILY: 'Daily Log',
@@ -3003,7 +3003,7 @@ function todayClosing_(g, today, sum, rows, gap) {
   g.fill(1, 2, 5, { bg: S.DARK });
   g.merge(1, 1, 1, 6);
   const p = today.split('-').map(Number), shown = Utilities.formatDate(new Date(Date.UTC(p[0], p[1] - 1, p[2], 12)), 'UTC', 'dd-MMM-yyyy');
-  [['Closing Date', shown], ['Status', 'LIVE — بيتحدث لوحده'], ['Last Update', nowText_()],
+  [['Closing Date', shown], ['Status', 'LIVE — بيتحدث لوحده (نسخة الكود ' + APP.VERSION + ')'], ['Last Update', nowText_()],
     ['Orders Source', pixel ? '⚠️ مشتريات البيكسل (مش أوردرات حقيقية)' : 'Shopify (UTM)']].forEach((x, i) => {
     g.set(3 + i, 1, x[0], { bg: S.LABEL, b: 'bold' });
     g.set(3 + i, 2, x[1], { al: 'right' });
@@ -3192,7 +3192,7 @@ function writeToday_() {
   const sh = ensureTab_(APP.T.TODAY), today = todayKey_(), rows = dailyRows_(), sum = summarize_(rows, today, today), g = todayGrid_();
   const p = today.split('-').map(Number), noon = new Date(Date.UTC(p[0], p[1] - 1, p[2], 12));
   const shown = Utilities.formatDate(noon, 'UTC', 'dd-MMM-yyyy'), month = Utilities.formatDate(noon, 'UTC', 'MMM-yyyy');
-  const gap = todayCardRows_(), model = gap ? todayCardCells_(g) : null;
+  const gap = todayCardRows_(), cards = gap && todayCardsReady_(), model = cards ? todayCardCells_(g) : gap ? todayCardNote_(g) : null;
   todayStockCover_(g, todayBalances_(g, todayClosing_(g, today, sum, rows, gap) + 2, today) + 1, today);
   let r = todaySlots_(g, 1, today) + 1;
   r = todayBenchmark_(g, r, today, shown) + 1;
@@ -3206,7 +3206,7 @@ function writeToday_() {
   sh.getRange(8 + gap, 1, 1, 6).setWrap(true);
   sh.getRange(1, 1, 6, 8).setFontSize(10); // the cards were cells here before (1.45): back to normal
   [2, 3].forEach(row => sh.setRowHeight(row, 21));
-  if (gap) todayCardCharts_(sh, model);
+  if (cards) todayCardCharts_(sh, model);
 }
 
 /* ======== 21_actual.gs ======== */
@@ -4386,9 +4386,20 @@ function todayCardDefs_() {
   return [['spend', 'Ad spend (Meta)', false, null], ['sessions', 'Sessions', false, true], ['total', 'Total sales', false, true],
     ['orders', 'Orders', false, true], ['cr', 'Conversion rate', true, true], ['aov', 'AOV', false, true], ['bounce', 'Bounce rate', true, false]];
 }
-/* Rows kept for the cards in Today (0: no cards — the sheet isn't connected to Shopify, or the Sheets API service is off). */
+/* The advanced service "Google Sheets API" (identifier Sheets) is on in Apps Script: the cards need it. */
+function todayCardsReady_() { return typeof Sheets !== 'undefined' && !!Sheets && !!Sheets.Spreadsheets; }
+/* Rows kept for the cards in Today: 0 when the sheet isn't connected to Shopify; 2 for a note when the Sheets API is off. */
 function todayCardRows_() {
-  return shopifyProps_().getProperty('SHOPIFY_TOKEN') && typeof Sheets !== 'undefined' && Sheets.Spreadsheets ? SHOPTAB.TC_ROWS : 0;
+  if (!shopifyProps_().getProperty('SHOPIFY_TOKEN')) return 0;
+  return todayCardsReady_() ? SHOPTAB.TC_ROWS : 2;
+}
+/* Where the cards would be, when the Sheets API service is off: what to do. */
+function todayCardNote_(g) {
+  g.set(SHOPTAB.TC_ROW, 1, '⚠️ الكروت مش ظاهرة: فعّل Google Sheets API في Apps Script (Services ← + ← Google Sheets API ← Add، والاسم Sheets)، وبعدين ⚡',
+    { bg: '#fff2cc', b: 'bold' });
+  g.fill(SHOPTAB.TC_ROW, 2, 5, { bg: '#fff2cc' });
+  g.merge(SHOPTAB.TC_ROW, 1, 1, 6);
+  return null;
 }
 /* The cards' numbers in the cells under them: row SHOPTAB.TC_ROW + i = [title, today, yesterday, last week]. */
 function todayCardCells_(g) {

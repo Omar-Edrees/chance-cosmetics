@@ -1245,3 +1245,13 @@ test('تاب Shopify: بيتقري من شوبيفاي مع التحديث وي�
   e.c.liveTick();
   assert.deepEqual(Array.from(api[api.length - 1].filter(r => r.addChart).map(r => r.addChart.chart.spec.title)), ['Ad spend (Meta)'], 'الكارت اللي اتمسح بيرجع لوحده');
 });
+
+test('Today: من غير خدمة Google Sheets API، مكان الكروت فيه سطر بيقول تعمل إيه', () => {
+  const e = env();
+  fakeShopify(e, []);
+  Object.assign(e.user, { SHOPIFY_TOKEN: 'TOKEN1', SHOPIFY_TOKEN_EXP: String(Date.now() + 3600000) });
+  e.c.setupAll(); e.c.liveTick();
+  const tv = e.ss.getSheetByName('Today').getDataRange().getValues();
+  assert.match(String(tv[7][0]), /فعّل Google Sheets API/);
+  assert.equal(tv[9][0], 'PLATFORM');
+});

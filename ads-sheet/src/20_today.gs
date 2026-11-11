@@ -181,7 +181,7 @@ function todayClosing_(g, today, sum, rows, gap) {
   g.fill(1, 2, 5, { bg: S.DARK });
   g.merge(1, 1, 1, 6);
   const p = today.split('-').map(Number), shown = Utilities.formatDate(new Date(Date.UTC(p[0], p[1] - 1, p[2], 12)), 'UTC', 'dd-MMM-yyyy');
-  [['Closing Date', shown], ['Status', 'LIVE — بيتحدث لوحده'], ['Last Update', nowText_()],
+  [['Closing Date', shown], ['Status', 'LIVE — بيتحدث لوحده (نسخة الكود ' + APP.VERSION + ')'], ['Last Update', nowText_()],
     ['Orders Source', pixel ? '⚠️ مشتريات البيكسل (مش أوردرات حقيقية)' : 'Shopify (UTM)']].forEach((x, i) => {
     g.set(3 + i, 1, x[0], { bg: S.LABEL, b: 'bold' });
     g.set(3 + i, 2, x[1], { al: 'right' });
@@ -370,7 +370,7 @@ function writeToday_() {
   const sh = ensureTab_(APP.T.TODAY), today = todayKey_(), rows = dailyRows_(), sum = summarize_(rows, today, today), g = todayGrid_();
   const p = today.split('-').map(Number), noon = new Date(Date.UTC(p[0], p[1] - 1, p[2], 12));
   const shown = Utilities.formatDate(noon, 'UTC', 'dd-MMM-yyyy'), month = Utilities.formatDate(noon, 'UTC', 'MMM-yyyy');
-  const gap = todayCardRows_(), model = gap ? todayCardCells_(g) : null;
+  const gap = todayCardRows_(), cards = gap && todayCardsReady_(), model = cards ? todayCardCells_(g) : gap ? todayCardNote_(g) : null;
   todayStockCover_(g, todayBalances_(g, todayClosing_(g, today, sum, rows, gap) + 2, today) + 1, today);
   let r = todaySlots_(g, 1, today) + 1;
   r = todayBenchmark_(g, r, today, shown) + 1;
@@ -384,5 +384,5 @@ function writeToday_() {
   sh.getRange(8 + gap, 1, 1, 6).setWrap(true);
   sh.getRange(1, 1, 6, 8).setFontSize(10); // the cards were cells here before (1.45): back to normal
   [2, 3].forEach(row => sh.setRowHeight(row, 21));
-  if (gap) todayCardCharts_(sh, model);
+  if (cards) todayCardCharts_(sh, model);
 }

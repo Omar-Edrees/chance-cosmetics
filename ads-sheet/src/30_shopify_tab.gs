@@ -306,9 +306,20 @@ function todayCardDefs_() {
   return [['spend', 'Ad spend (Meta)', false, null], ['sessions', 'Sessions', false, true], ['total', 'Total sales', false, true],
     ['orders', 'Orders', false, true], ['cr', 'Conversion rate', true, true], ['aov', 'AOV', false, true], ['bounce', 'Bounce rate', true, false]];
 }
-/* Rows kept for the cards in Today (0: no cards — the sheet isn't connected to Shopify, or the Sheets API service is off). */
+/* The advanced service "Google Sheets API" (identifier Sheets) is on in Apps Script: the cards need it. */
+function todayCardsReady_() { return typeof Sheets !== 'undefined' && !!Sheets && !!Sheets.Spreadsheets; }
+/* Rows kept for the cards in Today: 0 when the sheet isn't connected to Shopify; 2 for a note when the Sheets API is off. */
 function todayCardRows_() {
-  return shopifyProps_().getProperty('SHOPIFY_TOKEN') && typeof Sheets !== 'undefined' && Sheets.Spreadsheets ? SHOPTAB.TC_ROWS : 0;
+  if (!shopifyProps_().getProperty('SHOPIFY_TOKEN')) return 0;
+  return todayCardsReady_() ? SHOPTAB.TC_ROWS : 2;
+}
+/* Where the cards would be, when the Sheets API service is off: what to do. */
+function todayCardNote_(g) {
+  g.set(SHOPTAB.TC_ROW, 1, '⚠️ الكروت مش ظاهرة: فعّل Google Sheets API في Apps Script (Services ← + ← Google Sheets API ← Add، والاسم Sheets)، وبعدين ⚡',
+    { bg: '#fff2cc', b: 'bold' });
+  g.fill(SHOPTAB.TC_ROW, 2, 5, { bg: '#fff2cc' });
+  g.merge(SHOPTAB.TC_ROW, 1, 1, 6);
+  return null;
 }
 /* The cards' numbers in the cells under them: row SHOPTAB.TC_ROW + i = [title, today, yesterday, last week]. */
 function todayCardCells_(g) {
