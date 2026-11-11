@@ -1021,6 +1021,10 @@ function fakeShopify(e, orders, opt) {
         return p.payload.code === 'GOOD' ? json(200, { access_token: 'TOKEN1', scope: 'read_orders', expires_in: 3600, refresh_token: 'R1', refresh_token_expires_in: 7776000 })
           : json(400, { error: 'invalid_request' });
       }
+      if (/graphql\.json$/.test(url) && /shopifyqlQuery/.test(JSON.parse(p.payload).query)) { // تقارير شوبيفاي (ShopifyQL)
+        const q = JSON.parse(p.payload).variables.q, t = (o.ql && o.ql(q)) || { columns: [], rows: [] };
+        return json(200, { data: { shopifyqlQuery: { tableData: { columns: t.columns.map(n => ({ name: n, dataType: 'STRING' })), rows: t.rows }, parseErrors: [] } } });
+      }
       if (/graphql\.json$/.test(url)) {
         const body = JSON.parse(p.payload), page = Number(body.variables.after || 0), size = o.pageSize || 100;
         const nodes = orders.slice(page * size, page * size + size);
@@ -1107,4 +1111,92 @@ test('شوبيفاي: من غير ربط، التحديث مابيكلمش شو�
   e.c.setupAll(); e.c.liveTick();
   assert.equal(calls.length, 0);
   assert.equal(e.ss.getSheetByName('Order Status'), null);
+});
+
+/* ---------- تاب Shopify (30_shopify_tab.gs) ---------- */
+
+test('تاب Shopify: التشخيص بيقول معنى التغيير في الزيارات والأوردرات ومتوسط الأوردر', () => {
+  const c = env().c, t = x => Object.assign(c.shopTabZero_(), x);
+  const base = { sessions: 1000, atc: 80, checkout: 40, done: 20, orders: 20, value: 20000, total: 20000 };
+  const d = (a, b) => Array.from(c.shopTabDiagnose_(t(Object.assign({}, base, a)), t(Object.assign({}, base, b))));
+  assert.match(d({}, {})[0], /^الزيارات والأوردرات زي ما هم/);
+  assert.match(d({}, {})[1], /^متوسط الأوردر زي ما هو/);
+  assert.match(d({ sessions: 1200, done: 24, orders: 24, value: 24000 }, {})[0], /^الزيارات زادت 20% والأوردرات زادت معاها 20%: نمو طبيعي/);
+  const weak = d({ sessions: 1300, done: 20, orders: 20, atc: 80 }, {});
+  assert.match(weak[0], /^الزيارات زادت 30% والأوردرات مازادتش، فالتحويل قل 23%: الزيارات الجديدة ضعيفة/);
+  assert.match(weak[0], /أكتر خطوة وقعت: الإضافة للسلة/, 'نفس عدد الإضافات على زيارات أكتر');
+  assert.match(d({ done: 14, orders: 14, value: 14000, checkout: 40 }, {})[0], /^الزيارات زي ما هي والأوردرات قلت 30%: المشكلة في الموقع نفسه.*أكتر خطوة وقعت: إتمام الطلب/);
+  assert.match(d({ sessions: 700, done: 14, orders: 14, value: 14000 }, {})[0], /^الزيارات قلت 30% والأوردرات قلت معاها 30%: المشكلة في الترافيك/);
+  assert.match(d({ sessions: 700 }, {})[0], /^الزيارات قلت 30% بس الأوردرات ماقلتش، فالتحويل زاد 43%: زيارات أقل بس أحسن/);
+  assert.match(d({ value: 16000 }, {})[1], /^متوسط الأوردر قل 20%: منتج أرخص/);
+  assert.match(d({ value: 24000 }, {})[1], /^متوسط الأوردر زاد 20%: الباندل أو الأبسيل/);
+  assert.match(d({ total: 12000, reversals: 8000 }, { reversals: 1000 })[1], /بسبب مرتجعات وإلغاء اتسجلوا النهارده/);
+  assert.match(d({ sessions: 100 }, {})[0], /^لسه بدري/, 'أرقام قليلة');
+  const cut = c.shopTabCut_({ D: { 3: t({ sessions: 10 }), 4: t({ sessions: 60 }), 5: t({ sessions: 99 }) } }, 'D', 4, 0.5);
+  assert.equal(cut.sessions, 40, 'الساعات اللي قبل الساعة دي كاملة، والساعة دي بنسبة اللي فات منها');
+});
+
+test('تاب Shopify: بيتقري من شوبيفاي مع التحديث ويترسم: النهارده، والمنتجات الخلصانة، والكليكات، ويوم بيوم، والساعات، والعملاء', () => {
+  const probe = env(), today = probe.c.todayKey_(), y = probe.c.shiftKey_(today, -1), w = probe.c.shiftKey_(today, -7);
+  const at0 = k => new Date(k + 'T00:00:00+02:00').toISOString(); // أول ساعة في اليوم بتوقيت القاهرة
+  const SET = '120251308872640297';
+  const e = env({ ads: { [A1]: [Object.assign(adRow(today, '111', 1000), { adset_id: SET })] },
+    stock: [['P1', 'V1', 'Lip Oil', 'Default Title', 'LO', 'lip-oil', 0, 300], ['P2', 'V2', 'Blush', 'Default Title', 'BL', 'blush', 9, 250]] });
+  const queries = [];
+  const ql = q => {
+    queries.push(q);
+    const S = ['hour', 'sessions', 'sessions_with_cart_additions', 'sessions_that_reached_checkout', 'sessions_that_completed_checkout', 'bounce_rate'];
+    if (/^FROM sessions .*TIMESERIES hour/.test(q)) return { columns: S, rows: [[at0(today), '1000', '80', '40', '20', '0.5'], [at0(y), '800', '64', '32', '20', '0.5'], [at0(w), '1000', '80', '40', '20', '0.5']] };
+    if (/^FROM sales .*TIMESERIES hour/.test(q)) return { columns: ['hour', 'orders', 'gross_sales', 'discounts', 'sales_reversals', 'total_sales'],
+      rows: [[at0(today), '20', '21000', '-1000', '-500', '19500'], [at0(y), '20', '20000', '0', '0', '20000'], [at0(w), '20', '20000', '0', '0', '20000']] };
+    if (/landing_page_path/.test(q)) return { columns: ['landing_page_path', 'sessions'], rows: /SINCE (\S+) UNTIL \1/.test(q)
+      ? [['/ar/products/lip-oil', '50'], ['/products/blush', '30']] : [['/ar/products/lip-oil', '300'], ['/products/blush', '200']] };
+    if (/new_or_returning_customer TIMESERIES day/.test(q)) return { columns: ['day', 'new_or_returning_customer', 'orders', 'total_sales'],
+      rows: [[y, 'New', '15', '15000'], [y, 'Returning', '5', '5000'], [y, '', '1', '-100']] };
+    if (/new_or_returning_customer/.test(q)) return { columns: ['new_or_returning_customer', 'orders', 'total_sales'], rows: [['New', '12', '15000'], ['Returning', '8', '4500']] };
+    if (/^FROM sessions .*TIMESERIES day/.test(q) && !/utm_term/.test(q)) return { columns: ['day'].concat(S.slice(1)), rows: [[y, '800', '64', '32', '20', '0.5']] };
+    if (/^FROM sales .*TIMESERIES day/.test(q)) return { columns: ['day', 'orders', 'gross_sales', 'discounts', 'sales_reversals', 'total_sales'], rows: [[y, '20', '20000', '0', '0', '20000']] };
+    if (/day_of_week/.test(q)) return { columns: ['day_of_week', 'hour_of_day', 'orders'], rows: [['5', '20', '12'], ['0', '9', '3']] }; // السبت 8 بالليل، الاتنين 9 الصبح
+    if (/utm_term/.test(q)) return { columns: ['day', 'utm_term', 'sessions'], rows: [[today, SET, '300'], [today, '120256366881430102', '999'], [today, '', '500']] };
+    if (/session_device_type/.test(q)) return { columns: ['session_device_type', 'sessions'], rows: [['mobile', '900'], ['other', '100']] };
+    if (/session_region/.test(q)) return { columns: ['session_region', 'sessions'], rows: [['Cairo Governorate', '600'], ['', '100']] };
+    if (/order_referrer/.test(q)) return { columns: ['order_referrer_source', 'order_referrer_name', 'orders', 'total_sales'], rows: [['', '', '90', '9000'], ['social', 'facebook', '10', '1000']] };
+    return { columns: [], rows: [] };
+  };
+  fakeShopify(e, [], { ql: ql });
+  const all = e.c.UrlFetchApp.fetchAll;
+  e.c.UrlFetchApp.fetchAll = reqs => all(reqs).map((r, i) => (/fields=outbound_clicks/.test(reqs[i].url) // الكليكات من Meta
+    ? { getResponseCode: () => 200, getContentText: () => JSON.stringify({ data: reqs[i].url.indexOf('act_' + A1) >= 0
+      ? [{ date_start: today, outbound_clicks: [{ action_type: 'outbound_click', value: '400' }] }] : [] }) } : r));
+  Object.assign(e.user, { SHOPIFY_TOKEN: 'TOKEN1', SHOPIFY_TOKEN_EXP: String(Date.now() + 3600000) });
+  e.c.setupAll();
+  e.c.liveTick();
+  const sh = e.ss.getSheetByName('Shopify');
+  assert.ok(sh, 'التاب اتعمل');
+  assert.ok(queries.length >= 12 && queries.every(q => /^FROM /.test(q)), 'تقارير بس');
+  const v = sh.getDataRange().getValues(), row = label => v.find(r => String(r[0]).indexOf(label) === 0) || [];
+  assert.deepEqual(row('Sessions').slice(1, 2), [1000]);
+  assert.deepEqual(row('Orders').slice(1, 2), [20]);
+  assert.equal(row('AOV')[1], 1000, '(21000 − 1000) ÷ 20');
+  assert.equal(row('Conversion rate')[1], 0.02);
+  assert.ok(v.some(r => r[0] === 'التشخيص قدام إمبارح' && String(r[1]).length > 10), 'سطر التشخيص');
+  const stockless = block(sh, 'زيارات على منتجات خلصانة');
+  assert.deepEqual(stockless[0].slice(0, 5), ['Lip Oil', 'نفد', 50, 300, 0], 'Lip Oil خلص، و Blush لسه فيه ستوك');
+  assert.equal(stockless.length, 2, 'المنتج + سطر الشرح');
+  const clicks = block(sh, 'الكليكات اللي بتضيع').slice(1);
+  assert.deepEqual(clicks[0].slice(1, 4), [300, 400, 0.75], 'الـ Ad set من Ads Raw على A1، والحساب اللي مش معانا مش محسوب');
+  assert.deepEqual(clicks[0].slice(10, 13), [300, 400, 0.75], 'الأكاونتات كلها');
+  const days = block(sh, 'أرقام شوبيفاي يوم بيوم'), head = v[v.findIndex(r => String(r[0]).indexOf('أرقام شوبيفاي يوم بيوم') === 0) + 1];
+  const col = h => head.indexOf(h), today0 = days.find(r => String(r[0]).indexOf('النهارده') === 0), y0 = days.find(r => r[0] === e.c.shopTabDayLabel_(y));
+  assert.deepEqual([today0[col('SESSIONS')], today0[col('ORDERS')], today0[col('TOTAL SALES')], today0[col('RETURNING SALES %')]], [1000, 20, 19500, 4500 / 19500]);
+  assert.deepEqual([y0[col('SESSIONS')], y0[col('CONVERSION RATE')], y0[col('RETURNING SALES %')]], [800, 0.025, 0.25]);
+  const heat = block(sh, 'الأوردرات بالساعة');
+  assert.deepEqual(heat[20].slice(0, 2), ['20:00', 12], 'السبت أول عمود');
+  assert.equal(heat[24][8], 15, 'الإجمالي');
+  const kinds = block(sh, 'العملاء الجداد والراجعين');
+  assert.deepEqual(kinds[0].slice(0, 5), ['النهارده', 12, 8, 15000, 4500]);
+  assert.match(e.ss.getSheetByName('Health').getDataRange().getValues().map(r => r.join(' ')).join('\n'), /تاب Shopify .*✓ اتقرا/);
+  const n = queries.length;
+  e.c.liveTick();
+  assert.equal(queries.length - n, 5, 'التحديث الجاي بيقرا النهارده بس، والباقي كل 3 ساعات');
 });

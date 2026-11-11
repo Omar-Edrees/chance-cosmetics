@@ -7,6 +7,7 @@
  *  - "توب 100": best sellers, highest ROAS, most stock, selling without ads and dead stock (22_top.gs).
  *  - "المحافظات": orders, cancellation, delivery and return by governorate (25_governorates.gs).
  *  - Today: what's left in each Meta ad account, read every 15 minutes (26_balances.gs).
+ *  - "Shopify": Shopify's own Analytics numbers and what their changes mean (30_shopify_tab.gs).
  *  - Running ✅ = the product has at least one ACTIVE Meta ad now (or TikTok spend today/yesterday).
  * Read-only on Meta and Shopify.
  */
@@ -48,11 +49,12 @@ function refreshProductsNow() {
  * live: after ads sync, before views (outside the lock, for reads). today: the same for ⚡ (Today's own reads).
  * menu: [label, functionName]. */
 const EXT = {
-  views: [slow => chanceViews_(slow)],
+  views: [slow => chanceViews_(slow), () => writeShopTab_()],
   edit: [(name, a1) => chanceEdit_(name, a1)],
   setup: [() => chanceSetup_()],
-  live: [() => syncShopifyStatus_(), () => refreshAccountNames_(), () => discoverAccounts_(), () => chanceLive_(), () => refreshTodayFunnel_(), () => refreshFunnel_(false)],
+  live: [() => syncShopifyStatus_(), () => refreshAccountNames_(), () => discoverAccounts_(), () => chanceLive_(), () => refreshTodayFunnel_(), () => refreshFunnel_(false),
+    () => refreshShopTab_(false)],
   today: [() => refreshTodayFunnel_(), () => refreshBalances_()],
   menu: [['📦 تحديث المنتجات والستوك وتوب 100', 'refreshProductsNow'], ['📈 تحديث Daily Account Funnel و Actual ROAS', 'refreshFunnelNow'],
-    ['🗄 أرشيف Closing لشهر خلص', 'archiveClosingMonth'], ['🔑 ربط أبليكيشن شوبيفاي', 'shopifyConnect']]
+    ['🗄 أرشيف Closing لشهر خلص', 'archiveClosingMonth'], ['🛍 تحديث تاب Shopify', 'refreshShopTabNow'], ['🔑 ربط أبليكيشن شوبيفاي', 'shopifyConnect']]
 };
