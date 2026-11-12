@@ -451,7 +451,8 @@ test('أوردرات Flow: "(blank)" فاضي، والمصدر من بيانات
   assert.deepEqual(['MANUAL (DRAFT)', 'NO SOURCE'].map(l => todayRow(e, l)[3]), [1, 1]);
   const labels = e.ss.getSheetByName('Today').getDataRange().getValues().map(r => r[0]);
   assert.deepEqual(labels.slice(labels.indexOf('TIKTOK TOTAL'), labels.indexOf('GRAND TOTAL') + 1),
-    ['TIKTOK TOTAL', 'MANUAL (DRAFT)', 'NO SOURCE', 'GRAND TOTAL'], 'مفيش صف DIRECT لوحده');
+    ['TIKTOK TOTAL', 'MANUAL (DRAFT)', 'ORGANIC (BIO)', 'NO SOURCE', 'GRAND TOTAL'], 'مفيش صف DIRECT لوحده، والبايو تحت المانيول');
+  assert.equal(todayRow(e, 'ORGANIC (BIO)')[3], 0);
   assert.equal(grand[3], 5);
 });
 
@@ -690,20 +691,30 @@ test('أوردرات قبل تعديل Flow: المصدر والمنتجات م�
   assert.ok(!v.some(r => r[0] === 'NO SOURCE'));
 });
 
-test('لينك البايو و ChatGPT مش إعلانات: DIRECT', () => {
+test('لينك البايو أورجانيك أكيد (BIO) تحت المانيول ومش في META TOTAL، و ChatGPT مش إعلان: DIRECT', () => {
   const probe = env(), today = probe.c.todayKey_(), at = ' ' + today + 'T10:00:00+03:00', B = '(blank)';
   const row = (id, a, src) => ['gid://shopify/Order/' + id, ' #' + id, ' N', B, 500, at, B, B, B, B, B].concat(a, ['Lip Oil x1', src || '4655075']);
   const e = env({ orderHead: FLOW_HEAD, orders: [
     row(1, ['ig', B, 'link_in_bio', 'Instagram']),
     row(2, ['chatgpt.com', B, B, 'Direct(Chancestoreegy)'], 'shopify_draft_order'),
     row(3, ['Camp', 'Ad 1', 'fb', 'Facebook']),
+    row(4, ['ig', B, 'link_in_bio', 'Instagram'], 'shopify_draft_order'),
   ] });
   e.c.setupAll();
   e.c.liveTick();
   const raw = e.ss.getSheetByName('Orders Raw').getDataRange().getValues().slice(1), p = id => raw.find(r => r[0] === 'gid://shopify/Order/' + id).slice(3, 5);
-  assert.deepEqual(p(1), ['DIRECT', 'organic']);
+  assert.deepEqual(p(1), ['BIO', 'link_in_bio']);
   assert.deepEqual(p(2), ['DIRECT', 'referrer']);
   assert.deepEqual(p(3), ['META', 'utm']);
+  assert.deepEqual(p(4), ['BIO', 'link_in_bio'], 'البايو قبل الـ Draft');
+  const meta = todayRow(e, 'META TOTAL'), bio = todayRow(e, 'ORGANIC (BIO)'), manual = todayRow(e, 'MANUAL (DRAFT)');
+  assert.equal(meta[3], 2, 'META TOTAL = أوردر Meta + DIRECT، من غير البايو');
+  assert.match(meta[1], /DIRECT \(مباشر\): 1$/);
+  assert.equal(bio[3], 2);
+  assert.equal(manual[3], 0);
+  assert.equal(todayRow(e, 'GRAND TOTAL')[3], 4, 'البايو داخل في GRAND TOTAL');
+  const labels = e.ss.getSheetByName('Today').getDataRange().getValues().map(r => r[0]);
+  assert.equal(labels.indexOf('ORGANIC (BIO)'), labels.indexOf('MANUAL (DRAFT)') + 1, 'صف البايو تحت المانيول على طول');
 });
 
 test('كامبين اسمها اتغير: الأوردر بيتربط بالإعلان من رقم الـ Ad set (utm_term)', () => {
@@ -1228,7 +1239,8 @@ test('تاب Shopify: بيتقري من شوبيفاي مع التحديث وي�
   assert.deepEqual([src(sc.keyValueData).startRowIndex, src(sc.keyValueData).startColumnIndex, src(sc.baselineValueData).startColumnIndex], [8, 1, 2],
     'Sessions: النهارده من B9 وإمبارح من C9');
   assert.equal(sc.baselineValueFormat.comparisonType, 'PERCENTAGE_DIFFERENCE');
-  assert.match(adds[1].spec.subtitle, /^\u200F\u202Bالأربع اللي فات: 1,000/);
+  const wd = ['الأحد', 'الاتنين', 'التلات', 'الأربع', 'الخميس', 'الجمعة', 'السبت'][new Date(e.c.todayKey_() + 'T12:00:00Z').getUTCDay()];
+  assert.equal(adds[1].spec.subtitle.indexOf('\u200F\u202B' + wd + ' اللي فات: 1,000'), 0, 'نفس يوم النهارده الأسبوع اللي فات');
   const cpos = adds.map(a => a.position.overlayPosition);
   assert.deepEqual([cpos[0].anchorCell.rowIndex, cpos[0].anchorCell.columnIndex, cpos[3].offsetXPixels, cpos[4].offsetYPixels], [7, 0, 654, 102], '4 في الصف تحت عنوان الجدول');
   assert.equal(String(v[3][0]), 'Sessions', 'تاب Shopify من غير كارت الصرف ومن غير عنوان');

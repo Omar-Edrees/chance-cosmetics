@@ -11,7 +11,7 @@
  * Ad accounts and stores are read-only from here: no writes to Meta, TikTok or order sources.
  */
 const APP = {
-  VERSION: '1.46.2',
+  VERSION: '1.47.0',
   T: {
     SETTINGS: 'Settings', ACCOUNTS: 'Accounts', PRODUCTS: 'Products', ADMAP: 'Ad Map',
     ADS: 'Ads Raw', ACC_RAW: 'Account Raw', ORDERS: 'Orders Raw', DAILY: 'Daily Log',
@@ -23,6 +23,7 @@ const APP = {
   UNKNOWN_PRODUCT: 'منتج مش معروف',
   UNKNOWN_PLATFORM: 'UNKNOWN',
   DIRECT: 'DIRECT', MANUAL: 'MANUAL',
+  BIO: 'BIO', // Instagram link in bio (utm_content=link_in_bio): sure organic, not an ad, so outside META TOTAL
   CATALOG: 'CATALOG (كل إعلانات الكتالوج)',
   META_NO_AD: 'أوردرات Meta من غير إعلان معروف (مفيش UTM)',
   META_OUT: 'META OUT' // Meta orders from an ad account that isn't in the sheet: orders only, outside META TOTAL
@@ -941,7 +942,7 @@ function refreshAdMapNow() {
  * shopify_flow_sheet (Shopify Flow → Google Sheets), csv_tab (a tab in this file), none.
  * An API source (e.g. TakeTheme) is a separate adapter written per business: it must
  * return the same row shape as readOrderSource_().
- * Platform: UTM evidence > referrer > DIRECT (referrer "Direct", or a store order with neither)
+ * Platform: BIO (link in bio, sure organic) > UTM evidence > referrer > DIRECT (referrer "Direct", or a store order with neither)
  * > MANUAL (draft order typed in the admin) > UNKNOWN (no source data at all). Never guessed.
  */
 const ORDERS_HEADERS = ['Order ID', 'Created at', 'Date', 'Platform', 'Signal', 'Product', 'Products raw', 'Total',
@@ -1044,11 +1045,11 @@ function parseOrderDate_(v, fmt, tz) {
 }
 
 /*
- * utms = [source, campaign, content]. A link-in-bio visit ("link_in_bio") is not an ad: DIRECT. A UTM with no campaign
+ * utms = [source, campaign, content]. A link-in-bio visit ("link_in_bio") is not an ad: BIO (sure organic). A UTM with no campaign
  * and no Meta / TikTok word (utm_source=chatgpt.com) says nothing about an ad, so the referrer and source decide.
  */
 function platformOf_(utms, referrer, sourceName) {
-  if (utms.some(u => /link.?in.?bio/i.test(String(u || '')))) return { p: APP.DIRECT, s: 'organic' };
+  if (utms.some(u => /link.?in.?bio/i.test(String(u || '')))) return { p: APP.BIO, s: 'link_in_bio' };
   const text = norm_(utms.filter(Boolean).join(' ')), tk = cfgList_('attribution.tiktok_markers').map(norm_),
     me = cfgList_('attribution.meta_markers').map(norm_);
   const isTk = tk.some(t => hasToken_(text, t)), isMe = me.some(t => hasToken_(text, t));
@@ -1095,8 +1096,8 @@ function readOrderSource_(full) {
   if (c.order_id < 0 || c.date < 0) throw new Error('شيت الأوردرات ناقص فيه عمود رقم الأوردر أو التاريخ. راجع orders.col.* في Settings.');
   let st = null;
   try { st = JSON.parse(PropertiesService.getDocumentProperties().getProperty('ORDERS_SRC') || 'null'); } catch (e) { st = null; }
-  // A new ORDER_PATCH / archive = read everything once, so old rows get it.
-  const patch = ORDER_PATCH_DATA.length + ':' + ORDER_ARCHIVE_DATA.length;
+  // A new ORDER_PATCH / archive, or new platform rules (bio1: link in bio became BIO) = read everything once, so old rows get it.
+  const patch = ORDER_PATCH_DATA.length + ':' + ORDER_ARCHIVE_DATA.length + ':bio1';
   if (!st || st.id !== src.id || st.head !== head.join('|') || !st.fmt || L < st.rows || st.patch !== patch) full = true;
   const from = full ? 2 : Math.max(2, Math.min(st.rows + 1, L - ORDERS.OVERLAP + 1));
   const rows = src.sheet.getRange(from, 1, L - from + 1, W).getValues(), fmt = full ? detectDateFormat_(rows, c.date) : st.fmt;
@@ -3031,19 +3032,21 @@ function todayClosing_(g, today, sum, rows, gap) {
     const t = Object.assign({ spend: 0, orders: 0, revenue: 0 }, sum.byPlatform[key]), add = plus && sum.byPlatform[plus];
     if (add) { t.orders += add.orders; t.revenue += add.revenue; } // orders with no ad (DIRECT) count with Meta's spend
     g.set(r, 1, totalLabel, totalStyle);
-    line(r, add && add.orders ? 'شامل DIRECT (مباشر أو البايو): ' + add.orders : '', t.spend, t.orders, t.revenue, totalStyle, true);
+    line(r, add && add.orders ? 'شامل DIRECT (مباشر): ' + add.orders : '', t.spend, t.orders, t.revenue, totalStyle, true);
     r++;
   };
   platform('META', S.META, accs.META, 'META TOTAL', { bg: S.META_TOTAL, b: 'bold', fc: '#1d4ed8' }, 'META', APP.DIRECT);
   platform('TIKTOK', S.TIKTOK, accs.TIKTOK, 'TIKTOK TOTAL', { bg: S.TT_TOTAL, b: 'bold' }, 'TIKTOK');
   // Store orders with no ad source but DIRECT: no spend, so orders only. NO SOURCE shows only when some orders carry no data at all.
+  // BIO (link in bio) is sure organic: its own row under MANUAL, not in META TOTAL.
   // META OUT: orders from a Meta ad account that isn't in the sheet (no spend here), named by what they bought.
   const out = {};
   rows.forEach(x => { if (x[0] === today && x[1] === APP.META_OUT) out[x[2]] = (out[x[2]] || 0) + num_(x[8]); });
   const outNames = Object.keys(out).sort((a, b) => out[b] - out[a]).slice(0, 2).join(' / ');
   // DIRECT has no row of its own: it is in META TOTAL.
   [[APP.META_OUT, 'META (حساب مش معانا)', 'مش داخل في التوتال: ' + outNames],
-    [APP.MANUAL, 'MANUAL (DRAFT)', 'أوردرات يدوي'], [APP.UNKNOWN_PLATFORM, 'NO SOURCE', 'من غير بيانات مصدر']].forEach(x => {
+    [APP.MANUAL, 'MANUAL (DRAFT)', 'أوردرات يدوي'], [APP.BIO, 'ORGANIC (BIO)', 'لينك البايو: أورجانيك أكيد'],
+    [APP.UNKNOWN_PLATFORM, 'NO SOURCE', 'من غير بيانات مصدر']].forEach(x => {
     const t = sum.byPlatform[x[0]] || { orders: 0 };
     if ((x[0] === APP.UNKNOWN_PLATFORM || x[0] === APP.META_OUT) && !t.orders) return;
     const style = { bg: S.OTHER };

@@ -5,7 +5,7 @@
  * Ad accounts and stores are read-only from here: no writes to Meta, TikTok or order sources.
  */
 const APP = {
-  VERSION: '1.46.2',
+  VERSION: '1.47.0',
   T: {
     SETTINGS: 'Settings', ACCOUNTS: 'Accounts', PRODUCTS: 'Products', ADMAP: 'Ad Map',
     ADS: 'Ads Raw', ACC_RAW: 'Account Raw', ORDERS: 'Orders Raw', DAILY: 'Daily Log',
@@ -17,6 +17,7 @@ const APP = {
   UNKNOWN_PRODUCT: 'منتج مش معروف',
   UNKNOWN_PLATFORM: 'UNKNOWN',
   DIRECT: 'DIRECT', MANUAL: 'MANUAL',
+  BIO: 'BIO', // Instagram link in bio (utm_content=link_in_bio): sure organic, not an ad, so outside META TOTAL
   CATALOG: 'CATALOG (كل إعلانات الكتالوج)',
   META_NO_AD: 'أوردرات Meta من غير إعلان معروف (مفيش UTM)',
   META_OUT: 'META OUT' // Meta orders from an ad account that isn't in the sheet: orders only, outside META TOTAL
