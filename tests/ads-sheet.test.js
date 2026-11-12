@@ -988,11 +988,14 @@ test('رصيد الأكاونتات في Today: المشحون ويكفي كام
   e.requests.filter(u => /fields=account_status/.test(u)).forEach(u => assert.match(u, /^https:\/\/graph\.facebook\.com\/v[\d.]+\/act_\d+\?fields=/));
 });
 
-test('Today: الستوك يكفي كام يوم، جزء للمنتجات اللي عليها إعلانات وجزء للي من غير إعلانات بتتباع وقرّبت تخلص، و اطلب كام', () => {
+test('Today: الستوك يكفي كام يوم، جزء للمنتجات اللي عليها إعلانات وجزء للي من غير إعلانات بتتباع وقرّبت تخلص، و اطلب كام (إعلان المنتج اللي عليه كاروسيل كتالوج بيتحسب على المنتج)', () => {
   const probe = env(), today = probe.c.todayKey_(), d = n => probe.c.shiftKey_(today, -n), B = '(blank)';
   const flow = (id, day, products) => ['gid://shopify/Order/' + id, ' #' + id, ' N', B, 500, ' ' + day + 'T10:00:00+03:00',
     B, B, B, B, B, B, B, B, 'Direct(Chancestoreegy)', products, '4655075'];
+  // 111 رايح لصفحة Lip Oil، و Meta بتقسم صرفه على منتجات الكتالوج كمان (كاروسيل تحت الفيديو): يفضل على Lip Oil.
+  const cat = (adId, name, spend) => ({ date_start: today, ad_id: adId, product_id: '5056' + spend + ', ' + name, spend: String(spend), actions: [] });
   const e = env({ orderHead: FLOW_HEAD, ads: { [A1]: [adRow(today, '111', 100), adRow(today, '222', 100)] }, activeAds: { [A1]: ['111', '222'] },
+    catalog: { [A1]: [cat('111', 'Lip Oil', 60), cat('111', 'Mask', 40)] },
     creatives: { 111: 'https://chance-cosmetics.com/products/lip-oil', 222: 'https://chance-cosmetics.com/products/eye-pen' },
     stock: [['P1', 'V1', 'Lip Oil', 'Default Title', 'LO', 'lip-oil', 12, 300], ['P2', 'V2', 'Blush', 'Default Title', 'BL', 'blush', 5, 250],
       ['P3', 'V3', 'Mask', 'Default Title', 'MA', 'mask', 70, 200], ['P4', 'V4', 'Serum', 'Default Title', 'SE', 'serum', 3, 400],
