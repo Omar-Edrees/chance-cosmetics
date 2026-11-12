@@ -11,7 +11,7 @@
  * Ad accounts and stores are read-only from here: no writes to Meta, TikTok or order sources.
  */
 const APP = {
-  VERSION: '1.48.0',
+  VERSION: '1.48.1',
   T: {
     SETTINGS: 'Settings', ACCOUNTS: 'Accounts', PRODUCTS: 'Products', ADMAP: 'Ad Map',
     ADS: 'Ads Raw', ACC_RAW: 'Account Raw', ORDERS: 'Orders Raw', DAILY: 'Daily Log',
@@ -82,7 +82,7 @@ const SETTINGS_SPEC = [
   ['sync.backfill_from', 'month_start', 'أول سحب يبدأ من: month_start (أول الشهر) أو تاريخ yyyy-MM-dd. فاضي = آخر sync.backfill_days يوم'],
   ['sync.backfill_days', '30', 'أول سحب كام يوم (لو sync.backfill_from فاضي)'],
   ['sync.live_minutes', '15', 'التحديث خلال اليوم كل كام دقيقة (1,5,10,15,30)'],
-  ['intraday.hours', '12,15,18,21,0', 'مواعيد لقطات اليوم'],
+  ['intraday.hours', '3,6,9,12,15,18,21,0', 'مواعيد لقطات اليوم (كل 3 ساعات، و 0 = 12 بالليل آخر اليوم)'],
   ['admap.multi_mode', 'separate', 'separate | split_by_orders'],
   ['rules.kill_spend_x_be', '2', 'إيقاف لو صرف كذا ضعف نقطة التعادل من غير أوردر'],
   ['rules.over_x_be', '1.2', 'فوق نقطة التعادل بالنسبة دي = Over'],

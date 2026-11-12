@@ -213,7 +213,7 @@ test('Today: لقطات الـ 3 ساعات من تاب Intraday، مع CPP و S
   const values = e.ss.getSheetByName('Today').getDataRange().getValues();
   const head = values.find(r => r[7] === 'TIME');
   assert.deepEqual(head.slice(7, 16), ['TIME', 'META SPEND', 'ORDERS (META + DIRECT)', 'CPP (META + DIRECT)', 'SHOPIFY ROAS (META + DIRECT)', 'TIKTOK SPEND', 'TIKTOK ORDERS', 'TIKTOK CPP', 'SHOPIFY ROAS (TIKTOK)']);
-  assert.deepEqual(values.filter(r => /^\d+:00 [AP]M$/.test(r[7])).map(r => r[7]), ['12:00 PM', '3:00 PM', '6:00 PM', '9:00 PM', '12:00 AM']);
+  assert.deepEqual(values.filter(r => /^\d+:00 [AP]M$/.test(r[7])).map(r => r[7]), ['3:00 AM', '6:00 AM', '9:00 AM', '12:00 PM', '3:00 PM', '6:00 PM', '9:00 PM', '12:00 AM'], 'كل 3 ساعات على مدار اليوم');
   assert.deepEqual(todayRow(e, '3:00 PM', 8).slice(7, 16), ['3:00 PM', 500, 3, 166.67, 2.5, 0, 0, '', '']);
   assert.deepEqual(todayRow(e, '6:00 PM', 8).slice(8, 16), ['', '', '', '', '', '', '', '']);
   // صفوف قديمة: الشيت كان بيحوّل "18:00" لوقت (تاريخ 1899)، وبتتقري برضه
