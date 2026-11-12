@@ -1,19 +1,16 @@
 /*
  * Running now: products with at least one ACTIVE Meta ad. Read-only on Meta.
- * An ad that goes to a product's page counts on that product even when Meta also splits its spend by catalog product
- * (product extensions: a catalog carousel under the video); only ads with no product of their own count as CATALOG.
+ * An ad that goes to a product's page counts on that product even with a catalog carousel under it (catalogAdIds_).
  */
 
 function refreshActive_() {
   const accs = accounts_('META');
   if (!accs.length) return;
   const idx = adMapIndex_(), catAds = catalogAdIds_(), out = {}, camps = {};
-  const notOwn = [APP.CATALOG, APP.MULTI, APP.UNMAPPED, APP.UNKNOWN_PRODUCT, APP.META_NO_AD, ''];
   accs.forEach(acc => {
     metaAll_('act_' + acc.id + '/ads', { fields: 'id,campaign_id', effective_status: JSON.stringify(['ACTIVE']) }).forEach(a => {
       const m = idx.get(adKey_('META', String(a.id), '', '', ''));
-      const own = m && notOwn.indexOf(m.product) < 0;
-      const p = own ? m.product : catAds.has('META|' + String(a.id)) ? APP.CATALOG : m ? m.product : APP.UNMAPPED;
+      const p = catAds.has('META|' + String(a.id)) ? APP.CATALOG : m ? m.product : APP.UNMAPPED;
       out[p] = (out[p] || 0) + 1;
       if (a.campaign_id) camps[a.campaign_id] = (camps[a.campaign_id] || 0) + 1;
     });

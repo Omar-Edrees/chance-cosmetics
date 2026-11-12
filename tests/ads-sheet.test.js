@@ -456,7 +456,7 @@ test('أوردرات Flow: "(blank)" فاضي، والمصدر من بيانات
   assert.equal(grand[3], 5);
 });
 
-test('الكتالوج: Today فيه صف CATALOG واحد بصرفه وأوردراته، وتاب الكتالوج فيه تقسيمه على المنتجات', () => {
+test('الكتالوج: Today فيه صف CATALOG واحد بصرفه وأوردراته، وتاب الكتالوج فيه تقسيمه على المنتجات (وإعلان صفحة المنتج اللي عليه كاروسيل كتالوج بيفضل على منتجه)', () => {
   const probe = env(), today = probe.c.todayKey_(), at = hm => ' ' + today + 'T' + hm + ':00+03:00', B = '(blank)';
   const flow = (id, hm, total, a, products) => ['gid://shopify/Order/' + id, ' #' + id, ' Name', B, total, at(hm), B, B, B, B, B].concat(a, [products, '4655075']);
   const cat = (adId, name, spend, buys) => ({ date_start: today, ad_id: adId, product_id: '5056' + spend + ', ' + name, spend: String(spend),
@@ -465,7 +465,9 @@ test('الكتالوج: Today فيه صف CATALOG واحد بصرفه وأورد
     ads: { [A1]: [adRow(today, '111', 600), adRow(today, '222', 400)] },
     creatives: { 111: 'https://chance-cosmetics.com/products/lip-oil?utm_source=fb', 222: 'https://chance-cosmetics.com/collections/all' },
     shop: { 'lip-oil': { title: 'Lip Oil', handle: 'lip-oil', price: 30000 } },
-    catalog: { [A1]: [cat('222', 'Lip Oil', 150, 1), cat('222', 'Blush - Pink', 200), cat('222', 'Satin Collection', 30), cat('222', 'Mascara', 0.5)] },
+    // 111 رايح لصفحة Lip Oil و Meta بتقسم جزء من صرفه على منتجات (Product extensions): إعلان Lip Oil، مش كتالوج.
+    catalog: { [A1]: [cat('222', 'Lip Oil', 150, 1), cat('222', 'Blush - Pink', 200), cat('222', 'Satin Collection', 30), cat('222', 'Mascara', 0.5),
+      cat('111', 'Lip Oil', 90), cat('111', 'Mascara', 20)] },
     activeAds: { [A1]: ['111', '222'] },
     orders: [ // UTM بالأسامي: Source = اسم الكامبين، Campaign = اسم الإعلان
       flow(1, '10:00', 300, ['Camp', 'Ad 111', 'fb', 'Facebook'], 'Lip Oil x1 | Blush x2'),
@@ -511,6 +513,29 @@ test('الكتالوج: Today فيه صف CATALOG واحد بصرفه وأورد
   ]);
   assert.match(String(t[0][0]), /^CATALOG — TODAY/);
   assert.ok(t.some(r => /^CATALOG — THIS MONTH/.test(String(r[0]))));
+  const log = e.ss.getSheetByName('Daily Log').getDataRange().getValues().slice(1).filter(r => r[1] === 'META');
+  assert.deepEqual(log.filter(r => r[3] > 0).map(r => [r[2], r[3]]).sort(), [['CATALOG (كل إعلانات الكتالوج)', 400], ['Lip Oil', 600]],
+    'صرف إعلان صفحة Lip Oil كله على Lip Oil');
+  assert.ok(/✓/.test(e.ss.getSheetByName('Health').getDataRange().getValues().find(r => r[0] === 'صرف الكتالوج')[1]), 'Health: صرف الكتالوج ✓');
+});
+
+test('صرف الكتالوج بيتسحب على 7 أيام في المرة، ولو Meta قالت فترة أصغر بيتقسم لحد يوم واحد', () => {
+  const probe = env(), today = probe.c.todayKey_(), d = n => probe.c.shiftKey_(today, -n);
+  const e = env({ ads: { [A1]: [adRow(today, '222', 100)] } });
+  e.c.setupAll();
+  const ranges = [], old = e.c.metaAll_;
+  e.c.metaAll_ = (path, params) => {
+    if (!/breakdowns/.test(JSON.stringify(params || {}))) return old(path, params);
+    const r = JSON.parse(params.time_range);
+    ranges.push(r.since + '>' + r.until);
+    if (r.since !== r.until && r.since < d(13)) throw new Error('Meta code 100: Please try a smaller date range');
+    return [{ date_start: r.until, ad_id: '222', product_id: '1, Lip Oil', spend: '10', actions: [] }];
+  };
+  const rows = e.c.fetchMetaCatalog_(d(15), d(0));
+  assert.deepEqual(ranges.slice(0, 1), [d(15) + '>' + d(9)], 'أول 7 أيام');
+  assert.ok(ranges.indexOf(d(15) + '>' + d(15)) >= 0, 'اتقسم لحد يوم واحد');
+  assert.ok(ranges.indexOf(d(8) + '>' + d(2)) >= 0 && ranges.indexOf(d(1) + '>' + d(0)) >= 0);
+  assert.ok(rows.length >= 3);
 });
 
 test('أيام ناقصة في الصرف بتتسحب لوحدها، والتحديث التلقائي بيتشغل لو مش شغال', () => {

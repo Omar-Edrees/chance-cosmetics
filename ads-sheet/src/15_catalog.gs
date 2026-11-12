@@ -5,15 +5,36 @@
  * Products are named by their Shopify title, the same name orders carry, so spend and orders meet on one row.
  */
 const CATALOG_HEADERS = ['Date', 'Platform', 'Account ID', 'Ad ID', 'Product', 'Spend', 'Purchases', 'Purchase value'];
-const CATALOG = { MIN_SPEND: 5, OTHER: 'منتجات تانية من الكتالوج (صرف صغير)' };
+const CATALOG = { MIN_SPEND: 5, CHUNK_DAYS: 7, OTHER: 'منتجات تانية من الكتالوج (صرف صغير)' };
 
-/* Per ad per day per product, from Meta. Rows under CATALOG.MIN_SPEND are summed into one "other" row per ad and day. */
+/*
+ * Per ad per day per product, from Meta, at most CATALOG.CHUNK_DAYS days per request. Meta refuses a big range with
+ * "Please try a smaller date range" (code 100, or 1 for too much data): that piece is asked again in halves, down to one day.
+ */
+function metaCatalogRows_(accId, since, until) {
+  const all = [];
+  for (let s = since; s <= until; s = shiftKey_(s, CATALOG.CHUNK_DAYS)) {
+    const e = shiftKey_(s, CATALOG.CHUNK_DAYS - 1) < until ? shiftKey_(s, CATALOG.CHUNK_DAYS - 1) : until;
+    metaCatalogPiece_(accId, s, e).forEach(r => all.push(r));
+  }
+  return all;
+}
+function metaCatalogPiece_(accId, since, until) {
+  try {
+    return metaAll_('act_' + accId + '/insights', { level: 'ad', breakdowns: 'product_id', time_range: JSON.stringify({ since: since, until: until }),
+      time_increment: 1, fields: 'date_start,ad_id,spend,actions,action_values' });
+  } catch (e) {
+    if (since >= until || !/smaller date range|reduce the amount of data|code 1:/i.test(errText_(e))) throw e;
+    const days = Math.round((Date.parse(until + 'T12:00:00Z') - Date.parse(since + 'T12:00:00Z')) / 864e5), mid = shiftKey_(since, Math.floor(days / 2));
+    return metaCatalogPiece_(accId, since, mid).concat(metaCatalogPiece_(accId, shiftKey_(mid, 1), until));
+  }
+}
+/* Rows under CATALOG.MIN_SPEND are summed into one "other" row per ad and day. */
 function fetchMetaCatalog_(since, until, onlyId) {
-  const out = [], range = JSON.stringify({ since: since, until: until });
+  const out = [];
   accounts_('META').filter(a => !onlyId || a.id === onlyId).forEach(acc => {
     const small = {};
-    metaAll_('act_' + acc.id + '/insights', { level: 'ad', breakdowns: 'product_id', time_range: range, time_increment: 1,
-      fields: 'date_start,ad_id,spend,actions,action_values' }).forEach(r => {
+    metaCatalogRows_(acc.id, since, until).forEach(r => {
       const spend = num_(r.spend), raw = String(r.product_id || ''), name = raw.indexOf(', ') > 0 ? raw.slice(raw.indexOf(', ') + 2).trim() : '';
       if (spend <= 0 || !name || raw === 'null') return;
       const row = [r.date_start, 'META', acc.id, String(r.ad_id || ''), name, spend, metaPick_(r.actions), metaPick_(r.action_values)];
@@ -36,6 +57,7 @@ function mergeCatalog_(rows, since, until, accountKeys) {
 function syncCatalog_(since, until, onlyId) {
   try {
     const rows = fetchMetaCatalog_(since, until, onlyId);
+    setStatus_('CATALOG', '✓ ' + since + (until !== since ? ' → ' + until : '') + ' (' + rows.length + ' صف)');
     return { rows: rows, keys: accounts_('META').filter(a => !onlyId || a.id === onlyId).map(a => 'META|' + a.id) };
   } catch (e) { setStatus_('CATALOG', '✗ ' + errText_(e)); return null; }
 }
@@ -72,10 +94,20 @@ function catalogProduct_(name) {
   return String(name || '').trim();
 }
 
-/* "META|adId" of every catalog / Advantage+ ad (any ad Meta ever split by product). */
+/*
+ * "META|adId" of every catalog / Advantage+ ad (any ad Meta ever split by product), but an ad that goes to a product's own
+ * page (Ad Map: a real product) is that product's ad, even when Meta splits part of it by product: product extensions put
+ * a catalog carousel under its video, and most of its spend is the video's (Insta-Ready Sunset Blur, 11/2026).
+ */
 function catalogAdIds_() {
   const sh = ss_().getSheetByName(APP.T.CATALOG), ids = new Set();
-  if (sh) rawRows_(APP.T.CATALOG, CATALOG_HEADERS.length).forEach(r => { if (r[3]) ids.add(r[1] + '|' + String(r[3])); });
+  if (!sh) return ids;
+  const idx = adMapIndex_(), notOwn = [APP.CATALOG, APP.MULTI, APP.UNMAPPED, APP.UNKNOWN_PRODUCT, APP.META_NO_AD, ''];
+  rawRows_(APP.T.CATALOG, CATALOG_HEADERS.length).forEach(r => {
+    if (!r[3]) return;
+    const m = idx.get(adKey_(r[1], String(r[3]), '', '', ''));
+    if (!m || notOwn.indexOf(m.product) >= 0) ids.add(r[1] + '|' + String(r[3]));
+  });
   return ids;
 }
 
@@ -87,7 +119,9 @@ function catalogAdIds_() {
 function writeCatalogTab_() {
   const sh = ensureTab_(X.CATALOG), g = todayGrid_(), today = todayKey_(), catAds = catalogAdIds_(), month0 = today.slice(0, 8) + '01';
   const split = [], csh = ss_().getSheetByName(APP.T.CATALOG);
-  if (csh) recentRows_(APP.T.CATALOG, CATALOG_HEADERS.length, 1, asKey_, month0).forEach(r => split.push([asKey_(r[0]), catalogProduct_(r[4]), num_(r[5]), num_(r[6])]));
+  if (csh) recentRows_(APP.T.CATALOG, CATALOG_HEADERS.length, 1, asKey_, month0).forEach(r => {
+    if (catAds.has(r[1] + '|' + String(r[3]))) split.push([asKey_(r[0]), catalogProduct_(r[4]), num_(r[5]), num_(r[6])]);
+  });
   const adSpend = [];
   recentRows_(APP.T.ADS, ADS_HEADERS.length, 1, asKey_, month0).forEach(a => { if (catAds.has(a[1] + '|' + String(a[8]))) adSpend.push([asKey_(a[0]), num_(a[10])]); });
   const orders = [], osh = ss_().getSheetByName(APP.T.ORDERS);
