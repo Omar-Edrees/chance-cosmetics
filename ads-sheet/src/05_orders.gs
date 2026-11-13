@@ -1,7 +1,8 @@
 /*
  * Orders Raw = one row per unique order ID from the store's orders sheet.
  * Sources (orders.method): linked_sheet (EasyOrders / any platform-linked sheet),
- * shopify_flow_sheet (Shopify Flow → Google Sheets), csv_tab (a tab in this file), none.
+ * shopify_flow_sheet (Shopify Flow → Google Sheets; once the Shopify app is connected, its own orders replace it: 32_shopify_orders.gs),
+ * shopify_app (the app only), csv_tab (a tab in this file), none.
  * An API source (e.g. TakeTheme) is a separate adapter written per business: it must
  * return the same row shape as readOrderSource_().
  * Platform: BIO (link in bio, sure organic) > UTM evidence > referrer > DIRECT (referrer "Direct", or a store order with neither)
@@ -66,6 +67,9 @@ function orderColumns_(head) {
 function openOrderSheet_() {
   const method = cfgStr_('orders.method');
   if (method === 'none' || method === 'pixel') return null;
+  // The Shopify app's own tab (32_shopify_orders.gs), once its first read is over: the Flow sheet isn't opened at all.
+  if (appOrdersReady_()) return { sheet: ss_().getSheetByName(SHOP_ORDERS.TAB), tz: tz_(), id: 'app|' + SHOP_ORDERS.TAB, app: true };
+  if (method === 'shopify_app') throw new Error('أوردرات أبليكيشن شوبيفاي لسه بتتقري أول مرة. شوف Health ("الأوردرات من شوبيفاي (الأبليكيشن)").');
   const url = cfgStr_('orders.sheet_url'), tabName = cfgStr_('orders.sheet_tab');
   let book = ss_();
   if (method !== 'csv_tab') {
@@ -154,7 +158,8 @@ function readOrderSource_(full) {
   if (!src) return null;
   const L = src.sheet.getLastRow(), W = Math.max(src.sheet.getLastColumn(), 1);
   if (L < 2) return { rows: [], full: true, state: null };
-  const head = ensureFlowHeaders_(src.sheet, src.sheet.getRange(1, 1, 1, W).getValues()[0].map(v => String(v).trim())), c = orderColumns_(head);
+  const head0 = src.sheet.getRange(1, 1, 1, W).getValues()[0].map(v => String(v).trim());
+  const head = src.app ? head0 : ensureFlowHeaders_(src.sheet, head0), c = orderColumns_(head);
   if (c.order_id < 0 || c.date < 0) throw new Error('شيت الأوردرات ناقص فيه عمود رقم الأوردر أو التاريخ. راجع orders.col.* في Settings.');
   let st = null;
   try { st = JSON.parse(PropertiesService.getDocumentProperties().getProperty('ORDERS_SRC') || 'null'); } catch (e) { st = null; }
@@ -230,6 +235,7 @@ function readOrderSource_(full) {
  */
 let ORDERS_REREAD_ = false; // old orders changed in this run: the whole Daily Log is rebuilt
 function syncOrders_(full) {
+  try { syncShopifyOrders_(); } catch (e) { setStatus_('SHOP_ORDERS', '✗ ' + errText_(e)); }
   const res = time_('الأوردرات — قراءة', () => readOrderSource_(full));
   if (!res) return { orders: 0, changed: false };
   const props = PropertiesService.getDocumentProperties(), key = res.full ? 'ORDERS_HASH' : 'ORDERS_TAIL_HASH';

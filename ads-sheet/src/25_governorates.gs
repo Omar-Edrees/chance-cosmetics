@@ -3,7 +3,7 @@
  * today / this month / the period in B2:B3 (the last 90 days by default), then for the period: cancellation (cancelled
  * before shipping ÷ the orders whose status is known), delivery and return (delivered or returned ÷ the shipments that
  * finished; orders still in shipping aren't counted yet). Orders: every store order but those from an ad account not in
- * the sheet, like Actual ROAS. Governorate: 24_order_gov.gs, else the orders sheet's City / Province column. Status:
+ * the sheet, like Actual ROAS. Governorate: 24_order_gov.gs, else Orders Raw's City (the app: the COD form's governorate). Status:
  * 19_order_status.gs. The tables sit side by side. Written with the views every 15 minutes, and when B2 / B3 change.
  */
 const GOV = {
@@ -69,8 +69,10 @@ function writeGovTab_() {
       headers: ['المحافظة', 'اتشحن', 'رجع', 'نسبة المرتجع', 'لسه في الشحن', 'رجع من كل الأوردرات'],
       rows: table((n, t) => [n, t.D + t.R + t.S, t.R, rate(t.R, done(t)), t.S, rate(t.R, known(t))]), pct: [4, 6] }
   ];
-  sh.getRange('C2:D3').setValues([['حالة الأوردرات وعنوانها من شوبيفاي لحد', ORDER_STATUS_AT],
-    ['', 'الأوردر الأحدث بيظهر في جدول 1 بس، ومحافظته "' + GOV.UNKNOWN + '" لحد ما تتقري']]);
+  sh.getRange('C2:D3').setValues(appOrdersReady_()
+    ? [['حالة الأوردرات من شوبيفاي لحد', orderStatusAt_()], ['', 'المحافظة من أبليكيشن شوبيفاي مع كل تحديث']]
+    : [['حالة الأوردرات وعنوانها من شوبيفاي لحد', ORDER_STATUS_AT],
+      ['', 'الأوردر الأحدث بيظهر في جدول 1 بس، ومحافظته "' + GOV.UNKNOWN + '" لحد ما تتقري']]);
   const at = writeSideBlocks_(sh, 5, blocks), first = 7, n = names.length + 1;
   sh.getRange(first, 1, n, at.width).setNumberFormat('#,##0'); // a cell that held a % before never keeps it
   blocks.forEach((b, k) => {

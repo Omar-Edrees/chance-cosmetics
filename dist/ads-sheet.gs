@@ -11,7 +11,7 @@
  * Ad accounts and stores are read-only from here: no writes to Meta, TikTok or order sources.
  */
 const APP = {
-  VERSION: '1.49.0',
+  VERSION: '1.50.0',
   T: {
     SETTINGS: 'Settings', ACCOUNTS: 'Accounts', PRODUCTS: 'Products', ADMAP: 'Ad Map',
     ADS: 'Ads Raw', ACC_RAW: 'Account Raw', ORDERS: 'Orders Raw', DAILY: 'Daily Log',
@@ -40,7 +40,7 @@ const SETTINGS_SPEC = [
   ['business.store_domains', '', 'دومينات المتجر، مفصولة بفاصلة'],
   ['business.product_url_regex', '/products?/([^/]+)', 'شكل لينك صفحة المنتج (الجزء بين القوسين = اسم الصفحة)'],
   ['business.multi_url_regex', '^/?$|^/(ar|en)/?$|/collections?(/|$)|/categor|/shop/?$|/all-products', 'لينكات صفحات فيها كل المنتجات أو الرئيسية'],
-  ['orders.method', 'linked_sheet', 'linked_sheet | shopify_flow_sheet | csv_tab | pixel | none (pixel = مشتريات البيكسل لحد ما الأوردرات الحقيقية تتربط)'],
+  ['orders.method', 'linked_sheet', 'linked_sheet | shopify_flow_sheet | shopify_app | csv_tab | pixel | none (pixel = مشتريات البيكسل لحد ما الأوردرات الحقيقية تتربط)'],
   ['orders.sheet_url', '', 'لينك شيت الأوردرات'],
   ['orders.sheet_tab', 'Sheet1', 'اسم التاب'],
   ['orders.date_format', 'auto', 'auto | mdy | dmy | iso'],
@@ -939,7 +939,8 @@ function refreshAdMapNow() {
 /*
  * Orders Raw = one row per unique order ID from the store's orders sheet.
  * Sources (orders.method): linked_sheet (EasyOrders / any platform-linked sheet),
- * shopify_flow_sheet (Shopify Flow → Google Sheets), csv_tab (a tab in this file), none.
+ * shopify_flow_sheet (Shopify Flow → Google Sheets; once the Shopify app is connected, its own orders replace it: 32_shopify_orders.gs),
+ * shopify_app (the app only), csv_tab (a tab in this file), none.
  * An API source (e.g. TakeTheme) is a separate adapter written per business: it must
  * return the same row shape as readOrderSource_().
  * Platform: BIO (link in bio, sure organic) > UTM evidence > referrer > DIRECT (referrer "Direct", or a store order with neither)
@@ -1004,6 +1005,9 @@ function orderColumns_(head) {
 function openOrderSheet_() {
   const method = cfgStr_('orders.method');
   if (method === 'none' || method === 'pixel') return null;
+  // The Shopify app's own tab (32_shopify_orders.gs), once its first read is over: the Flow sheet isn't opened at all.
+  if (appOrdersReady_()) return { sheet: ss_().getSheetByName(SHOP_ORDERS.TAB), tz: tz_(), id: 'app|' + SHOP_ORDERS.TAB, app: true };
+  if (method === 'shopify_app') throw new Error('أوردرات أبليكيشن شوبيفاي لسه بتتقري أول مرة. شوف Health ("الأوردرات من شوبيفاي (الأبليكيشن)").');
   const url = cfgStr_('orders.sheet_url'), tabName = cfgStr_('orders.sheet_tab');
   let book = ss_();
   if (method !== 'csv_tab') {
@@ -1092,7 +1096,8 @@ function readOrderSource_(full) {
   if (!src) return null;
   const L = src.sheet.getLastRow(), W = Math.max(src.sheet.getLastColumn(), 1);
   if (L < 2) return { rows: [], full: true, state: null };
-  const head = ensureFlowHeaders_(src.sheet, src.sheet.getRange(1, 1, 1, W).getValues()[0].map(v => String(v).trim())), c = orderColumns_(head);
+  const head0 = src.sheet.getRange(1, 1, 1, W).getValues()[0].map(v => String(v).trim());
+  const head = src.app ? head0 : ensureFlowHeaders_(src.sheet, head0), c = orderColumns_(head);
   if (c.order_id < 0 || c.date < 0) throw new Error('شيت الأوردرات ناقص فيه عمود رقم الأوردر أو التاريخ. راجع orders.col.* في Settings.');
   let st = null;
   try { st = JSON.parse(PropertiesService.getDocumentProperties().getProperty('ORDERS_SRC') || 'null'); } catch (e) { st = null; }
@@ -1168,6 +1173,7 @@ function readOrderSource_(full) {
  */
 let ORDERS_REREAD_ = false; // old orders changed in this run: the whole Daily Log is rebuilt
 function syncOrders_(full) {
+  try { syncShopifyOrders_(); } catch (e) { setStatus_('SHOP_ORDERS', '✗ ' + errText_(e)); }
   const res = time_('الأوردرات — قراءة', () => readOrderSource_(full));
   if (!res) return { orders: 0, changed: false };
   const props = PropertiesService.getDocumentProperties(), key = res.full ? 'ORDERS_HASH' : 'ORDERS_TAIL_HASH';
@@ -1443,12 +1449,12 @@ function writeHealth_() {
   const o = ss_().getSheetByName(APP.T.ORDERS), unk = { p: 0, pr: 0 };
   if (o) recentRows_(APP.T.ORDERS, ORDERS_HEADERS.length, 2, sortKey_, todayKey_().slice(0, 8) + '01').filter(r => asKey_(r[2]) >= todayKey_().slice(0, 8) + '01')
     .forEach(r => { if (r[3] === APP.UNKNOWN_PLATFORM) unk.p++; if (r[5] === APP.UNKNOWN_PRODUCT) unk.pr++; });
-  const rows = [['نسخة الكود', APP.VERSION], ['مصدر الأوردرات', cfgStr_('orders.method') === 'pixel' ? '⚠️ مشتريات البيكسل' : cfgStr_('orders.method')], ['أول سحب', getStatus_('BACKFILL')], ['آخر مزامنة كاملة', getStatus_('FULL')], ['آخر تحديث خلال اليوم', getStatus_('LIVE')], ['آخر تحديث سريع ⚡', getStatus_('QUICK')],
+  const rows = [['نسخة الكود', APP.VERSION], ['مصدر الأوردرات', cfgStr_('orders.method') === 'pixel' ? '⚠️ مشتريات البيكسل' : appOrdersReady_() ? 'أبليكيشن شوبيفاي ✓' : cfgStr_('orders.method')], ['أول سحب', getStatus_('BACKFILL')], ['آخر مزامنة كاملة', getStatus_('FULL')], ['آخر تحديث خلال اليوم', getStatus_('LIVE')], ['آخر تحديث سريع ⚡', getStatus_('QUICK')],
     ['الأوردرات', getStatus_('ORDERS')], ['أوردرات من غير تاريخ مفهوم', getStatus_('ORDERS_NODATE')], ['ربط الإعلانات', getStatus_('ADMAP')],
     ['إعلانات ❌ / ⚠️ / ✅', st['❌'] + ' / ' + st['⚠️'] + ' / ' + st['✅']],
     ['أوردرات الشهر مش معروف منصتها', unk.p], ['أوردرات الشهر مش معروف منتجها', unk.pr],
     ['صفحات منتجات مش متسجلة', PropertiesService.getDocumentProperties().getProperty('UNASSIGNED_SLUGS') || 'مفيش ✅'],
-    ['حسابات إعلانية لقيتها من الأوردرات', getStatus_('ACC_DISCOVER')], ['Daily Account Funnel', getStatus_('FUNNEL')], ['صرف الكتالوج', getStatus_('CATALOG')], ['حالة الأوردرات من شوبيفاي (الأبليكيشن)', getStatus_('SHOPIFY')], ['الستوك من شوبيفاي (الأبليكيشن)', getStatus_('STOCK_APP')], ['تاب Shopify', getStatus_('SHOPTAB')], ['كروت Today', typeof Sheets === 'undefined' ? '⚠️ فعّل Google Sheets API من Services في Apps Script' : getStatus_('TODAY_CARDS')]];
+    ['حسابات إعلانية لقيتها من الأوردرات', getStatus_('ACC_DISCOVER')], ['Daily Account Funnel', getStatus_('FUNNEL')], ['صرف الكتالوج', getStatus_('CATALOG')], ['الأوردرات من شوبيفاي (الأبليكيشن)', getStatus_('SHOP_ORDERS')], ['حالة الأوردرات من شوبيفاي (الأبليكيشن)', getStatus_('SHOPIFY')], ['الستوك من شوبيفاي (الأبليكيشن)', getStatus_('STOCK_APP')], ['تاب Shopify', getStatus_('SHOPTAB')], ['كروت Today', typeof Sheets === 'undefined' ? '⚠️ فعّل Google Sheets API من Services في Apps Script' : getStatus_('TODAY_CARDS')]];
   writeRows_(ensureTab_(APP.T.HEALTH, ['البند', 'الحالة']), rows, 2, []);
 }
 
@@ -1838,7 +1844,7 @@ function stopBackfill() {
 }
 
 /* ======== 10_stock.gs ======== */
-/* Stock from the Shopify Flow stock tab (+ optional one-time product export), and new products → Products tab. Read-only on Shopify. */
+/* Stock per product (the Shopify app first: 31_shopify_stock.gs), the old Flow stock tab as a fallback, and new products → Products tab. */
 
 let STOCK_ = null;
 function readStock_() {
@@ -1898,11 +1904,15 @@ function readStock_() {
  * onEdit, which can't open the stock sheet: then the last read is used.
  */
 function stockByName_() {
-  const st = readStock_(), props = PropertiesService.getDocumentProperties(), n = Number(props.getProperty('STOCK_SNAP_N') || 0);
+  const app = appStock_(), useApp = Object.keys(app.byHandle).length > 0;
+  // The app has the stock: the Flow sheet isn't opened at all.
+  const st = useApp ? { byHandle: {}, rows: 0, error: '' } : readStock_(), props = PropertiesService.getDocumentProperties(), n = Number(props.getProperty('STOCK_SNAP_N') || 0);
   let saved = '', flow = {};
   for (let i = 0; i < n; i++) saved += props.getProperty('STOCK_SNAP_' + i) || '';
   const prods = products_(), nameOf = (h, title) => { const pr = prods.find(p => p.slugs.indexOf(h) >= 0); return pr ? pr.name : productNameOf_(title); };
-  if (st.error) {
+  if (useApp) {
+    // nothing from the Flow sheet
+  } else if (st.error) {
     try { flow = saved ? JSON.parse(saved) : {}; } catch (e) { flow = {}; }
   } else {
     Object.keys(st.byHandle).forEach(h => {
@@ -1919,7 +1929,7 @@ function stockByName_() {
     }
     props.setProperty('STOCK_SNAP_AT', nowText_());
   }
-  const app = appStock_(), live = {};
+  const live = {};
   Object.keys(app.byHandle).forEach(h => { const x = app.byHandle[h], name = nameOf(h, x.title); live[name] = (live[name] || 0) + x.stock; });
   const by = {}, snap = stockSnapshot_();
   Object.keys(snap).forEach(t => { const name = productNameOf_(t); by[name] = (by[name] || 0) + snap[t]; });
@@ -1932,9 +1942,12 @@ function stockByName_() {
   return { by: by, at: k && !st.error ? nowText_() : k ? props.getProperty('STOCK_SNAP_AT') : STOCK_SNAPSHOT_AT.slice(0, 16) + ' (ثابت)', status: status };
 }
 
-/* New stock handles → new rows in Products (never edits existing rows). */
+/* New handles in the Flow stock tab → new rows in Products (never edits existing rows). Not used once the app has the stock. */
 function autoAddProducts_() {
   if (!cfgBool_('products.auto_add')) return 0;
+  // With the Shopify app the Flow sheet isn't read, and the app's 2000+ products don't go to Products: a product gets there
+  // from its ad's landing page (04_admap.gs), so Products stays the products that matter.
+  if (Object.keys(appStock_().byHandle).length) { setStatus_('STOCK', '✓ الستوك من أبليكيشن شوبيفاي، والمنتجات بتتضاف من لينكات الإعلانات'); return 0; }
   const st = readStock_();
   if (st.error) { setStatus_('STOCK', '✗ ' + st.error); return 0; }
   setStatus_('STOCK', st.rows ? '✓ ' + Object.keys(st.byHandle).length + ' منتج' : '⚠️ مفيش صفوف في تاب ' + cfgStr_('stock.sheet_tab') + ' — الستوك ثابت من شوبيفاي لحد ' + STOCK_SNAPSHOT_AT);
@@ -3494,7 +3507,7 @@ function orderGov_(id) {
  * today / this month / the period in B2:B3 (the last 90 days by default), then for the period: cancellation (cancelled
  * before shipping ÷ the orders whose status is known), delivery and return (delivered or returned ÷ the shipments that
  * finished; orders still in shipping aren't counted yet). Orders: every store order but those from an ad account not in
- * the sheet, like Actual ROAS. Governorate: 24_order_gov.gs, else the orders sheet's City / Province column. Status:
+ * the sheet, like Actual ROAS. Governorate: 24_order_gov.gs, else Orders Raw's City (the app: the COD form's governorate). Status:
  * 19_order_status.gs. The tables sit side by side. Written with the views every 15 minutes, and when B2 / B3 change.
  */
 const GOV = {
@@ -3560,8 +3573,10 @@ function writeGovTab_() {
       headers: ['المحافظة', 'اتشحن', 'رجع', 'نسبة المرتجع', 'لسه في الشحن', 'رجع من كل الأوردرات'],
       rows: table((n, t) => [n, t.D + t.R + t.S, t.R, rate(t.R, done(t)), t.S, rate(t.R, known(t))]), pct: [4, 6] }
   ];
-  sh.getRange('C2:D3').setValues([['حالة الأوردرات وعنوانها من شوبيفاي لحد', ORDER_STATUS_AT],
-    ['', 'الأوردر الأحدث بيظهر في جدول 1 بس، ومحافظته "' + GOV.UNKNOWN + '" لحد ما تتقري']]);
+  sh.getRange('C2:D3').setValues(appOrdersReady_()
+    ? [['حالة الأوردرات من شوبيفاي لحد', orderStatusAt_()], ['', 'المحافظة من أبليكيشن شوبيفاي مع كل تحديث']]
+    : [['حالة الأوردرات وعنوانها من شوبيفاي لحد', ORDER_STATUS_AT],
+      ['', 'الأوردر الأحدث بيظهر في جدول 1 بس، ومحافظته "' + GOV.UNKNOWN + '" لحد ما تتقري']]);
   const at = writeSideBlocks_(sh, 5, blocks), first = 7, n = names.length + 1;
   sh.getRange(first, 1, n, at.width).setNumberFormat('#,##0'); // a cell that held a % before never keeps it
   blocks.forEach((b, k) => {
@@ -4574,7 +4589,7 @@ function shopTabDaysMap_(fast, slow) {
 /* Product pages with visits (today, last 7 days) whose stock is 0 or less: [{name, today, week, active, spendToday}]. */
 function shopTabStockless_(fast) {
   const rx = new RegExp(cfgStr_('business.product_url_regex') || '/products?/([^/]+)', 'i');
-  const prods = products_(), stock = stockByName_().by, raw = Object.assign({}, readStock_().byHandle, appStock_().byHandle), active = activeMap_(), by = {};
+  const prods = products_(), stock = stockByName_().by, app = appStock_().byHandle, raw = Object.keys(app).length ? app : readStock_().byHandle, active = activeMap_(), by = {};
   const nameOf = h => { const p = prods.find(x => x.slugs.indexOf(h) >= 0); return p ? p.name : raw[h] && raw[h].title ? productNameOf_(raw[h].title) : ''; };
   const add = (pages, k) => Object.keys(pages || {}).forEach(path => {
     const m = path.toLowerCase().match(rx), n = m ? nameOf(m[1]) : '';
@@ -4824,10 +4839,10 @@ function writeShopTab_() {
  * Products that don't track stock in Shopify are left out: their stock means nothing.
  */
 const STOCK_APP = {
-  TAB: 'Shopify Stock', HEADERS: ['Variant ID', 'Handle', 'Product', 'Stock', 'Read'], EVERY_MIN: 30, PAGES: 40,
+  TAB: 'Shopify Stock', HEADERS: ['Variant ID', 'Handle', 'Product', 'Stock', 'Read', 'Price'], EVERY_MIN: 30, PAGES: 40,
   CURSOR: 'STOCK_APP_CURSOR', READ: 'STOCK_APP_READ', DONE: 'STOCK_APP_DONE', AT: 'STOCK_APP_AT',
   QUERY: 'query($after:String){productVariants(first:250,after:$after){pageInfo{hasNextPage endCursor} ' +
-    'nodes{id inventoryQuantity product{handle title tracksInventory}}}}'
+    'nodes{id inventoryQuantity price product{handle title tracksInventory}}}}'
 };
 
 /* force = read now even if the last read is fresh (📦). Returns the variants read in this run. Errors go to Health. */
@@ -4845,7 +4860,7 @@ function syncShopifyStock_(force) {
       res.nodes.forEach(v => {
         const p = v.product || {};
         if (p.tracksInventory === false || !p.handle) return;
-        rows.push([v.id, String(p.handle).toLowerCase(), p.title || '', num_(v.inventoryQuantity), read]);
+        rows.push([v.id, String(p.handle).toLowerCase(), p.title || '', num_(v.inventoryQuantity), read, v.price === null || v.price === undefined ? '' : num_(v.price)]);
       });
       more = res.pageInfo.hasNextPage; after = res.pageInfo.endCursor; pages++;
     }
@@ -4867,7 +4882,8 @@ function syncShopifyStock_(force) {
 }
 /* New rows win by variant. done = the read that just ended: rows from older reads (variants Shopify doesn't have any more) go. */
 function shopifyMergeStock_(rows, done) {
-  const sh = ensureTab_(STOCK_APP.TAB, STOCK_APP.HEADERS), all = new Map();
+  const sh = ensureTab_(STOCK_APP.TAB, STOCK_APP.HEADERS), all = new Map(), hr = sh.getRange(1, 1, 1, STOCK_APP.HEADERS.length);
+  if (hr.getValues()[0].join('|') !== STOCK_APP.HEADERS.join('|')) hr.setValues([STOCK_APP.HEADERS]);
   readRows_(sh, STOCK_APP.HEADERS.length).forEach(r => all.set(String(r[0]), r));
   rows.forEach(r => all.set(String(r[0]), r));
   const out = Array.from(all.values()).filter(r => !done || String(r[4]) === done)
@@ -4878,7 +4894,7 @@ function shopifyMergeStock_(rows, done) {
 }
 
 let STOCK_APP_ = null;
-/* {byHandle: {handle: {title, stock}}, at}: the stock per product from the tab (every color together, below zero = 0). */
+/* {byHandle: {handle: {handle, title, stock, price}}, at}: the stock per product from the tab (every color together, below zero = 0). */
 function appStock_() {
   if (STOCK_APP_) return STOCK_APP_;
   const out = { byHandle: {}, at: PropertiesService.getDocumentProperties().getProperty(STOCK_APP.AT) || '' };
@@ -4886,19 +4902,121 @@ function appStock_() {
   if (sh && out.at) readRows_(sh, STOCK_APP.HEADERS.length).forEach(r => {
     const h = String(r[1]).trim().toLowerCase();
     if (!h) return;
-    const p = out.byHandle[h] = out.byHandle[h] || { title: '', stock: 0 };
+    const p = out.byHandle[h] = out.byHandle[h] || { handle: h, title: '', stock: 0, price: null };
     p.stock += Math.max(num_(r[3]), 0);
     if (r[2]) p.title = String(r[2]).trim();
+    if (p.price === null && r[5] !== '' && r[5] !== null && r[5] !== undefined && num_(r[5])) p.price = num_(r[5]);
   });
   STOCK_APP_ = out;
   return out;
+}
+
+/* ======== 32_shopify_orders.gs ======== */
+/*
+ * Store orders from the Shopify app (read_orders), instead of the Shopify Flow sheet.
+ * Every update (inside syncOrders_, before Orders Raw is read): the orders created since the last read, oldest first, 40 a page,
+ * into the hidden tab "Shopify Orders": one row per order with the columns readOrderSource_ reads (the same names the Flow sheet
+ * had), so the rest of the sheet works as before. No customer data: no names, phones, emails or addresses; the governorate only.
+ *  - The COD form's UTMs, campaign / ad set IDs and "Order Referrer" are the order's own attributes (Attr UTM …).
+ *  - A website order's last visit (UTMs, referrer) isn't ready the moment the order is made: every read goes back
+ *    SHOP_ORDERS.OVERLAP_H hours, and those orders are written again with what Shopify has now.
+ *  - The first read starts where the fixed archive (18_orders_archive.gs) stops, and goes over a few updates (SHOP_ORDERS.PAGES
+ *    pages each). Until it ends, Orders Raw still reads the Flow sheet; after that, the app tab (appOrdersReady_).
+ * Shopify shows the last 60 days only (no read_all_orders): older orders stay in the tab as they were read.
+ */
+const SHOP_ORDERS = {
+  TAB: 'Shopify Orders', FIRST_FROM: '2026-10-13T09:00:00Z', PAGES: 25, OVERLAP_H: 6, TAIL: 1500,
+  SINCE: 'SHOP_ORDERS_SINCE', READY: 'SHOP_ORDERS_READY', AT: 'SHOP_ORDERS_AT',
+  HEADERS: ['Order ID', 'Created At', 'Total Price', 'Products', 'UTM Source', 'UTM Campaign', 'UTM Content', 'UTM ID', 'UTM Term',
+    'Attr UTM Source', 'Attr UTM Campaign', 'Attr UTM Content', 'Attr UTM ID', 'Attr UTM Term', 'Order Referrer', 'Source Name', 'City'],
+  QUERY: 'query($q:String!,$after:String){orders(first:40,after:$after,sortKey:CREATED_AT,query:$q){pageInfo{hasNextPage endCursor} ' +
+    'nodes{id createdAt sourceName originalTotalPriceSet{shopMoney{amount}} customAttributes{key value} ' +
+    'lineItems(first:15){nodes{title quantity}} customerJourneySummary{lastVisit{referrerUrl utmParameters{source campaign content term}}}}}}'
+};
+
+/* Orders Raw reads the app tab once the first read is over (and the sheet is connected to the app). */
+function appOrdersReady_() {
+  const m = cfgStr_('orders.method');
+  if (m !== 'shopify_flow_sheet' && m !== 'shopify_app') return false;
+  return !!PropertiesService.getDocumentProperties().getProperty(SHOP_ORDERS.READY) && !!ss_().getSheetByName(SHOP_ORDERS.TAB);
+}
+
+/* A row of the tab from one Shopify order. */
+function shopOrderRow_(o) {
+  const attr = {};
+  (o.customAttributes || []).forEach(a => { attr[String(a.key || '').trim().toLowerCase()] = String(a.value === null || a.value === undefined ? '' : a.value).trim(); });
+  const visit = (o.customerJourneySummary || {}).lastVisit || {}, u = visit.utmParameters || {};
+  const gov = Object.keys(attr).find(k => /محافظ|province|governorate/.test(k));
+  const items = (((o.lineItems || {}).nodes) || []).map(li => String(li.title || '').trim() + ' x' + (li.quantity || 1)).join(' | ');
+  return [o.id, o.createdAt, num_(((o.originalTotalPriceSet || {}).shopMoney || {}).amount), items,
+    u.source || '', u.campaign || '', u.content || '', '', u.term || '',
+    attr.utm_source || '', attr.utm_campaign || '', attr.utm_content || '', attr.utm_id || '', attr.utm_term || '',
+    attr['order referrer'] || visit.referrerUrl || '', o.sourceName || '', gov ? attr[gov] : ''];
+}
+
+/* Returns the orders read in this run. Errors go to Health and never stop the update. */
+function syncShopifyOrders_() {
+  if (!shopifyProps_().getProperty('SHOPIFY_TOKEN')) return 0;
+  const m = cfgStr_('orders.method');
+  if (m !== 'shopify_flow_sheet' && m !== 'shopify_app') return 0;
+  const props = PropertiesService.getDocumentProperties(), since = props.getProperty(SHOP_ORDERS.SINCE) || SHOP_ORDERS.FIRST_FROM;
+  const rows = [];
+  let after = null, more = true, pages = 0;
+  try {
+    while (more && pages < SHOP_ORDERS.PAGES && timeLeft_()) {
+      const res = shopifyGql_(SHOP_ORDERS.QUERY, { q: "created_at:>='" + since + "'", after: after }).orders;
+      res.nodes.forEach(o => rows.push(shopOrderRow_(o)));
+      more = res.pageInfo.hasNextPage; after = res.pageInfo.endCursor; pages++;
+    }
+  } catch (e) {
+    setStatus_('SHOP_ORDERS', '✗ ' + errText_(e) + (appOrdersReady_() ? ' — الأوردرات اللي اتقرت قبل كده شغالة' : ' — الأوردرات لسه من شيت الفلو'));
+    if (!rows.length) return 0;
+    more = true;
+  }
+  if (rows.length) withLock_(() => shopifyMergeOrders_(rows));
+  const last = rows.reduce((x, r) => (r[1] > x ? r[1] : x), since);
+  if (more) {
+    props.setProperty(SHOP_ORDERS.SINCE, last);
+    setStatus_('SHOP_ORDERS', '… ' + rows.length + ' أوردر لحد ' + last.slice(0, 10) + '، والباقي في التحديث الجاي' +
+      (appOrdersReady_() ? '' : ' (الأوردرات لسه من شيت الفلو لحد ما القراية الأولى تخلص)'));
+  } else {
+    const back = new Date(new Date(last).getTime() - SHOP_ORDERS.OVERLAP_H * 3600000).toISOString().replace(/\.\d+Z$/, 'Z');
+    props.setProperties({ [SHOP_ORDERS.SINCE]: back > since ? back : since, [SHOP_ORDERS.READY]: '1', [SHOP_ORDERS.AT]: nowText_() });
+    setStatus_('SHOP_ORDERS', '✓ ' + rows.length + ' أوردر اتقرا (من ' + since.slice(0, 16).replace('T', ' ') + ' UTC)');
+  }
+  return rows.length;
+}
+
+/*
+ * The tab stays sorted oldest first, so Orders Raw can read its bottom only. Orders already in the tab are written again
+ * in place (the last SHOP_ORDERS.TAIL rows); new ones go at the bottom.
+ */
+function shopifyMergeOrders_(rows) {
+  const W = SHOP_ORDERS.HEADERS.length, sh = ensureTab_(SHOP_ORDERS.TAB, SHOP_ORDERS.HEADERS);
+  const hr = sh.getRange(1, 1, 1, W);
+  if (hr.getValues()[0].join('|') !== SHOP_ORDERS.HEADERS.join('|')) hr.setValues([SHOP_ORDERS.HEADERS]);
+  const L = sh.getLastRow(), n = Math.min(Math.max(L - 1, 0), SHOP_ORDERS.TAIL), start = L - n + 1;
+  const older = new Set(L - 1 > n ? sh.getRange(2, 1, L - 1 - n, 1).getValues().map(r => String(r[0])) : []);
+  const tail = n ? sh.getRange(start, 1, n, W).getValues() : [], fresh = new Map();
+  rows.forEach(r => { if (!older.has(String(r[0]))) fresh.set(String(r[0]), r); });
+  const out = tail.map(r => fresh.get(String(r[0])) || r), had = new Set(tail.map(r => String(r[0])));
+  fresh.forEach((r, id) => { if (!had.has(id)) out.push(r); });
+  out.sort((a, b) => (String(a[1]) < String(b[1]) ? -1 : String(a[1]) > String(b[1]) ? 1 : 0));
+  if (!out.length) return;
+  const at = n ? start : 2;
+  if (at + out.length - 1 > sh.getMaxRows()) sh.insertRowsAfter(sh.getMaxRows(), at + out.length - 1 - sh.getMaxRows());
+  sh.getRange(at, 1, out.length, W).setNumberFormat('@');
+  sh.getRange(at, 3, out.length, 1).setNumberFormat('0.00');
+  sh.getRange(at, 1, out.length, W).setValues(out);
+  try { sh.hideSheet(); } catch (e) { /* مش مهم */ }
 }
 
 /* ======== 90_hooks.gs ======== */
 /*
  * Extension for Shopify stores:
  *  - Stock: live from the Shopify app (31_shopify_stock.gs), else the Shopify Flow stock tab, else the one-time snapshot.
- *  - Products tab auto-filled from the stock sheet (title + handle + price) so ad landing pages map exactly.
+ *  - Orders: from the Shopify app (32_shopify_orders.gs, called by syncOrders_), the Flow sheet only until the app's first read ends.
+ *  - Products tab auto-filled from the Flow stock sheet (title + handle + price) only while the app has no stock.
  *  - "المنتجات": products from best seller to least, live stock, running ✅, key numbers.
  *  - "تعادل الحسابات": each ad account day by day vs break-even, to see where the month drops.
  *  - "توب 100": best sellers, highest ROAS, most stock, selling without ads and dead stock (22_top.gs).

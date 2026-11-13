@@ -6,10 +6,10 @@
  * Products that don't track stock in Shopify are left out: their stock means nothing.
  */
 const STOCK_APP = {
-  TAB: 'Shopify Stock', HEADERS: ['Variant ID', 'Handle', 'Product', 'Stock', 'Read'], EVERY_MIN: 30, PAGES: 40,
+  TAB: 'Shopify Stock', HEADERS: ['Variant ID', 'Handle', 'Product', 'Stock', 'Read', 'Price'], EVERY_MIN: 30, PAGES: 40,
   CURSOR: 'STOCK_APP_CURSOR', READ: 'STOCK_APP_READ', DONE: 'STOCK_APP_DONE', AT: 'STOCK_APP_AT',
   QUERY: 'query($after:String){productVariants(first:250,after:$after){pageInfo{hasNextPage endCursor} ' +
-    'nodes{id inventoryQuantity product{handle title tracksInventory}}}}'
+    'nodes{id inventoryQuantity price product{handle title tracksInventory}}}}'
 };
 
 /* force = read now even if the last read is fresh (📦). Returns the variants read in this run. Errors go to Health. */
@@ -27,7 +27,7 @@ function syncShopifyStock_(force) {
       res.nodes.forEach(v => {
         const p = v.product || {};
         if (p.tracksInventory === false || !p.handle) return;
-        rows.push([v.id, String(p.handle).toLowerCase(), p.title || '', num_(v.inventoryQuantity), read]);
+        rows.push([v.id, String(p.handle).toLowerCase(), p.title || '', num_(v.inventoryQuantity), read, v.price === null || v.price === undefined ? '' : num_(v.price)]);
       });
       more = res.pageInfo.hasNextPage; after = res.pageInfo.endCursor; pages++;
     }
@@ -49,7 +49,8 @@ function syncShopifyStock_(force) {
 }
 /* New rows win by variant. done = the read that just ended: rows from older reads (variants Shopify doesn't have any more) go. */
 function shopifyMergeStock_(rows, done) {
-  const sh = ensureTab_(STOCK_APP.TAB, STOCK_APP.HEADERS), all = new Map();
+  const sh = ensureTab_(STOCK_APP.TAB, STOCK_APP.HEADERS), all = new Map(), hr = sh.getRange(1, 1, 1, STOCK_APP.HEADERS.length);
+  if (hr.getValues()[0].join('|') !== STOCK_APP.HEADERS.join('|')) hr.setValues([STOCK_APP.HEADERS]);
   readRows_(sh, STOCK_APP.HEADERS.length).forEach(r => all.set(String(r[0]), r));
   rows.forEach(r => all.set(String(r[0]), r));
   const out = Array.from(all.values()).filter(r => !done || String(r[4]) === done)
@@ -60,7 +61,7 @@ function shopifyMergeStock_(rows, done) {
 }
 
 let STOCK_APP_ = null;
-/* {byHandle: {handle: {title, stock}}, at}: the stock per product from the tab (every color together, below zero = 0). */
+/* {byHandle: {handle: {handle, title, stock, price}}, at}: the stock per product from the tab (every color together, below zero = 0). */
 function appStock_() {
   if (STOCK_APP_) return STOCK_APP_;
   const out = { byHandle: {}, at: PropertiesService.getDocumentProperties().getProperty(STOCK_APP.AT) || '' };
@@ -68,9 +69,10 @@ function appStock_() {
   if (sh && out.at) readRows_(sh, STOCK_APP.HEADERS.length).forEach(r => {
     const h = String(r[1]).trim().toLowerCase();
     if (!h) return;
-    const p = out.byHandle[h] = out.byHandle[h] || { title: '', stock: 0 };
+    const p = out.byHandle[h] = out.byHandle[h] || { handle: h, title: '', stock: 0, price: null };
     p.stock += Math.max(num_(r[3]), 0);
     if (r[2]) p.title = String(r[2]).trim();
+    if (p.price === null && r[5] !== '' && r[5] !== null && r[5] !== undefined && num_(r[5])) p.price = num_(r[5]);
   });
   STOCK_APP_ = out;
   return out;

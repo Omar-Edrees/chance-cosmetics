@@ -1,7 +1,8 @@
 /*
  * Extension for Shopify stores:
  *  - Stock: live from the Shopify app (31_shopify_stock.gs), else the Shopify Flow stock tab, else the one-time snapshot.
- *  - Products tab auto-filled from the stock sheet (title + handle + price) so ad landing pages map exactly.
+ *  - Orders: from the Shopify app (32_shopify_orders.gs, called by syncOrders_), the Flow sheet only until the app's first read ends.
+ *  - Products tab auto-filled from the Flow stock sheet (title + handle + price) only while the app has no stock.
  *  - "المنتجات": products from best seller to least, live stock, running ✅, key numbers.
  *  - "تعادل الحسابات": each ad account day by day vs break-even, to see where the month drops.
  *  - "توب 100": best sellers, highest ROAS, most stock, selling without ads and dead stock (22_top.gs).

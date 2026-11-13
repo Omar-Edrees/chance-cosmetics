@@ -1,4 +1,4 @@
-/* Stock from the Shopify Flow stock tab (+ optional one-time product export), and new products → Products tab. Read-only on Shopify. */
+/* Stock per product (the Shopify app first: 31_shopify_stock.gs), the old Flow stock tab as a fallback, and new products → Products tab. */
 
 let STOCK_ = null;
 function readStock_() {
@@ -58,11 +58,15 @@ function readStock_() {
  * onEdit, which can't open the stock sheet: then the last read is used.
  */
 function stockByName_() {
-  const st = readStock_(), props = PropertiesService.getDocumentProperties(), n = Number(props.getProperty('STOCK_SNAP_N') || 0);
+  const app = appStock_(), useApp = Object.keys(app.byHandle).length > 0;
+  // The app has the stock: the Flow sheet isn't opened at all.
+  const st = useApp ? { byHandle: {}, rows: 0, error: '' } : readStock_(), props = PropertiesService.getDocumentProperties(), n = Number(props.getProperty('STOCK_SNAP_N') || 0);
   let saved = '', flow = {};
   for (let i = 0; i < n; i++) saved += props.getProperty('STOCK_SNAP_' + i) || '';
   const prods = products_(), nameOf = (h, title) => { const pr = prods.find(p => p.slugs.indexOf(h) >= 0); return pr ? pr.name : productNameOf_(title); };
-  if (st.error) {
+  if (useApp) {
+    // nothing from the Flow sheet
+  } else if (st.error) {
     try { flow = saved ? JSON.parse(saved) : {}; } catch (e) { flow = {}; }
   } else {
     Object.keys(st.byHandle).forEach(h => {
@@ -79,7 +83,7 @@ function stockByName_() {
     }
     props.setProperty('STOCK_SNAP_AT', nowText_());
   }
-  const app = appStock_(), live = {};
+  const live = {};
   Object.keys(app.byHandle).forEach(h => { const x = app.byHandle[h], name = nameOf(h, x.title); live[name] = (live[name] || 0) + x.stock; });
   const by = {}, snap = stockSnapshot_();
   Object.keys(snap).forEach(t => { const name = productNameOf_(t); by[name] = (by[name] || 0) + snap[t]; });
@@ -92,9 +96,12 @@ function stockByName_() {
   return { by: by, at: k && !st.error ? nowText_() : k ? props.getProperty('STOCK_SNAP_AT') : STOCK_SNAPSHOT_AT.slice(0, 16) + ' (ثابت)', status: status };
 }
 
-/* New stock handles → new rows in Products (never edits existing rows). */
+/* New handles in the Flow stock tab → new rows in Products (never edits existing rows). Not used once the app has the stock. */
 function autoAddProducts_() {
   if (!cfgBool_('products.auto_add')) return 0;
+  // With the Shopify app the Flow sheet isn't read, and the app's 2000+ products don't go to Products: a product gets there
+  // from its ad's landing page (04_admap.gs), so Products stays the products that matter.
+  if (Object.keys(appStock_().byHandle).length) { setStatus_('STOCK', '✓ الستوك من أبليكيشن شوبيفاي، والمنتجات بتتضاف من لينكات الإعلانات'); return 0; }
   const st = readStock_();
   if (st.error) { setStatus_('STOCK', '✗ ' + st.error); return 0; }
   setStatus_('STOCK', st.rows ? '✓ ' + Object.keys(st.byHandle).length + ' منتج' : '⚠️ مفيش صفوف في تاب ' + cfgStr_('stock.sheet_tab') + ' — الستوك ثابت من شوبيفاي لحد ' + STOCK_SNAPSHOT_AT);

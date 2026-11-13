@@ -241,12 +241,12 @@ function writeHealth_() {
   const o = ss_().getSheetByName(APP.T.ORDERS), unk = { p: 0, pr: 0 };
   if (o) recentRows_(APP.T.ORDERS, ORDERS_HEADERS.length, 2, sortKey_, todayKey_().slice(0, 8) + '01').filter(r => asKey_(r[2]) >= todayKey_().slice(0, 8) + '01')
     .forEach(r => { if (r[3] === APP.UNKNOWN_PLATFORM) unk.p++; if (r[5] === APP.UNKNOWN_PRODUCT) unk.pr++; });
-  const rows = [['نسخة الكود', APP.VERSION], ['مصدر الأوردرات', cfgStr_('orders.method') === 'pixel' ? '⚠️ مشتريات البيكسل' : cfgStr_('orders.method')], ['أول سحب', getStatus_('BACKFILL')], ['آخر مزامنة كاملة', getStatus_('FULL')], ['آخر تحديث خلال اليوم', getStatus_('LIVE')], ['آخر تحديث سريع ⚡', getStatus_('QUICK')],
+  const rows = [['نسخة الكود', APP.VERSION], ['مصدر الأوردرات', cfgStr_('orders.method') === 'pixel' ? '⚠️ مشتريات البيكسل' : appOrdersReady_() ? 'أبليكيشن شوبيفاي ✓' : cfgStr_('orders.method')], ['أول سحب', getStatus_('BACKFILL')], ['آخر مزامنة كاملة', getStatus_('FULL')], ['آخر تحديث خلال اليوم', getStatus_('LIVE')], ['آخر تحديث سريع ⚡', getStatus_('QUICK')],
     ['الأوردرات', getStatus_('ORDERS')], ['أوردرات من غير تاريخ مفهوم', getStatus_('ORDERS_NODATE')], ['ربط الإعلانات', getStatus_('ADMAP')],
     ['إعلانات ❌ / ⚠️ / ✅', st['❌'] + ' / ' + st['⚠️'] + ' / ' + st['✅']],
     ['أوردرات الشهر مش معروف منصتها', unk.p], ['أوردرات الشهر مش معروف منتجها', unk.pr],
     ['صفحات منتجات مش متسجلة', PropertiesService.getDocumentProperties().getProperty('UNASSIGNED_SLUGS') || 'مفيش ✅'],
-    ['حسابات إعلانية لقيتها من الأوردرات', getStatus_('ACC_DISCOVER')], ['Daily Account Funnel', getStatus_('FUNNEL')], ['صرف الكتالوج', getStatus_('CATALOG')], ['حالة الأوردرات من شوبيفاي (الأبليكيشن)', getStatus_('SHOPIFY')], ['الستوك من شوبيفاي (الأبليكيشن)', getStatus_('STOCK_APP')], ['تاب Shopify', getStatus_('SHOPTAB')], ['كروت Today', typeof Sheets === 'undefined' ? '⚠️ فعّل Google Sheets API من Services في Apps Script' : getStatus_('TODAY_CARDS')]];
+    ['حسابات إعلانية لقيتها من الأوردرات', getStatus_('ACC_DISCOVER')], ['Daily Account Funnel', getStatus_('FUNNEL')], ['صرف الكتالوج', getStatus_('CATALOG')], ['الأوردرات من شوبيفاي (الأبليكيشن)', getStatus_('SHOP_ORDERS')], ['حالة الأوردرات من شوبيفاي (الأبليكيشن)', getStatus_('SHOPIFY')], ['الستوك من شوبيفاي (الأبليكيشن)', getStatus_('STOCK_APP')], ['تاب Shopify', getStatus_('SHOPTAB')], ['كروت Today', typeof Sheets === 'undefined' ? '⚠️ فعّل Google Sheets API من Services في Apps Script' : getStatus_('TODAY_CARDS')]];
   writeRows_(ensureTab_(APP.T.HEALTH, ['البند', 'الحالة']), rows, 2, []);
 }
 

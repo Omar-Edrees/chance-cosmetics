@@ -5,7 +5,7 @@
  * Ad accounts and stores are read-only from here: no writes to Meta, TikTok or order sources.
  */
 const APP = {
-  VERSION: '1.49.0',
+  VERSION: '1.50.0',
   T: {
     SETTINGS: 'Settings', ACCOUNTS: 'Accounts', PRODUCTS: 'Products', ADMAP: 'Ad Map',
     ADS: 'Ads Raw', ACC_RAW: 'Account Raw', ORDERS: 'Orders Raw', DAILY: 'Daily Log',
@@ -34,7 +34,7 @@ const SETTINGS_SPEC = [
   ['business.store_domains', '', 'دومينات المتجر، مفصولة بفاصلة'],
   ['business.product_url_regex', '/products?/([^/]+)', 'شكل لينك صفحة المنتج (الجزء بين القوسين = اسم الصفحة)'],
   ['business.multi_url_regex', '^/?$|^/(ar|en)/?$|/collections?(/|$)|/categor|/shop/?$|/all-products', 'لينكات صفحات فيها كل المنتجات أو الرئيسية'],
-  ['orders.method', 'linked_sheet', 'linked_sheet | shopify_flow_sheet | csv_tab | pixel | none (pixel = مشتريات البيكسل لحد ما الأوردرات الحقيقية تتربط)'],
+  ['orders.method', 'linked_sheet', 'linked_sheet | shopify_flow_sheet | shopify_app | csv_tab | pixel | none (pixel = مشتريات البيكسل لحد ما الأوردرات الحقيقية تتربط)'],
   ['orders.sheet_url', '', 'لينك شيت الأوردرات'],
   ['orders.sheet_tab', 'Sheet1', 'اسم التاب'],
   ['orders.date_format', 'auto', 'auto | mdy | dmy | iso'],
