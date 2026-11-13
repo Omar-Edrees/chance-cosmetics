@@ -1,6 +1,6 @@
 /*
  * Extension for Shopify stores:
- *  - Stock: read live stock from the Shopify Flow stock tab (+ optional one-time product export).
+ *  - Stock: live from the Shopify app (31_shopify_stock.gs), else the Shopify Flow stock tab, else the one-time snapshot.
  *  - Products tab auto-filled from the stock sheet (title + handle + price) so ad landing pages map exactly.
  *  - "المنتجات": products from best seller to least, live stock, running ✅, key numbers.
  *  - "تعادل الحسابات": each ad account day by day vs break-even, to see where the month drops.
@@ -37,9 +37,9 @@ function chanceEdit_(name, a1) {
 }
 function refreshProductsNow() {
   try {
-    resetCaches_(); chanceLive_();
+    resetCaches_(); syncShopifyStock_(true); chanceLive_();
     withLock_(() => { rebuildViews_({ full: true, slow: true }); });
-    alert_('اتحدثت المنتجات والستوك ✅\nالستوك: ' + getStatus_('STOCK') + '\nالإعلانات الشغالة: ' + getStatus_('ACTIVE'));
+    alert_('اتحدثت المنتجات والستوك ✅\nالستوك: ' + stockByName_().status + '\nالإعلانات الشغالة: ' + getStatus_('ACTIVE'));
     ss_().setActiveSheet(tab_(X.PRODUCTS));
   } catch (e) { alert_('التحديث ماكملش:\n' + errText_(e)); }
 }
@@ -52,7 +52,7 @@ const EXT = {
   views: [slow => chanceViews_(slow), () => writeShopTab_()],
   edit: [(name, a1) => chanceEdit_(name, a1)],
   setup: [() => chanceSetup_()],
-  live: [() => syncShopifyStatus_(), () => refreshAccountNames_(), () => discoverAccounts_(), () => chanceLive_(), () => refreshTodayFunnel_(), () => refreshFunnel_(false),
+  live: [() => syncShopifyStatus_(), () => syncShopifyStock_(false), () => refreshAccountNames_(), () => discoverAccounts_(), () => chanceLive_(), () => refreshTodayFunnel_(), () => refreshFunnel_(false),
     () => refreshShopTab_(false)],
   today: [() => refreshTodayFunnel_(), () => refreshBalances_(), () => refreshShopCards_()],
   menu: [['📦 تحديث المنتجات والستوك وتوب 100', 'refreshProductsNow'], ['📈 تحديث Daily Account Funnel و Actual ROAS', 'refreshFunnelNow'],

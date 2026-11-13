@@ -1065,6 +1065,12 @@ function fakeShopify(e, orders, opt) {
         const q = JSON.parse(p.payload).variables.q, t = (o.ql && o.ql(q)) || { columns: [], rows: [] };
         return json(200, { data: { shopifyqlQuery: { tableData: { columns: t.columns.map(n => ({ name: n, dataType: 'STRING' })), rows: t.rows }, parseErrors: [] } } });
       }
+      if (/graphql\.json$/.test(url) && /productVariants/.test(JSON.parse(p.payload).query)) { // الستوك
+        if (o.stockError) return json(403, { errors: 'no read_inventory' });
+        const v = o.variants || [], page = Number(JSON.parse(p.payload).variables.after || 0), size = o.variantPage || 250;
+        return json(200, { data: { productVariants: { nodes: v.slice(page * size, page * size + size),
+          pageInfo: { hasNextPage: (page + 1) * size < v.length, endCursor: String(page + 1) } } } });
+      }
       if (/graphql\.json$/.test(url)) {
         const body = JSON.parse(p.payload), page = Number(body.variables.after || 0), size = o.pageSize || 100;
         const nodes = orders.slice(page * size, page * size + size);
@@ -1144,6 +1150,55 @@ test('شوبيفاي: كل تحديث بيقرا الأوردرات اللي ا�
   assert.deepEqual([a['TOTAL ORDERS'], a['CONFIRMED ORDERS'], a['DELIVERED ORDERS'], a.REVENUE, a['CROSS-SELL REVENUE'], a['TOTAL UNITS']],
     [3, 2, 1, 800, 300, 4], 'أوردر 1 اتسلم واتزود عليه 300 (قطعتين)، وأوردر 2 في الشحن، وأوردر 3 اتلغى');
   assert.match(e.ss.getSheetByName('Health').getDataRange().getValues().map(r => r.join(' ')).join('\n'), /حالة الأوردرات من شوبيفاي \(الأبليكيشن\) .*✓/);
+});
+
+test('الستوك من أبليكيشن شوبيفاي: حي، بيكسب الفلو والصورة الثابتة، وبيتقري كل نص ساعة، والمتمسح بيروح', () => {
+  const variant = (id, handle, title, qty, tracks) => ({ id: 'gid://shopify/ProductVariant/' + id, inventoryQuantity: qty,
+    product: { handle, title, tracksInventory: tracks !== false } });
+  const variants = [variant(1, 'lip-oil', 'Lip Oil', 7), variant(2, 'lip-oil', 'Lip Oil', -2), variant(3, 'blush', 'Blush', 3),
+    variant(4, 'gift-card', 'Gift Card', 0, false), variant(5, 'serum', 'Serum', 0)];
+  const e = env({ snapshot: { 'Lip Oil': 999, 'Serum': 70, 'Old Mask': 4 },
+    stock: [['P2', 'V2', 'Blush', 'Default Title', 'BL', 'blush', 40, 250]] });
+  const calls = fakeShopify(e, [], { variants, variantPage: 2 });
+  Object.assign(e.user, { SHOPIFY_TOKEN: 'TOKEN1', SHOPIFY_TOKEN_EXP: String(Date.now() + 3600000) });
+  e.c.setupAll();
+  e.c.liveTick();
+  const reads = () => calls.filter(x => /productVariants/.test(String((x.p || {}).payload))).length;
+  assert.equal(reads(), 3, '5 أنواع، 2 في الصفحة');
+  const sh = e.ss.getSheetByName('Shopify Stock');
+  assert.ok(sh && sh.hidden, 'تاب مخفي');
+  assert.equal(sh.getDataRange().getValues().length - 1, 4, 'Gift Card مابيتتبعش ستوكه');
+  const s = e.c.stockByName_();
+  assert.deepEqual([s.by['Lip Oil'], s.by.Blush, s.by.Serum, s.by['Old Mask'], s.by['Gift Card']], [7, 3, 0, 4, undefined],
+    'الأبليكيشن بيكسب الفلو والصورة، والنوع اللي تحت الصفر = 0، واللي مش في شوبيفاي من الصورة');
+  assert.match(s.status, /^✓ ستوك حي من أبليكيشن شوبيفاي: 3 منتج، آخر قراية \d{4}-\d\d-\d\d \d\d:\d\d$/);
+  assert.equal(s.at, e.doc.STOCK_APP_AT);
+  const today = e.ss.getSheetByName('Today').getDataRange().getValues().find(r => /^الستوك يكفي كام يوم/.test(String(r[0])));
+  assert.match(String(today[0]), /الستوك: \d{4}-\d\d-\d\d \d\d:\d\d$/, 'وقت آخر قراية في عنوان الجدول');
+  assert.match(e.ss.getSheetByName('Health').getDataRange().getValues().map(r => r.join(' ')).join('\n'), /الستوك من شوبيفاي \(الأبليكيشن\) .*✓ 3 منتج/);
+  // التحديث الجاي قبل نص ساعة مابيقراش تاني
+  e.c.liveTick();
+  assert.equal(reads(), 3);
+  // 📦 بيقرا على طول، والنوع اللي اتمسح من شوبيفاي بيروح
+  variants.splice(2, 1);
+  variants[0].inventoryQuantity = 5;
+  e.c.refreshProductsNow();
+  assert.equal(reads(), 5);
+  const t = e.c.stockByName_();
+  assert.deepEqual([t.by['Lip Oil'], t.by.Blush], [5, 40], 'Blush مابقاش في الأبليكيشن، فبياخد من الفلو');
+  // من غير إذن (onEdit) بيقرا التاب بس
+  e.c.UrlFetchApp = { fetch: () => { throw new Error('مفيش إذن'); } };
+  e.c.resetCaches_(); e.c.STOCK_ = null;
+  assert.equal(e.c.stockByName_().by['Lip Oil'], 5);
+});
+
+test('الستوك من أبليكيشن شوبيفاي: لو شوبيفاي رفض، الغلط في Health والشيت شغال بالفلو والصورة', () => {
+  const e = env({ snapshot: { 'Lip Oil': 12 }, stock: [] });
+  fakeShopify(e, [], { stockError: true });
+  Object.assign(e.user, { SHOPIFY_TOKEN: 'TOKEN1', SHOPIFY_TOKEN_EXP: String(Date.now() + 3600000) });
+  e.c.setupAll(); e.c.liveTick();
+  assert.equal(e.c.stockByName_().by['Lip Oil'], 12);
+  assert.match(e.ss.getSheetByName('Health').getDataRange().getValues().map(r => r.join(' ')).join('\n'), /الستوك من شوبيفاي \(الأبليكيشن\) .*✗ شوبيفاي رفض الطلب \(403\)/);
 });
 
 test('شوبيفاي: من غير ربط، التحديث مابيكلمش شوبيفاي خالص', () => {

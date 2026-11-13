@@ -130,7 +130,7 @@ function shopifyGql_(query, variables) {
       contentType: 'application/json', muteHttpExceptions: true, headers: { 'X-Shopify-Access-Token': shopifyToken_() },
       payload: JSON.stringify({ query: query, variables: variables || {} }) });
     const code = r.getResponseCode(), body = shopifyJson_(r);
-    const throttled = code === 429 || (body.errors || []).some(x => ((x.extensions || {}).code || '') === 'THROTTLED');
+    const throttled = code === 429 || [].concat(body.errors || []).some(x => ((x && x.extensions || {}).code || '') === 'THROTTLED');
     if (throttled && i < 4) { Utilities.sleep(2000 * (i + 1)); continue; }
     if (code === 401 || code === 403) throw new Error('شوبيفاي رفض الطلب (' + code + '): ' + String(r.getContentText()).slice(0, 200) + ' — اعمل 🔑 ربط أبليكيشن شوبيفاي تاني.');
     if (code !== 200) throw new Error('شوبيفاي (' + code + '): ' + String(r.getContentText()).slice(0, 200));

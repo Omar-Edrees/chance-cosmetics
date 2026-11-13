@@ -9,7 +9,7 @@
 const COVER = { DAYS: 5, RED: 10, YELLOW: 15, MIN_PER_DAY: 1, ORDER_DAYS: 30 };
 
 function todayStockCover_(g, r, today) {
-  const S = TODAY, active = activeMap_(), stock = stockByName_().by, sold = {};
+  const S = TODAY, active = activeMap_(), st = stockByName_(), stock = st.by, sold = {};
   const special = [APP.CATALOG, APP.MULTI, APP.UNMAPPED, APP.UNKNOWN_PRODUCT, APP.META_NO_AD, ''];
   const from = shiftKey_(today, -COVER.DAYS), to = shiftKey_(today, -1);
   if (ss_().getSheetByName(APP.T.ORDERS)) recentRows_(APP.T.ORDERS, ORDERS_HEADERS.length, 2, sortKey_, from).forEach(o => {
@@ -28,7 +28,7 @@ function todayStockCover_(g, r, today) {
     days(n) <= COVER.RED).sort(byDays);
 
   g.set(r, 1, 'الستوك يكفي كام يوم (بمتوسط آخر ' + COVER.DAYS + ' أيام) — 🔴 ' + COVER.RED + ' أيام أو أقل: اطلب ستوك   🟡 لحد ' +
-    COVER.YELLOW + '   🟢 أكتر', { bg: S.DARK, fc: '#ffffff', b: 'bold', al: 'center' });
+    COVER.YELLOW + '   🟢 أكتر   —   الستوك: ' + st.at, { bg: S.DARK, fc: '#ffffff', b: 'bold', al: 'center' });
   g.fill(r, 2, 5, { bg: S.DARK });
   g.merge(r, 1, 1, 6);
   r++;

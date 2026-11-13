@@ -449,7 +449,7 @@ function shopTabDaysMap_(fast, slow) {
 /* Product pages with visits (today, last 7 days) whose stock is 0 or less: [{name, today, week, active, spendToday}]. */
 function shopTabStockless_(fast) {
   const rx = new RegExp(cfgStr_('business.product_url_regex') || '/products?/([^/]+)', 'i');
-  const prods = products_(), stock = stockByName_().by, raw = readStock_().byHandle, active = activeMap_(), by = {};
+  const prods = products_(), stock = stockByName_().by, raw = Object.assign({}, readStock_().byHandle, appStock_().byHandle), active = activeMap_(), by = {};
   const nameOf = h => { const p = prods.find(x => x.slugs.indexOf(h) >= 0); return p ? p.name : raw[h] && raw[h].title ? productNameOf_(raw[h].title) : ''; };
   const add = (pages, k) => Object.keys(pages || {}).forEach(path => {
     const m = path.toLowerCase().match(rx), n = m ? nameOf(m[1]) : '';

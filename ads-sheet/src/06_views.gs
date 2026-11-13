@@ -246,7 +246,7 @@ function writeHealth_() {
     ['إعلانات ❌ / ⚠️ / ✅', st['❌'] + ' / ' + st['⚠️'] + ' / ' + st['✅']],
     ['أوردرات الشهر مش معروف منصتها', unk.p], ['أوردرات الشهر مش معروف منتجها', unk.pr],
     ['صفحات منتجات مش متسجلة', PropertiesService.getDocumentProperties().getProperty('UNASSIGNED_SLUGS') || 'مفيش ✅'],
-    ['حسابات إعلانية لقيتها من الأوردرات', getStatus_('ACC_DISCOVER')], ['Daily Account Funnel', getStatus_('FUNNEL')], ['صرف الكتالوج', getStatus_('CATALOG')], ['حالة الأوردرات من شوبيفاي (الأبليكيشن)', getStatus_('SHOPIFY')], ['تاب Shopify', getStatus_('SHOPTAB')], ['كروت Today', typeof Sheets === 'undefined' ? '⚠️ فعّل Google Sheets API من Services في Apps Script' : getStatus_('TODAY_CARDS')]];
+    ['حسابات إعلانية لقيتها من الأوردرات', getStatus_('ACC_DISCOVER')], ['Daily Account Funnel', getStatus_('FUNNEL')], ['صرف الكتالوج', getStatus_('CATALOG')], ['حالة الأوردرات من شوبيفاي (الأبليكيشن)', getStatus_('SHOPIFY')], ['الستوك من شوبيفاي (الأبليكيشن)', getStatus_('STOCK_APP')], ['تاب Shopify', getStatus_('SHOPTAB')], ['كروت Today', typeof Sheets === 'undefined' ? '⚠️ فعّل Google Sheets API من Services في Apps Script' : getStatus_('TODAY_CARDS')]];
   writeRows_(ensureTab_(APP.T.HEALTH, ['البند', 'الحالة']), rows, 2, []);
 }
 

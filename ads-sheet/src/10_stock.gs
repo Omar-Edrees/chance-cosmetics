@@ -52,20 +52,21 @@ function readStock_() {
 }
 
 /*
- * Stock per product name: {by, status}. The Flow stock tab wins product by product; any other product takes the stock read
- * once from Shopify (23_stock_snapshot.gs) until the Flow / the Shopify app covers it. The Flow part is saved after each good
- * read, because changing a period cell runs in onEdit, which can't open the stock sheet: then the last read is used.
+ * Stock per product name: {by, status, at}. The Shopify app (31_shopify_stock.gs) wins: live stock of every product, read every
+ * half hour. Where it has nothing (not connected yet, or a product it didn't see), the Flow stock tab, then the stock read once
+ * from Shopify (23_stock_snapshot.gs). The Flow part is saved after each good read, because changing a period cell runs in
+ * onEdit, which can't open the stock sheet: then the last read is used.
  */
 function stockByName_() {
   const st = readStock_(), props = PropertiesService.getDocumentProperties(), n = Number(props.getProperty('STOCK_SNAP_N') || 0);
   let saved = '', flow = {};
   for (let i = 0; i < n; i++) saved += props.getProperty('STOCK_SNAP_' + i) || '';
+  const prods = products_(), nameOf = (h, title) => { const pr = prods.find(p => p.slugs.indexOf(h) >= 0); return pr ? pr.name : productNameOf_(title); };
   if (st.error) {
     try { flow = saved ? JSON.parse(saved) : {}; } catch (e) { flow = {}; }
   } else {
-    const prods = products_();
     Object.keys(st.byHandle).forEach(h => {
-      const x = st.byHandle[h], pr = prods.find(p => p.slugs.indexOf(h) >= 0), name = pr ? pr.name : productNameOf_(x.title);
+      const x = st.byHandle[h], name = nameOf(h, x.title);
       flow[name] = (flow[name] || 0) + x.stock;
     });
     // Values are capped at 9KB each: save in parts.
@@ -78,13 +79,17 @@ function stockByName_() {
     }
     props.setProperty('STOCK_SNAP_AT', nowText_());
   }
+  const app = appStock_(), live = {};
+  Object.keys(app.byHandle).forEach(h => { const x = app.byHandle[h], name = nameOf(h, x.title); live[name] = (live[name] || 0) + x.stock; });
   const by = {}, snap = stockSnapshot_();
   Object.keys(snap).forEach(t => { const name = productNameOf_(t); by[name] = (by[name] || 0) + snap[t]; });
   Object.keys(flow).forEach(name => { by[name] = flow[name]; });
-  const k = Object.keys(flow).length, fixed = 'ستوك ثابت من شوبيفاي لحد ' + STOCK_SNAPSHOT_AT;
+  Object.keys(live).forEach(name => { by[name] = live[name]; });
+  const a = Object.keys(live).length, k = Object.keys(flow).length, fixed = 'ستوك ثابت من شوبيفاي لحد ' + STOCK_SNAPSHOT_AT;
+  if (a) return { by: by, at: app.at, status: '✓ ستوك حي من أبليكيشن شوبيفاي: ' + a + ' منتج، آخر قراية ' + app.at };
   const status = k ? '✓ ' + k + ' منتج من فلو الستوك' + (st.error ? ' (آخر قراية ' + props.getProperty('STOCK_SNAP_AT') + ')' : '') + '، والباقي ' + fixed
     : '⚠️ ' + fixed + ' — مابيتحدثش لوحده' + (st.error ? ' (' + st.error + ')' : ' (مفيش صفوف في تاب ' + cfgStr_('stock.sheet_tab') + ')');
-  return { by: by, status: status };
+  return { by: by, at: k && !st.error ? nowText_() : k ? props.getProperty('STOCK_SNAP_AT') : STOCK_SNAPSHOT_AT.slice(0, 16) + ' (ثابت)', status: status };
 }
 
 /* New stock handles → new rows in Products (never edits existing rows). */
