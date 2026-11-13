@@ -1454,7 +1454,7 @@ function writeHealth_() {
     ['إعلانات ❌ / ⚠️ / ✅', st['❌'] + ' / ' + st['⚠️'] + ' / ' + st['✅']],
     ['أوردرات الشهر مش معروف منصتها', unk.p], ['أوردرات الشهر مش معروف منتجها', unk.pr],
     ['صفحات منتجات مش متسجلة', PropertiesService.getDocumentProperties().getProperty('UNASSIGNED_SLUGS') || 'مفيش ✅'],
-    ['حسابات إعلانية لقيتها من الأوردرات', getStatus_('ACC_DISCOVER')], ['Daily Account Funnel', getStatus_('FUNNEL')], ['صرف الكتالوج', getStatus_('CATALOG')], ['الأوردرات من شوبيفاي (الأبليكيشن)', getStatus_('SHOP_ORDERS')], ['حالة الأوردرات من شوبيفاي (الأبليكيشن)', getStatus_('SHOPIFY')], ['الستوك من شوبيفاي (الأبليكيشن)', getStatus_('STOCK_APP')], ['تاب Shopify', getStatus_('SHOPTAB')], ['كروت Today', typeof Sheets === 'undefined' ? '⚠️ فعّل Google Sheets API من Services في Apps Script' : getStatus_('TODAY_CARDS')]];
+    ['حسابات إعلانية لقيتها من الأوردرات', getStatus_('ACC_DISCOVER')], ['Daily Account Funnel', getStatus_('FUNNEL')], ['صرف الكتالوج', getStatus_('CATALOG')], ['الأوردرات من شوبيفاي (الأبليكيشن)', getStatus_('SHOP_ORDERS')], ['مطابقة الأوردرات مع شوبيفاي', getStatus_('SHOP_ORDERS_CHECK')], ['محافظة الأوردرات', getStatus_('SHOP_ORDERS_ADDR')], ['حالة الأوردرات من شوبيفاي (الأبليكيشن)', getStatus_('SHOPIFY')], ['الستوك من شوبيفاي (الأبليكيشن)', getStatus_('STOCK_APP')], ['تاب Shopify', getStatus_('SHOPTAB')], ['كروت Today', typeof Sheets === 'undefined' ? '⚠️ فعّل Google Sheets API من Services في Apps Script' : getStatus_('TODAY_CARDS')]];
   writeRows_(ensureTab_(APP.T.HEALTH, ['البند', 'الحالة']), rows, 2, []);
 }
 
@@ -4840,7 +4840,7 @@ function writeShopTab_() {
  */
 const STOCK_APP = {
   TAB: 'Shopify Stock', HEADERS: ['Variant ID', 'Handle', 'Product', 'Stock', 'Read', 'Price'], EVERY_MIN: 30, PAGES: 40,
-  CURSOR: 'STOCK_APP_CURSOR', READ: 'STOCK_APP_READ', DONE: 'STOCK_APP_DONE', AT: 'STOCK_APP_AT',
+  CURSOR: 'STOCK_APP_CURSOR', READ: 'STOCK_APP_READ', DONE: 'STOCK_APP_DONE', AT: 'STOCK_APP_AT', SEEN: 'STOCK_APP_SEEN',
   QUERY: 'query($after:String){productVariants(first:250,after:$after){pageInfo{hasNextPage endCursor} ' +
     'nodes{id inventoryQuantity price product{handle title tracksInventory}}}}'
 };
@@ -4851,12 +4851,14 @@ function syncShopifyStock_(force) {
   const props = PropertiesService.getDocumentProperties(), now = Date.now();
   let after = props.getProperty(STOCK_APP.CURSOR) || null, read = props.getProperty(STOCK_APP.READ) || '';
   if (!after && !force && now - Number(props.getProperty(STOCK_APP.DONE) || 0) < STOCK_APP.EVERY_MIN * 60000) return 0;
-  if (!after || force) { after = null; read = String(now); }
+  if (!after || force) { after = null; read = String(now); props.setProperty(STOCK_APP.SEEN, '0'); }
   const rows = [];
+  let seen = Number(props.getProperty(STOCK_APP.SEEN) || 0);
   let more = true, pages = 0;
   try {
     while (more && pages < STOCK_APP.PAGES && timeLeft_()) {
       const res = shopifyGql_(STOCK_APP.QUERY, { after: after }).productVariants;
+      seen += res.nodes.length;
       res.nodes.forEach(v => {
         const p = v.product || {};
         if (p.tracksInventory === false || !p.handle) return;
@@ -4869,6 +4871,7 @@ function syncShopifyStock_(force) {
     if (!rows.length) return 0;
     more = true;
   }
+  props.setProperty(STOCK_APP.SEEN, String(seen));
   withLock_(() => shopifyMergeStock_(rows, more ? '' : read));
   if (more) {
     props.setProperties({ [STOCK_APP.CURSOR]: after || '', [STOCK_APP.READ]: read });
@@ -4876,7 +4879,13 @@ function syncShopifyStock_(force) {
   } else {
     props.deleteProperty(STOCK_APP.CURSOR);
     props.setProperties({ [STOCK_APP.READ]: read, [STOCK_APP.DONE]: String(Date.now()), [STOCK_APP.AT]: nowText_() });
-    setStatus_('STOCK_APP', '✓ ' + Object.keys(appStock_().byHandle).length + ' منتج');
+    // Check: every variant Shopify has was read.
+    let all = null;
+    try { all = shopifyGql_('{productVariantsCount(limit:null){count}}', {}).productVariantsCount.count; } catch (e) { all = null; }
+    const n = Object.keys(appStock_().byHandle).length;
+    setStatus_('STOCK_APP', all === null || all === seen ? '✓ ' + n + ' منتج (' + seen + ' نوع' + (all === null ? '' : '، كل اللي في شوبيفاي') + ')'
+      : '⚠️ اتقرا ' + seen + ' نوع وشوبيفاي فيه ' + all + ' — هيتقري تاني في التحديث الجاي');
+    if (all !== null && all !== seen) props.deleteProperty(STOCK_APP.DONE);
   }
   return rows.length;
 }
@@ -4926,12 +4935,15 @@ function appStock_() {
  */
 const SHOP_ORDERS = {
   TAB: 'Shopify Orders', FIRST_FROM: '2026-10-13T09:00:00Z', PAGES: 25, OVERLAP_H: 6, TAIL: 1500,
-  SINCE: 'SHOP_ORDERS_SINCE', READY: 'SHOP_ORDERS_READY', AT: 'SHOP_ORDERS_AT',
+  SINCE: 'SHOP_ORDERS_SINCE', READY: 'SHOP_ORDERS_READY', AT: 'SHOP_ORDERS_AT', NO_ADDR: 'SHOP_ORDERS_NO_ADDR',
   HEADERS: ['Order ID', 'Created At', 'Total Price', 'Products', 'UTM Source', 'UTM Campaign', 'UTM Content', 'UTM ID', 'UTM Term',
     'Attr UTM Source', 'Attr UTM Campaign', 'Attr UTM Content', 'Attr UTM ID', 'Attr UTM Term', 'Order Referrer', 'Source Name', 'City'],
-  QUERY: 'query($q:String!,$after:String){orders(first:40,after:$after,sortKey:CREATED_AT,query:$q){pageInfo{hasNextPage endCursor} ' +
+  QUERY: 'query($q:String!,$after:String){orders(first:20,after:$after,sortKey:CREATED_AT,query:$q){pageInfo{hasNextPage endCursor} ' +
     'nodes{id createdAt sourceName originalTotalPriceSet{shopMoney{amount}} customAttributes{key value} ' +
-    'lineItems(first:15){nodes{title quantity}} customerJourneySummary{lastVisit{referrerUrl utmParameters{source campaign content term}}}}}}'
+    'lineItems(first:30){nodes{title quantity}} customerJourneySummary{lastVisit{referrerUrl utmParameters{source campaign content term}}}}}}',
+  // The shipping address's governorate only (the same field the fixed file 24_order_gov.gs was read from).
+  ADDR_QUERY: 'query($ids:[ID!]!){nodes(ids:$ids){... on Order{id shippingAddress{province}}}}',
+  COUNT_QUERY: 'query($a:String!,$b:String!){a:ordersCount(query:$a,limit:null){count} b:ordersCount(query:$b,limit:null){count}}'
 };
 
 /* Orders Raw reads the app tab once the first read is over (and the sheet is connected to the app). */
@@ -4941,8 +4953,8 @@ function appOrdersReady_() {
   return !!PropertiesService.getDocumentProperties().getProperty(SHOP_ORDERS.READY) && !!ss_().getSheetByName(SHOP_ORDERS.TAB);
 }
 
-/* A row of the tab from one Shopify order. */
-function shopOrderRow_(o) {
+/* A row of the tab from one Shopify order. province = the shipping address's governorate (else the COD form's). */
+function shopOrderRow_(o, province) {
   const attr = {};
   (o.customAttributes || []).forEach(a => { attr[String(a.key || '').trim().toLowerCase()] = String(a.value === null || a.value === undefined ? '' : a.value).trim(); });
   const visit = (o.customerJourneySummary || {}).lastVisit || {}, u = visit.utmParameters || {};
@@ -4951,7 +4963,7 @@ function shopOrderRow_(o) {
   return [o.id, o.createdAt, num_(((o.originalTotalPriceSet || {}).shopMoney || {}).amount), items,
     u.source || '', u.campaign || '', u.content || '', '', u.term || '',
     attr.utm_source || '', attr.utm_campaign || '', attr.utm_content || '', attr.utm_id || '', attr.utm_term || '',
-    attr['order referrer'] || visit.referrerUrl || '', o.sourceName || '', gov ? attr[gov] : ''];
+    attr['order referrer'] || visit.referrerUrl || '', o.sourceName || '', province || (gov ? attr[gov] : '')];
 }
 
 /* Returns the orders read in this run. Errors go to Health and never stop the update. */
@@ -4964,8 +4976,8 @@ function syncShopifyOrders_() {
   let after = null, more = true, pages = 0;
   try {
     while (more && pages < SHOP_ORDERS.PAGES && timeLeft_()) {
-      const res = shopifyGql_(SHOP_ORDERS.QUERY, { q: "created_at:>='" + since + "'", after: after }).orders;
-      res.nodes.forEach(o => rows.push(shopOrderRow_(o)));
+      const res = shopifyGql_(SHOP_ORDERS.QUERY, { q: "created_at:>='" + since + "'", after: after }).orders, prov = shopOrderProvinces_(res.nodes);
+      res.nodes.forEach(o => rows.push(shopOrderRow_(o, prov[o.id])));
       more = res.pageInfo.hasNextPage; after = res.pageInfo.endCursor; pages++;
     }
   } catch (e) {
@@ -4985,6 +4997,42 @@ function syncShopifyOrders_() {
     setStatus_('SHOP_ORDERS', '✓ ' + rows.length + ' أوردر اتقرا (من ' + since.slice(0, 16).replace('T', ' ') + ' UTC)');
   }
   return rows.length;
+}
+
+/*
+ * Order ID → the shipping address's governorate. If Shopify doesn't let the app read addresses, the COD form's governorate
+ * is used (web and draft orders then stay "unknown"), and addresses aren't asked again until tomorrow.
+ */
+function shopOrderProvinces_(orders) {
+  const props = PropertiesService.getDocumentProperties(), out = {};
+  if (!orders.length || props.getProperty(SHOP_ORDERS.NO_ADDR) === todayKey_()) return out;
+  try {
+    (shopifyGql_(SHOP_ORDERS.ADDR_QUERY, { ids: orders.map(o => o.id) }).nodes || [])
+      .forEach(n => { if (n && n.id && n.shippingAddress) out[n.id] = String(n.shippingAddress.province || '').trim(); });
+  } catch (e) {
+    props.setProperty(SHOP_ORDERS.NO_ADDR, todayKey_());
+    setStatus_('SHOP_ORDERS_ADDR', '⚠️ شوبيفاي مابيدّيش الأبليكيشن عنوان الشحن، فالمحافظة من الفورم بس (أوردرات الموقع والمانيول "مش معروفة"): ' + errText_(e));
+    return out;
+  }
+  setStatus_('SHOP_ORDERS_ADDR', '✓ المحافظة من عنوان الشحن');
+  return out;
+}
+
+/*
+ * Check, every update: the orders of the last two full days in Orders Raw = the orders Shopify itself counts for those days.
+ * Only once Orders Raw reads the app (before that it's the Flow sheet). The result is in Health.
+ */
+function checkShopifyOrders_() {
+  if (!shopifyProps_().getProperty('SHOPIFY_TOKEN') || !appOrdersReady_() || !ss_().getSheetByName(APP.T.ORDERS)) return;
+  const today = todayKey_(), days = [shiftKey_(today, -1), shiftKey_(today, -2)];
+  const utc = d => Utilities.parseDate(d + ' 00:00', tz_(), 'yyyy-MM-dd HH:mm').toISOString().replace(/\.\d+Z$/, 'Z');
+  const q = d => "created_at:>='" + utc(d) + "' created_at:<'" + utc(shiftKey_(d, 1)) + "'";
+  try {
+    const r = shopifyGql_(SHOP_ORDERS.COUNT_QUERY, { a: q(days[0]), b: q(days[1]) }), shop = [r.a.count, r.b.count], have = [0, 0];
+    recentRows_(APP.T.ORDERS, ORDERS_HEADERS.length, 2, sortKey_, days[1]).forEach(o => { const i = days.indexOf(asKey_(o[2])); if (i >= 0) have[i]++; });
+    const ok = shop[0] === have[0] && shop[1] === have[1];
+    setStatus_('SHOP_ORDERS_CHECK', (ok ? '✓ ' : '⚠️ مش متطابق: ') + days.map((d, i) => d + ' شوبيفاي ' + shop[i] + ' والشيت ' + have[i]).join('، '));
+  } catch (e) { setStatus_('SHOP_ORDERS_CHECK', '✗ ' + errText_(e)); }
 }
 
 /*
@@ -5067,7 +5115,7 @@ const EXT = {
   views: [slow => chanceViews_(slow), () => writeShopTab_()],
   edit: [(name, a1) => chanceEdit_(name, a1)],
   setup: [() => chanceSetup_()],
-  live: [() => syncShopifyStatus_(), () => syncShopifyStock_(false), () => refreshAccountNames_(), () => discoverAccounts_(), () => chanceLive_(), () => refreshTodayFunnel_(), () => refreshFunnel_(false),
+  live: [() => syncShopifyStatus_(), () => checkShopifyOrders_(), () => syncShopifyStock_(false), () => refreshAccountNames_(), () => discoverAccounts_(), () => chanceLive_(), () => refreshTodayFunnel_(), () => refreshFunnel_(false),
     () => refreshShopTab_(false)],
   today: [() => refreshTodayFunnel_(), () => refreshBalances_(), () => refreshShopCards_()],
   menu: [['📦 تحديث المنتجات والستوك وتوب 100', 'refreshProductsNow'], ['📈 تحديث Daily Account Funnel و Actual ROAS', 'refreshFunnelNow'],

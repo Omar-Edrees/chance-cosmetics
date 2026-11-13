@@ -7,7 +7,7 @@
  */
 const STOCK_APP = {
   TAB: 'Shopify Stock', HEADERS: ['Variant ID', 'Handle', 'Product', 'Stock', 'Read', 'Price'], EVERY_MIN: 30, PAGES: 40,
-  CURSOR: 'STOCK_APP_CURSOR', READ: 'STOCK_APP_READ', DONE: 'STOCK_APP_DONE', AT: 'STOCK_APP_AT',
+  CURSOR: 'STOCK_APP_CURSOR', READ: 'STOCK_APP_READ', DONE: 'STOCK_APP_DONE', AT: 'STOCK_APP_AT', SEEN: 'STOCK_APP_SEEN',
   QUERY: 'query($after:String){productVariants(first:250,after:$after){pageInfo{hasNextPage endCursor} ' +
     'nodes{id inventoryQuantity price product{handle title tracksInventory}}}}'
 };
@@ -18,12 +18,14 @@ function syncShopifyStock_(force) {
   const props = PropertiesService.getDocumentProperties(), now = Date.now();
   let after = props.getProperty(STOCK_APP.CURSOR) || null, read = props.getProperty(STOCK_APP.READ) || '';
   if (!after && !force && now - Number(props.getProperty(STOCK_APP.DONE) || 0) < STOCK_APP.EVERY_MIN * 60000) return 0;
-  if (!after || force) { after = null; read = String(now); }
+  if (!after || force) { after = null; read = String(now); props.setProperty(STOCK_APP.SEEN, '0'); }
   const rows = [];
+  let seen = Number(props.getProperty(STOCK_APP.SEEN) || 0);
   let more = true, pages = 0;
   try {
     while (more && pages < STOCK_APP.PAGES && timeLeft_()) {
       const res = shopifyGql_(STOCK_APP.QUERY, { after: after }).productVariants;
+      seen += res.nodes.length;
       res.nodes.forEach(v => {
         const p = v.product || {};
         if (p.tracksInventory === false || !p.handle) return;
@@ -36,6 +38,7 @@ function syncShopifyStock_(force) {
     if (!rows.length) return 0;
     more = true;
   }
+  props.setProperty(STOCK_APP.SEEN, String(seen));
   withLock_(() => shopifyMergeStock_(rows, more ? '' : read));
   if (more) {
     props.setProperties({ [STOCK_APP.CURSOR]: after || '', [STOCK_APP.READ]: read });
@@ -43,7 +46,13 @@ function syncShopifyStock_(force) {
   } else {
     props.deleteProperty(STOCK_APP.CURSOR);
     props.setProperties({ [STOCK_APP.READ]: read, [STOCK_APP.DONE]: String(Date.now()), [STOCK_APP.AT]: nowText_() });
-    setStatus_('STOCK_APP', '✓ ' + Object.keys(appStock_().byHandle).length + ' منتج');
+    // Check: every variant Shopify has was read.
+    let all = null;
+    try { all = shopifyGql_('{productVariantsCount(limit:null){count}}', {}).productVariantsCount.count; } catch (e) { all = null; }
+    const n = Object.keys(appStock_().byHandle).length;
+    setStatus_('STOCK_APP', all === null || all === seen ? '✓ ' + n + ' منتج (' + seen + ' نوع' + (all === null ? '' : '، كل اللي في شوبيفاي') + ')'
+      : '⚠️ اتقرا ' + seen + ' نوع وشوبيفاي فيه ' + all + ' — هيتقري تاني في التحديث الجاي');
+    if (all !== null && all !== seen) props.deleteProperty(STOCK_APP.DONE);
   }
   return rows.length;
 }
