@@ -1,6 +1,6 @@
 /*
  * Store orders from the Shopify app (read_orders), instead of the Shopify Flow sheet.
- * Every update (inside syncOrders_, before Orders Raw is read): the orders created since the last read, oldest first, 40 a page,
+ * Every update (inside syncOrders_, before Orders Raw is read): the orders created since the last read, oldest first, 20 a page,
  * into the hidden tab "Shopify Orders": one row per order with the columns readOrderSource_ reads (the same names the Flow sheet
  * had), so the rest of the sheet works as before. No customer data: no names, phones, emails or addresses; the governorate only.
  *  - The COD form's UTMs, campaign / ad set IDs and "Order Referrer" are the order's own attributes (Attr UTM …).
@@ -17,8 +17,10 @@ const SHOP_ORDERS = {
     'Attr UTM Source', 'Attr UTM Campaign', 'Attr UTM Content', 'Attr UTM ID', 'Attr UTM Term', 'Order Referrer', 'Source Name', 'City'],
   QUERY: 'query($q:String!,$after:String){orders(first:20,after:$after,sortKey:CREATED_AT,query:$q){pageInfo{hasNextPage endCursor} ' +
     'nodes{id createdAt sourceName originalTotalPriceSet{shopMoney{amount}} customAttributes{key value} ' +
-    'lineItems(first:30){nodes{title quantity}} customerJourneySummary{lastVisit{referrerUrl utmParameters{source campaign content term}}}}}}',
+    'lineItems(first:30){pageInfo{hasNextPage endCursor} nodes{title quantity}} customerJourneySummary{lastVisit{referrerUrl utmParameters{source campaign content term}}}}}}',
   // The shipping address's governorate only (the same field the fixed file 24_order_gov.gs was read from).
+  // An order with more than 30 lines: the rest, 100 at a time.
+  ITEMS_QUERY: 'query($id:ID!,$after:String){order(id:$id){lineItems(first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{title quantity}}}}',
   ADDR_QUERY: 'query($ids:[ID!]!){nodes(ids:$ids){... on Order{id shippingAddress{province}}}}',
   COUNT_QUERY: 'query($a:String!,$b:String!){a:ordersCount(query:$a,limit:null){count} b:ordersCount(query:$b,limit:null){count}}'
 };
@@ -36,11 +38,23 @@ function shopOrderRow_(o, province) {
   (o.customAttributes || []).forEach(a => { attr[String(a.key || '').trim().toLowerCase()] = String(a.value === null || a.value === undefined ? '' : a.value).trim(); });
   const visit = (o.customerJourneySummary || {}).lastVisit || {}, u = visit.utmParameters || {};
   const gov = Object.keys(attr).find(k => /محافظ|province|governorate/.test(k));
-  const items = (((o.lineItems || {}).nodes) || []).map(li => String(li.title || '').trim() + ' x' + (li.quantity || 1)).join(' | ');
+  const items = shopOrderItems_(o).map(li => String(li.title || '').trim() + ' x' + (li.quantity || 1)).join(' | ');
   return [o.id, o.createdAt, num_(((o.originalTotalPriceSet || {}).shopMoney || {}).amount), items,
     u.source || '', u.campaign || '', u.content || '', '', u.term || '',
     attr.utm_source || '', attr.utm_campaign || '', attr.utm_content || '', attr.utm_id || '', attr.utm_term || '',
     attr['order referrer'] || visit.referrerUrl || '', o.sourceName || '', province || (gov ? attr[gov] : '')];
+}
+
+/* Every line of an order: the first 30 come with the order; the rest are read on their own (rare). */
+function shopOrderItems_(o) {
+  const li = o.lineItems || {}, out = (li.nodes || []).slice();
+  let page = li.pageInfo || {};
+  while (page.hasNextPage) {
+    const more = shopifyGql_(SHOP_ORDERS.ITEMS_QUERY, { id: o.id, after: page.endCursor }).order.lineItems;
+    (more.nodes || []).forEach(x => out.push(x));
+    page = more.pageInfo || {};
+  }
+  return out;
 }
 
 /* Returns the orders read in this run. Errors go to Health and never stop the update. */
@@ -48,7 +62,13 @@ function syncShopifyOrders_() {
   if (!shopifyProps_().getProperty('SHOPIFY_TOKEN')) return 0;
   const m = cfgStr_('orders.method');
   if (m !== 'shopify_flow_sheet' && m !== 'shopify_app') return 0;
-  const props = PropertiesService.getDocumentProperties(), since = props.getProperty(SHOP_ORDERS.SINCE) || SHOP_ORDERS.FIRST_FROM;
+  const props = PropertiesService.getDocumentProperties(), tab = ss_().getSheetByName(SHOP_ORDERS.TAB);
+  // The tab is the only copy of orders older than 60 days: if it was deleted or emptied, read everything again from the start.
+  if (props.getProperty(SHOP_ORDERS.READY) && (!tab || tab.getLastRow() < 2)) {
+    [SHOP_ORDERS.READY, SHOP_ORDERS.SINCE].forEach(k => props.deleteProperty(k));
+    setStatus_('SHOP_ORDERS', '⚠️ تاب ' + SHOP_ORDERS.TAB + ' اتمسح: بيتقري من الأول');
+  }
+  const since = props.getProperty(SHOP_ORDERS.SINCE) || SHOP_ORDERS.FIRST_FROM;
   const rows = [];
   let after = null, more = true, pages = 0;
   try {
@@ -87,8 +107,12 @@ function shopOrderProvinces_(orders) {
     (shopifyGql_(SHOP_ORDERS.ADDR_QUERY, { ids: orders.map(o => o.id) }).nodes || [])
       .forEach(n => { if (n && n.id && n.shippingAddress) out[n.id] = String(n.shippingAddress.province || '').trim(); });
   } catch (e) {
-    props.setProperty(SHOP_ORDERS.NO_ADDR, todayKey_());
-    setStatus_('SHOP_ORDERS_ADDR', '⚠️ شوبيفاي مابيدّيش الأبليكيشن عنوان الشحن، فالمحافظة من الفورم بس (أوردرات الموقع والمانيول "مش معروفة"): ' + errText_(e));
+    // Only a refusal stops asking until tomorrow; a passing error (timeout, 5xx) asks again next time. Either way the
+    // governorate already in the tab stays (shopifyMergeOrders_ keeps it when a new read has none).
+    const refused = /\((401|403)\)|ACCESS_DENIED|not approved|access denied|protected customer data/i.test(errText_(e));
+    if (refused) props.setProperty(SHOP_ORDERS.NO_ADDR, todayKey_());
+    setStatus_('SHOP_ORDERS_ADDR', refused ? '⚠️ شوبيفاي مابيدّيش الأبليكيشن عنوان الشحن، فالمحافظة من الفورم بس (أوردرات الموقع والمانيول "مش معروفة"): ' + errText_(e)
+      : '⚠️ عنوان الشحن ماتقراش المرة دي (' + errText_(e) + ') — هيتقري تاني، والمحافظات اللي اتقرت قبل كده زي ما هي');
     return out;
   }
   setStatus_('SHOP_ORDERS_ADDR', '✓ المحافظة من عنوان الشحن');
@@ -124,7 +148,8 @@ function shopifyMergeOrders_(rows) {
   const older = new Set(L - 1 > n ? sh.getRange(2, 1, L - 1 - n, 1).getValues().map(r => String(r[0])) : []);
   const tail = n ? sh.getRange(start, 1, n, W).getValues() : [], fresh = new Map();
   rows.forEach(r => { if (!older.has(String(r[0]))) fresh.set(String(r[0]), r); });
-  const out = tail.map(r => fresh.get(String(r[0])) || r), had = new Set(tail.map(r => String(r[0])));
+  const C = SHOP_ORDERS.HEADERS.length - 1; // City: a new read without a governorate keeps the one read before
+  const out = tail.map(r => { const f = fresh.get(String(r[0])); if (f && !f[C] && r[C]) f[C] = r[C]; return f || r; }), had = new Set(tail.map(r => String(r[0])));
   fresh.forEach((r, id) => { if (!had.has(id)) out.push(r); });
   out.sort((a, b) => (String(a[1]) < String(b[1]) ? -1 : String(a[1]) > String(b[1]) ? 1 : 0));
   if (!out.length) return;

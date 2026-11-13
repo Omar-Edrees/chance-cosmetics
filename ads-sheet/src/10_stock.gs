@@ -53,7 +53,7 @@ function readStock_() {
 
 /*
  * Stock per product name: {by, status, at}. The Shopify app (31_shopify_stock.gs) wins: live stock of every product, read every
- * half hour. Where it has nothing (not connected yet, or a product it didn't see), the Flow stock tab, then the stock read once
+ * half hour, and then nothing else is used. Without it (not connected yet), the Flow stock tab, then the stock read once
  * from Shopify (23_stock_snapshot.gs). The Flow part is saved after each good read, because changing a period cell runs in
  * onEdit, which can't open the stock sheet: then the last read is used.
  */
@@ -85,7 +85,8 @@ function stockByName_() {
   }
   const live = {};
   Object.keys(app.byHandle).forEach(h => { const x = app.byHandle[h], name = nameOf(h, x.title); live[name] = (live[name] || 0) + x.stock; });
-  const by = {}, snap = stockSnapshot_();
+  // The app reads every product Shopify has: the Oct-29 snapshot isn't used at all then (a product it doesn't have = no stock).
+  const by = {}, snap = useApp ? {} : stockSnapshot_();
   Object.keys(snap).forEach(t => { const name = productNameOf_(t); by[name] = (by[name] || 0) + snap[t]; });
   Object.keys(flow).forEach(name => { by[name] = flow[name]; });
   Object.keys(live).forEach(name => { by[name] = live[name]; });

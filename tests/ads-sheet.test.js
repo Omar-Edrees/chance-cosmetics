@@ -1176,6 +1176,9 @@ test('الستوك من أبليكيشن شوبيفاي: حي، بيكسب ال�
     product: { handle, title, tracksInventory: tracks !== false } });
   const variants = [variant(1, 'lip-oil', 'Lip Oil', 7), variant(2, 'lip-oil', 'Lip Oil', -2), variant(3, 'blush', 'Blush', 3),
     variant(4, 'gift-card', 'Gift Card', 0, false), variant(5, 'serum', 'Serum', 0)];
+  const archived = variant(6, 'old-blush', 'Blush', 50);
+  archived.product.status = 'ARCHIVED';
+  variants.push(archived);
   const e = env({ snapshot: { 'Lip Oil': 999, 'Serum': 70, 'Old Mask': 4 },
     stock: [['P2', 'V2', 'Blush', 'Default Title', 'BL', 'blush', 40, 250]] });
   const calls = fakeShopify(e, [], { variants, variantPage: 2 });
@@ -1183,13 +1186,13 @@ test('الستوك من أبليكيشن شوبيفاي: حي، بيكسب ال�
   e.c.setupAll();
   e.c.liveTick();
   const reads = () => calls.filter(x => /productVariants\(/.test(String((x.p || {}).payload))).length;
-  assert.equal(reads(), 3, '5 أنواع، 2 في الصفحة');
+  assert.equal(reads(), 3, '6 أنواع، 2 في الصفحة');
   const sh = e.ss.getSheetByName('Shopify Stock');
   assert.ok(sh && sh.hidden, 'تاب مخفي');
-  assert.equal(sh.getDataRange().getValues().length - 1, 4, 'Gift Card مابيتتبعش ستوكه');
+  assert.equal(sh.getDataRange().getValues().length - 1, 4, 'Gift Card مابيتتبعش ستوكه، والمنتج المؤرشف مش محسوب');
   const s = e.c.stockByName_();
-  assert.deepEqual([s.by['Lip Oil'], s.by.Blush, s.by.Serum, s.by['Old Mask'], s.by['Gift Card']], [7, 3, 0, 4, undefined],
-    'الأبليكيشن بيكسب الفلو والصورة، والنوع اللي تحت الصفر = 0، واللي مش في شوبيفاي من الصورة');
+  assert.deepEqual([s.by['Lip Oil'], s.by.Blush, s.by.Serum, s.by['Old Mask'], s.by['Gift Card']], [7, 3, 0, undefined, undefined],
+    'الأبليكيشن بيكسب الفلو والصورة، والنوع اللي تحت الصفر = 0، واللي مش في شوبيفاي مالوش ستوك (الصورة الثابتة مابتتاخدش)');
   assert.match(s.status, /^✓ ستوك حي من أبليكيشن شوبيفاي: 3 منتج، آخر قراية \d{4}-\d\d-\d\d \d\d:\d\d$/);
   assert.equal(s.at, e.doc.STOCK_APP_AT);
   const today = e.ss.getSheetByName('Today').getDataRange().getValues().find(r => /^الستوك يكفي كام يوم/.test(String(r[0])));
@@ -1201,6 +1204,7 @@ test('الستوك من أبليكيشن شوبيفاي: حي، بيكسب ال�
   // 📦 بيقرا على طول، والنوع اللي اتمسح من شوبيفاي بيروح
   variants.splice(2, 1);
   variants[0].inventoryQuantity = 5;
+  variants.pop(); // المؤرشف
   let flowReads = 0;
   const readFlow = e.c.readStock_;
   e.c.readStock_ = () => { flowReads++; return readFlow(); };
@@ -1300,6 +1304,44 @@ test('الأوردرات من أبليكيشن شوبيفاي: لو شوبيفا
   assert.deepEqual(raw.map(r => [r[0], r[3], r[8]]), [['gid://shopify/Order/1', 'DIRECT', 'الجيزة']]);
   assert.equal(e.doc.SHOP_ORDERS_NO_ADDR, today, 'مابيسألش تاني لحد بكره');
   assert.match(e.doc.STATUS_SHOP_ORDERS_ADDR, /⚠️ شوبيفاي مابيدّيش الأبليكيشن عنوان الشحن/);
+});
+
+test('الأوردرات من أبليكيشن شوبيفاي: أوردر فيه أكتر من 30 منتج، وغلط عابر في العنوان مابيمسحش المحافظة، والتاب لو اتمسح بيتقري من الأول', () => {
+  const probe = env(), today = probe.c.todayKey_();
+  const big = { id: 'gid://shopify/Order/1', createdAt: today + 'T06:00:00Z', sourceName: 'web', originalTotalPriceSet: { shopMoney: { amount: '9000.0' } },
+    customAttributes: [], lineItems: { nodes: Array.from({ length: 30 }, (_, i) => ({ title: 'P' + i, quantity: 1 })), pageInfo: { hasNextPage: true, endCursor: 'c30' } },
+    customerJourneySummary: { lastVisit: null } };
+  const e = env({ orderHead: FLOW_HEAD.slice(0, 17), orders: [] });
+  const opt = { created: [big], provinces: { 'gid://shopify/Order/1': 'Cairo' } };
+  const calls = fakeShopify(e, [], opt), fetch0 = e.c.UrlFetchApp.fetch;
+  e.c.UrlFetchApp.fetch = (url, p) => {
+    if (/graphql/.test(url) && /order\(id/.test(JSON.parse(p.payload).query)) {
+      calls.push({ url, p });
+      return { getResponseCode: () => 200, getContentText: () => JSON.stringify({ data: { order: { lineItems: {
+        nodes: [{ title: 'P30', quantity: 2 }, { title: 'P31', quantity: 1 }], pageInfo: { hasNextPage: false } } } } }) };
+    }
+    if (opt.addrDown && /graphql/.test(url) && /nodes\(ids/.test(JSON.parse(p.payload).query)) return { getResponseCode: () => 502, getContentText: () => 'Bad gateway' };
+    return fetch0(url, p);
+  };
+  Object.assign(e.user, { SHOPIFY_TOKEN: 'TOKEN1', SHOPIFY_TOKEN_EXP: String(Date.now() + 3600000) });
+  e.c.setupAll(); e.c.liveTick();
+  const row = () => e.ss.getSheetByName('Shopify Orders').getDataRange().getValues()[1];
+  assert.equal(row()[3].split(' | ').length, 32, 'كل المنتجات الـ 32');
+  assert.match(row()[3], /P30 x2 \| P31 x1$/);
+  assert.equal(row()[16], 'Cairo');
+  // الطلب الجاي العنوان وقع (502): المحافظة اللي اتقرت بتفضل، وبيسأل تاني المرة الجاية
+  opt.addrDown = true;
+  e.c.liveTick();
+  assert.equal(row()[16], 'Cairo');
+  assert.equal(e.doc.SHOP_ORDERS_NO_ADDR, undefined);
+  assert.match(e.doc.STATUS_SHOP_ORDERS_ADDR, /هيتقري تاني/);
+  // التاب اتمسح: بيتقري من أول الأرشيف تاني
+  const t0 = e.ss.getSheetByName('Shopify Orders');
+  t0.getRange(2, 1, t0.getLastRow() - 1, 17).clearContent(); // التاب اتفضى
+  e.c.liveTick();
+  const q = calls.filter(x => /"q":"created_at/.test(String((x.p || {}).payload))).pop();
+  assert.match(q.p.payload, /2026-10-13T09:00:00Z/);
+  assert.equal(e.ss.getSheetByName('Shopify Orders').getDataRange().getValues().length, 2);
 });
 
 test('الأوردرات من أبليكيشن شوبيفاي: لو القراية الأولى ماخلصتش أو شوبيفاي رفض، الأوردرات بتفضل من شيت الفلو', () => {

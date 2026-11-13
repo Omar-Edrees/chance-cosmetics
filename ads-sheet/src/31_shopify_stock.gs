@@ -3,13 +3,13 @@
  * Every variant → the hidden tab "Shopify Stock" (one row per variant). A read goes page by page (250 variants a page); if the
  * update runs out of time, the next one goes on from the saved page. When a read ends, variants it didn't see (deleted) go.
  * stockByName_ (10_stock.gs) reads the tab, so onEdit (no permission to call Shopify) shows the last read too.
- * Products that don't track stock in Shopify are left out: their stock means nothing.
+ * Products that don't track stock in Shopify, and archived ones, are left out.
  */
 const STOCK_APP = {
   TAB: 'Shopify Stock', HEADERS: ['Variant ID', 'Handle', 'Product', 'Stock', 'Read', 'Price'], EVERY_MIN: 30, PAGES: 40,
   CURSOR: 'STOCK_APP_CURSOR', READ: 'STOCK_APP_READ', DONE: 'STOCK_APP_DONE', AT: 'STOCK_APP_AT', SEEN: 'STOCK_APP_SEEN',
   QUERY: 'query($after:String){productVariants(first:250,after:$after){pageInfo{hasNextPage endCursor} ' +
-    'nodes{id inventoryQuantity price product{handle title tracksInventory}}}}'
+    'nodes{id inventoryQuantity price product{handle title tracksInventory status}}}}'
 };
 
 /* force = read now even if the last read is fresh (📦). Returns the variants read in this run. Errors go to Health. */
@@ -18,7 +18,8 @@ function syncShopifyStock_(force) {
   const props = PropertiesService.getDocumentProperties(), now = Date.now();
   let after = props.getProperty(STOCK_APP.CURSOR) || null, read = props.getProperty(STOCK_APP.READ) || '';
   if (!after && !force && now - Number(props.getProperty(STOCK_APP.DONE) || 0) < STOCK_APP.EVERY_MIN * 60000) return 0;
-  if (!after || force) { after = null; read = String(now); props.setProperty(STOCK_APP.SEEN, '0'); }
+  // 📦 (force) doesn't restart a read that's still going: it carries it on, so two runs never drop each other's variants.
+  if (!after) { read = String(now); props.setProperty(STOCK_APP.SEEN, '0'); }
   const rows = [];
   let seen = Number(props.getProperty(STOCK_APP.SEEN) || 0);
   let more = true, pages = 0;
@@ -28,7 +29,7 @@ function syncShopifyStock_(force) {
       seen += res.nodes.length;
       res.nodes.forEach(v => {
         const p = v.product || {};
-        if (p.tracksInventory === false || !p.handle) return;
+        if (p.tracksInventory === false || p.status === 'ARCHIVED' || !p.handle) return; // archived: off the store, its leftovers aren't stock
         rows.push([v.id, String(p.handle).toLowerCase(), p.title || '', num_(v.inventoryQuantity), read, v.price === null || v.price === undefined ? '' : num_(v.price)]);
       });
       more = res.pageInfo.hasNextPage; after = res.pageInfo.endCursor; pages++;
