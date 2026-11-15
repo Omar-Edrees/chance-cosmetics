@@ -3,13 +3,15 @@
  * Order of evidence: Override (you) > LINK (landing page) > CODE (exact code in names)
  * > TEXT (the product's full name in the ad's own text, when the link can't be read: ads made from a page post)
  * > KEYWORD (suggestion, ⚠️) > NONE (❌, spend stays unmapped). Never a default product.
+ * The campaign's choice in the Campaign Map tab (33_campaign_map.gs) goes to all its ads and wins over all of these;
+ * only an ad's own Override wins over it.
  * Orders never move spend.
  */
 const ADMAP_HEADERS = ['Ad ID', 'Platform', 'Account ID', 'Account', 'Campaign', 'Ad set', 'Ad', 'Landing URLs',
   'Auto product', 'Source', 'Override', 'Final product', 'Status', 'Confirmed at', 'Confirmed value',
-  'Link changed', 'Mapped link', 'Spend MTD', 'Last spend', 'Note', 'Ad text'];
+  'Link changed', 'Mapped link', 'Spend MTD', 'Last spend', 'Note', 'Ad text', 'Campaign ID', 'Campaign choice'];
 const AM = { ID: 0, PLAT: 1, ACC: 2, ACCN: 3, CAMP: 4, SET: 5, AD: 6, LINKS: 7, AUTO: 8, SRC: 9, OVR: 10, FINAL: 11,
-  STATUS: 12, CONF_AT: 13, CONF_VAL: 14, CHANGED: 15, MAPPED: 16, SPEND: 17, LAST: 18, NOTE: 19, TEXT: 20 };
+  STATUS: 12, CONF_AT: 13, CONF_VAL: 14, CHANGED: 15, MAPPED: 16, SPEND: 17, LAST: 18, NOTE: 19, TEXT: 20, CAMP_ID: 21, CHOICE: 22 };
 
 /* Ads without an ID (some TikTok exports) get a stable key from their names. */
 function adKey_(platform, adId, camp, set, ad) {
@@ -151,8 +153,11 @@ function adMapPlan_(freshAds, tiktokLinks, recheckAll) {
     if (String(r[AM.CAMP]) !== String(a[5]) || String(r[AM.SET]) !== String(a[7]) || String(r[AM.AD]) !== String(a[9]) ||
       !r[AM.LAST] || asKey_(r[AM.LAST]) < a[0]) needed = true;
   });
+  const picked = campChoicesFromTab_();
   rows.forEach(r => {
     if (String(r[AM.OVR] || '').trim() !== String(r[AM.CONF_VAL] || '')) needed = true;
+    const k = campKey_(r[AM.PLAT], r[AM.CAMP_ID], r[AM.CAMP]);
+    if (picked.has(k) && picked.get(k) !== String(r[AM.CHOICE] || '')) needed = true;
     if (r[AM.PLAT] === 'META' && r[AM.ID] && (!r[AM.LINKS] || needsText_(r) || (recheckAll && asKey_(r[AM.LAST]) >= weekAgo))) { needed = true; ids.add(String(r[AM.ID])); }
     if (r[AM.PLAT] === 'TIKTOK' && tiktokLinks && tiktokLinks[r[AM.ID]] && tiktokLinks[r[AM.ID]] !== r[AM.LINKS]) needed = true;
   });
@@ -193,6 +198,7 @@ function refreshAdMap_(freshAds, tiktokLinks, recheckAll, links) {
     let r = byKey.get(key);
     if (!r) { r = new Array(W).fill(''); r[AM.ID] = String(a[8] || ''); r[AM.PLAT] = a[1]; byKey.set(key, r); r._new = true; }
     r[AM.ACC] = String(a[2]); r[AM.ACCN] = a[3]; r[AM.CAMP] = a[5]; r[AM.SET] = a[7]; r[AM.AD] = a[9];
+    if (a[4]) r[AM.CAMP_ID] = String(a[4]);
     if (!r[AM.LAST] || asKey_(r[AM.LAST]) < a[0]) r[AM.LAST] = a[0];
   });
 
@@ -222,6 +228,16 @@ function refreshAdMap_(freshAds, tiktokLinks, recheckAll, links) {
     spend[k] = (spend[k] || 0) + num_(a[10]);
   });
 
+  // Campaign of each ad (rows from before the Campaign ID column): from Ads Raw.
+  if (Array.from(byKey.values()).some(r => !r[AM.CAMP_ID])) {
+    const campOf = new Map();
+    rawRows_(APP.T.ADS, ADS_HEADERS.length).forEach(a => { if (a[4]) campOf.set(adKey_(a[1], String(a[8] || ''), a[5], a[7], a[9]), String(a[4])); });
+    byKey.forEach((r, key) => { if (!r[AM.CAMP_ID] && campOf.has(key)) r[AM.CAMP_ID] = campOf.get(key); });
+  }
+  // The Campaign Map tab: a campaign's choice (or an emptied one) → every ad of that campaign.
+  const picked = campChoicesFromTab_();
+  byKey.forEach(r => { const k = campKey_(r[AM.PLAT], r[AM.CAMP_ID], r[AM.CAMP]); if (picked.has(k)) r[AM.CHOICE] = picked.get(k); });
+
   // Product pages not in Products yet: add them from the store (Shopify title), then decide.
   const known = new Set();
   products_().forEach(p => p.slugs.forEach(s => known.add(s)));
@@ -246,10 +262,12 @@ function refreshAdMap_(freshAds, tiktokLinks, recheckAll, links) {
     if (!r[AM.MAPPED] && (ovr || d.source === 'LINK' || d.source === 'CODE' || d.source === 'TEXT')) r[AM.MAPPED] = linkSig;
     const changed = !!r[AM.MAPPED] && !!linkSig && r[AM.MAPPED] !== linkSig;
     r[AM.CHANGED] = changed;
-    const useOvr = ovr && valid.has(ovr);
-    r[AM.FINAL] = useOvr ? (ovr === 'MULTI' ? APP.MULTI : ovr)
+    const useOvr = ovr && valid.has(ovr), camp = useOvr ? null : campChoice_(r[AM.CHOICE]);
+    if (camp && !r[AM.MAPPED]) r[AM.MAPPED] = linkSig;
+    r[AM.FINAL] = useOvr ? (ovr === 'MULTI' ? APP.MULTI : ovr) : camp ? camp
       : d.source === 'MULTI' ? APP.MULTI : d.product || APP.UNMAPPED;
-    r[AM.STATUS] = changed ? '⚠️' : useOvr ? '✅' : (d.source === 'LINK' || d.source === 'CODE' || d.source === 'TEXT') ? '✅'
+    if (camp) r[AM.NOTE] = 'من Campaign Map' + (r[AM.NOTE] ? ' — ' + r[AM.NOTE] : '');
+    r[AM.STATUS] = changed ? '⚠️' : useOvr || camp ? '✅' : (d.source === 'LINK' || d.source === 'CODE' || d.source === 'TEXT') ? '✅'
       : (d.source === 'KEYWORD' || d.source === 'MULTI') ? '⚠️' : '❌';
     r[AM.SPEND] = round2_(spend[key] || 0);
   });
@@ -258,7 +276,7 @@ function refreshAdMap_(freshAds, tiktokLinks, recheckAll, links) {
   const order = { '❌': 0, '⚠️': 1, '✅': 2 }, out = Array.from(byKey.values())
     .sort((a, b) => (order[a[AM.STATUS]] - order[b[AM.STATUS]]) || (num_(b[AM.SPEND]) - num_(a[AM.SPEND])))
     .map(r => r.slice(0, W));
-  if (!writeRows_(sh, out, W, [1, 3, 4, 5, 6, 7, 15, 17, 19, 21])) return out.length; // same as before: nothing to redraw
+  if (!writeRows_(sh, out, W, [1, 3, 4, 5, 6, 7, 15, 17, 19, 21, 22, 23])) return out.length; // same as before: nothing to redraw
   ADMAP_CHANGED_ = true;
   const n = Math.max(out.length, 1);
   sh.getRange(2, AM.OVR + 1, n, 1).setDataValidation(SpreadsheetApp.newDataValidation()

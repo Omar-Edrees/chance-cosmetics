@@ -29,7 +29,7 @@ function chanceLive_() {
   try { refreshActive_(); } catch (e) { setStatus_('ACTIVE', '✗ ' + errText_(e)); }
   try { refreshBalances_(); } catch (e) { setStatus_('BALANCE', '✗ ' + errText_(e)); }
 }
-function chanceViews_(slow) { writeCatalogTab_(); writeGovTab_(); if (slow) { writeProductsTab_(); writeAccountsBE_(); writeTopTab_(); } }
+function chanceViews_(slow) { writeCatalogTab_(); writeGovTab_(); writeCampaignMap_(); if (slow) { writeProductsTab_(); writeAccountsBE_(); writeTopTab_(); } }
 function chanceEdit_(name, a1) {
   if (name === X.PRODUCTS && (a1 === 'B2' || a1 === 'B3')) writeProductsTab_();
   if (name === X.ACC_BE && a1 === 'B2') writeAccountsBE_();
@@ -51,7 +51,7 @@ function refreshProductsNow() {
  * menu: [label, functionName]. */
 const EXT = {
   views: [slow => chanceViews_(slow), () => writeShopTab_()],
-  edit: [(name, a1) => chanceEdit_(name, a1)],
+  edit: [(name, a1) => chanceEdit_(name, a1), (name, a1) => campaignMapEdit_(name, a1)],
   setup: [() => chanceSetup_()],
   live: [() => syncShopifyStatus_(), () => checkShopifyOrders_(), () => syncShopifyStock_(false), () => refreshAccountNames_(), () => discoverAccounts_(), () => chanceLive_(), () => refreshTodayFunnel_(), () => refreshFunnel_(false),
     () => refreshShopTab_(false)],

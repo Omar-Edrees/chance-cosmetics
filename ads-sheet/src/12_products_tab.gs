@@ -40,6 +40,8 @@ function writeProductsTab_() {
   });
 
   const special = [APP.MULTI, APP.UNMAPPED, APP.UNKNOWN_PRODUCT];
+  // Spend on a name that's no product (CATALOG, a page or category named in the Campaign Map): at the bottom, like MULTI.
+  Object.keys(sum.byProduct).forEach(n => { if (special.indexOf(n) < 0 && !prods.some(x => x.name === n) && stockOf[n] === undefined && !units[n]) special.push(n); });
   const names = new Set(prods.map(x => x.name).concat(Object.keys(units), Object.keys(stockOf),
     Object.keys(sum.byProduct).filter(n => special.indexOf(n) < 0)));
   const z = { spend: 0, notExact: 0, orders: 0, revenue: 0 };

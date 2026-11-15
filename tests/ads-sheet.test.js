@@ -1575,3 +1575,69 @@ test('الأوردرات من أبليكيشن شوبيفاي: القطع الل
   assert.match(e.ss.getSheetByName('Health').getDataRange().getValues().map(r => r.join(' ')).join('\n'), /الأوردرات اللي اتعدلت في شوبيفاي .*✓ 1 أوردر اتعدل في شوبيفاي/);
   assert.equal(e.doc.SHOP_ORDERS_EDITED, undefined, 'الطابور فضي');
 });
+
+test('Campaign Map: كامبينات الشهر ده بس، اللي مش معروفة الأول، والاختيار بيتطبق على كل إعلانات الكامبين والأيام اللي فاتت، والتحذير في Today', () => {
+  const probe = env(), today = probe.c.todayKey_(), m0 = today.slice(0, 8) + '01', lastMonth = probe.c.shiftKey_(m0, -3), B = '(blank)';
+  const ad = (date, adId, spend, campId, camp) => Object.assign(adRow(date, adId, spend), { campaign_id: campId, campaign_name: camp });
+  const flow = (id, products, adId) => ['gid://shopify/Order/' + id, ' #' + id, ' N', B, 400, ' ' + today + 'T10:00:00+03:00',
+    B, B, B, B, B, 'facebook', 'x', adId, 'Facebook', products, '4655075'];
+  const e = env({ orderHead: FLOW_HEAD,
+    ads: { [A1]: [ad(today, '111', 300, 'C1', 'Lip Oil | Testing'), ad(today, '1200000000222', 200, 'C2', 'Home Wear | Testing'),
+      ad(today, '1200000000333', 150, 'C3', 'Flash Sale'), ad(m0, '334', 50, 'C3', 'Flash Sale'), ad(lastMonth, '999', 70, 'C9', 'Old Campaign')] },
+    creatives: { 111: 'https://chance-cosmetics.com/products/lip-oil', 1200000000222: 'https://chance-cosmetics.com/collections/cloths?sort_by=manual',
+      1200000000333: 'https://chance-cosmetics.com/ar/pages/flash-sale', 334: 'https://chance-cosmetics.com/ar/pages/flash-sale', 999: 'https://chance-cosmetics.com/pages/old' },
+    activeAds: { [A1]: ['111', '1200000000222', '1200000000333'] },
+    stock: [['P1', 'V1', 'Lip Oil', 'Default Title', 'LO', 'lip-oil', 40, 300]],
+    orders: [flow(1, 'Lip Oil x1', '1200000000222'), flow(2, 'Lip Oil x1', '1200000000333')] });
+  e.c.setupAll();
+  const st = e.ss.getSheetByName('Settings'), keys = st.getDataRange().getValues().map(r => r[0]);
+  st.getRange(keys.indexOf('business.store_domains') + 1, 2).setValue('chance-cosmetics.com');
+  e.c.liveTick(); e.c.liveTick();
+  const tab = () => e.ss.getSheetByName('Campaign Map').getDataRange().getValues();
+  let v = tab();
+  assert.deepEqual(v[3], ['الحالة', 'الكامبين', 'الحساب', 'إعلانات شغالة دلوقتي', 'صرف النهارده', 'صرف الشهر', 'رايحة فين', 'الشيت شايفها تبع', 'تبع إيه؟ (اختار أو اكتب)', 'Campaign ID']);
+  const rows = v.slice(4).filter(r => r[9]);
+  // الشهر ده بس (Old Campaign مش موجودة)، ومش المعروفة الأول
+  assert.deepEqual(rows.map(r => [r[0], r[1], r[5], r[6], r[7]]), [
+    ['❌', 'Flash Sale', 200, 'pages/flash-sale', '❌ مش معروف'],
+    ['⚠️', 'Home Wear | Testing', 200, 'collections/cloths', 'صفحة فيها كذا منتج'],
+    ['✅', 'Lip Oil | Testing', 300, 'products/lip-oil', 'Lip Oil']]);
+  assert.match(v[2][0], /❌ 1 .*⚠️ 1 .*✅ 1/);
+  assert.equal(e.ss.getSheetByName('Ad Map').hidden, true, 'تاب الإعلانات اتخبت');
+  // التحذير في Today تحت جدول الستوك
+  let today1 = e.ss.getSheetByName('Today').getDataRange().getValues().map(r => String(r[0]));
+  const w = today1.findIndex(x => /^⚠️ 2 كامبين شغالة مش مربوطة بمنتج، صرفت النهارده 350 جنيه/.test(x));
+  assert.ok(w > today1.findIndex(x => /^الستوك يكفي كام يوم/.test(x)), 'تحت جدول الستوك');
+  assert.deepEqual(today1.slice(w + 1, w + 3), ['❌ مش معروفة: Flash Sale  ←  pages/flash-sale', '⚠️ محتاجة اسم: Home Wear | Testing  ←  collections/cloths']);
+  // اختيار: Flash Sale = Lip Oil (مكتوب small)، و Home Wear = اسم صفحة
+  const at = name => 5 + rows.findIndex(r => r[1] === name);
+  const sh = e.ss.getSheetByName('Campaign Map');
+  sh.getRange(at('Flash Sale'), 9).setValue('lip oil');
+  sh.getRange(at('Home Wear | Testing'), 9).setValue('Home Wear');
+  e.c.onEdit({ range: { getSheet: () => sh, getA1Notation: () => 'I' + at('Flash Sale') } });
+  assert.equal(sh.getRange(at('Flash Sale'), 1).getValue(), '⏳');
+  e.c.liveTick();
+  v = tab();
+  const r2 = v.slice(4).filter(r => r[9]);
+  assert.ok(r2.every(r => r[0] === '✅'));
+  assert.deepEqual(r2.filter(r => r[8]).map(r => [r[1], r[8]]).sort(), [['Flash Sale', 'lip oil'], ['Home Wear | Testing', 'Home Wear']], 'اللي اتكتب فضل زي ما هو');
+  const map = e.ss.getSheetByName('Ad Map').getDataRange().getValues(), row = id => map.find(r => r[0] === id);
+  assert.deepEqual([row('1200000000333')[11], row('334')[11], row('1200000000333')[12], row('1200000000222')[11]], ['Lip Oil', 'Lip Oil', '✅', 'Home Wear']);
+  // الصرف والأوردرات على المنتج أو الاسم، والأيام اللي فاتت كمان
+  const spend = (n, d) => e.c.dailyRows_().filter(r => r[0] === d && r[1] === 'META' && r[2] === n).reduce((a, r) => a + r[3], 0);
+  const orders = n => e.c.dailyRows_().filter(r => r[0] === today && r[1] === 'META' && r[2] === n).reduce((a, r) => a + r[8], 0);
+  assert.equal(spend('Lip Oil', today), 450);
+  if (m0 !== today) assert.equal(spend('Lip Oil', m0), 50);
+  assert.equal(spend('Home Wear', today), 200);
+  assert.deepEqual([orders('Home Wear'), orders('Lip Oil')], [1, 1]);
+  today1 = e.ss.getSheetByName('Today').getDataRange().getValues().map(r => String(r[0]));
+  assert.ok(today1.some(x => /^✅ كل الكامبينات الشغالة مربوطة بمنتجاتها/.test(x)));
+  // Home Wear مش منتج: مش في جدول الستوك
+  const i = today1.indexOf('منتجات عليها إعلانات شغالة');
+  assert.equal(today1[i + 1], 'Lip Oil');
+  assert.notEqual(today1[i + 2], 'Home Wear');
+  // تفريغ الخانة بيشيل الاختيار
+  sh.getRange(5 + r2.findIndex(r => r[1] === 'Home Wear | Testing'), 9).setValue('');
+  e.c.liveTick();
+  assert.equal(e.ss.getSheetByName('Ad Map').getDataRange().getValues().find(r => r[0] === '1200000000222')[11], 'صفحة كل المنتجات (MULTI)');
+});

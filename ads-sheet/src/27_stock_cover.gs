@@ -23,7 +23,9 @@ function todayStockCover_(g, r, today) {
   const rank = n => (days(n) === null ? 2e9 : days(n) === Infinity ? 1e9 : days(n));
   const byDays = (a, b) => (rank(a) - rank(b)) || (perDay(b) - perDay(a)) || (a < b ? -1 : 1);
   const names = Object.keys(Object.assign({}, active, sold)).filter(n => special.indexOf(n) < 0);
-  const withAds = names.filter(n => (active[n] || 0) > 0).sort(byDays);
+  // A campaign named after a page or category in the Campaign Map (Home Wear …) isn't a product: no stock to show.
+  const prods = new Set(products_().map(p => p.name));
+  const withAds = names.filter(n => (active[n] || 0) > 0 && (prods.has(n) || stock[n] !== undefined)).sort(byDays);
   const noAds = names.filter(n => !(active[n] > 0) && perDay(n) >= COVER.MIN_PER_DAY && days(n) !== null && days(n) > 0 &&
     days(n) <= COVER.RED).sort(byDays);
 
