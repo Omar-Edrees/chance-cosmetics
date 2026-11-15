@@ -11,7 +11,7 @@
  * Ad accounts and stores are read-only from here: no writes to Meta, TikTok or order sources.
  */
 const APP = {
-  VERSION: '1.52.0',
+  VERSION: '1.53.0',
   T: {
     SETTINGS: 'Settings', ACCOUNTS: 'Accounts', PRODUCTS: 'Products', ADMAP: 'Ad Map',
     ADS: 'Ads Raw', ACC_RAW: 'Account Raw', ORDERS: 'Orders Raw', DAILY: 'Daily Log',
@@ -426,7 +426,7 @@ function errText_(e) {
   const t = String(e && e.message ? e.message : e), tok = PropertiesService.getUserProperties().getProperty('META_TOKEN');
   return tok ? t.split(tok).join('[مخفي]') : t;
 }
-function resetCaches_() { CFG_ = null; PRODUCTS_ = null; KNOWN_PRODUCTS_ = null; RAW_ = {}; }
+function resetCaches_() { CFG_ = null; PRODUCTS_ = null; KNOWN_PRODUCTS_ = null; RAW_ = {}; PAGE_NAMES_ = null; }
 
 /* ======== 02_meta.gs ======== */
 /* Meta Graph API, read-only. Token is pasted once from the menu and kept in User Properties. */
@@ -684,6 +684,7 @@ function syncAds_(since, until, quick) {
 /*
  * Ad Map: the product of every ad, decided once per ad ID from hard evidence.
  * Order of evidence: Override (you) > LINK (landing page) > CODE (exact code in names)
+ * PAGE (a page you named in the Campaign Map's pages table: every store link of the ad goes to it) comes first.
  * > TEXT (the product's full name in the ad's own text, when the link can't be read: ads made from a page post)
  * > KEYWORD (suggestion, ⚠️) > NONE (❌, spend stays unmapped). Never a default product.
  * The campaign's choice in the Campaign Map tab (33_campaign_map.gs) goes to all its ads and wins over all of these;
@@ -767,6 +768,9 @@ function parseStoreLinks_(links) {
 }
 
 function decideProduct_(links, camp, set, ad, adText) {
+  const named = pageNames_(), keys = Array.from(new Set(links.map(pageKeyOf_).filter(Boolean)));
+  if (keys.length && keys.every(k => named[k]) && new Set(keys.map(k => named[k])).size === 1)
+    return { product: named[keys[0]], source: 'PAGE', note: 'من اسم الصفحة في ' + CMAP.TAB };
   const prods = products_(), parsed = parseStoreLinks_(links);
   const pages = parsed.slugs.concat(parsed.paths);
   if (pages.length) {
@@ -827,7 +831,7 @@ function fetchMetaLinks_(adIds) {
  */
 function adMapPlan_(freshAds, tiktokLinks, recheckAll) {
   const rows = rawRows_(APP.T.ADMAP, ADMAP_HEADERS.length), byKey = new Map(), ids = new Set(), weekAgo = shiftKey_(todayKey_(), -7);
-  let needed = !!recheckAll;
+  let needed = !!recheckAll || sha_(JSON.stringify(pageNames_())) !== PropertiesService.getDocumentProperties().getProperty('PAGE_NAMES_APPLIED');
   rows.forEach(r => byKey.set(adKey_(r[AM.PLAT], String(r[AM.ID]), r[AM.CAMP], r[AM.SET], r[AM.AD]), r));
   freshAds.forEach(a => {
     if (num_(a[10]) <= 0 && num_(a[11]) <= 0) return;
@@ -870,6 +874,8 @@ function updateAdMap_(freshAds, tiktokLinks, recheckAll) {
  */
 let ADMAP_CHANGED_ = false;
 function refreshAdMap_(freshAds, tiktokLinks, recheckAll, links) {
+  PAGE_NAMES_ = null;
+  PropertiesService.getDocumentProperties().setProperty('PAGE_NAMES_APPLIED', sha_(JSON.stringify(pageNames_())));
   const sh = ensureTab_(APP.T.ADMAP, ADMAP_HEADERS), W = ADMAP_HEADERS.length, hr = sh.getRange(1, 1, 1, W);
   if (hr.getValues()[0].join('|') !== ADMAP_HEADERS.join('|')) hr.setValues([ADMAP_HEADERS]); // new columns (older tabs)
   const rows = readRows_(sh, W), byKey = new Map();
@@ -942,7 +948,7 @@ function refreshAdMap_(freshAds, tiktokLinks, recheckAll, links) {
     // A new or changed Override is a confirmation: remember the link it was confirmed against.
     if (ovr && ovr !== String(r[AM.CONF_VAL] || '')) { r[AM.CONF_VAL] = ovr; r[AM.CONF_AT] = nowText_(); r[AM.MAPPED] = linkSig; }
     if (!ovr && r[AM.CONF_VAL]) { r[AM.CONF_VAL] = ''; r[AM.CONF_AT] = ''; }
-    if (!r[AM.MAPPED] && (ovr || d.source === 'LINK' || d.source === 'CODE' || d.source === 'TEXT')) r[AM.MAPPED] = linkSig;
+    if (!r[AM.MAPPED] && (ovr || ['LINK', 'CODE', 'TEXT', 'PAGE'].indexOf(d.source) >= 0)) r[AM.MAPPED] = linkSig;
     const changed = !!r[AM.MAPPED] && !!linkSig && r[AM.MAPPED] !== linkSig;
     r[AM.CHANGED] = changed;
     const useOvr = ovr && valid.has(ovr), camp = useOvr ? null : campChoice_(r[AM.CHOICE]);
@@ -950,7 +956,7 @@ function refreshAdMap_(freshAds, tiktokLinks, recheckAll, links) {
     r[AM.FINAL] = useOvr ? (ovr === 'MULTI' ? APP.MULTI : ovr) : camp ? camp
       : d.source === 'MULTI' ? APP.MULTI : d.product || APP.UNMAPPED;
     if (camp) r[AM.NOTE] = 'من Campaign Map' + (r[AM.NOTE] ? ' — ' + r[AM.NOTE] : '');
-    r[AM.STATUS] = changed ? '⚠️' : useOvr || camp ? '✅' : (d.source === 'LINK' || d.source === 'CODE' || d.source === 'TEXT') ? '✅'
+    r[AM.STATUS] = changed ? '⚠️' : useOvr || camp ? '✅' : ['LINK', 'CODE', 'TEXT', 'PAGE'].indexOf(d.source) >= 0 ? '✅'
       : (d.source === 'KEYWORD' || d.source === 'MULTI') ? '⚠️' : '❌';
     r[AM.SPEND] = round2_(spend[key] || 0);
   });
@@ -981,7 +987,8 @@ function adMapIndex_() {
   rawRows_(APP.T.ADMAP, ADMAP_HEADERS.length).forEach(r => {
     const final = String(r[AM.FINAL] || APP.UNMAPPED);
     idx.set(adKey_(r[AM.PLAT], String(r[AM.ID]), r[AM.CAMP], r[AM.SET], r[AM.AD]),
-      { product: final, exact: r[AM.STATUS] === '✅' && final !== APP.MULTI && final !== APP.UNMAPPED });
+      { product: final, exact: r[AM.STATUS] === '✅' && final !== APP.MULTI && final !== APP.UNMAPPED,
+        chosen: !!String(r[AM.OVR] || '').trim() || !!campChoice_(r[AM.CHOICE]) });
   });
   return idx;
 }
@@ -2370,10 +2377,13 @@ function catalogAdIds_() {
   const sh = ss_().getSheetByName(APP.T.CATALOG), ids = new Set();
   if (!sh) return ids;
   const idx = adMapIndex_(), notOwn = [APP.CATALOG, APP.MULTI, APP.UNMAPPED, APP.UNKNOWN_PRODUCT, APP.META_NO_AD, ''];
+  const prods = new Set(products_().map(p => p.name));
   rawRows_(APP.T.CATALOG, CATALOG_HEADERS.length).forEach(r => {
     if (!r[3]) return;
     const m = idx.get(adKey_(r[1], String(r[3]), '', '', ''));
-    if (!m || notOwn.indexOf(m.product) >= 0) ids.add(r[1] + '|' + String(r[3]));
+    // Its own product page, or a name you gave its campaign / the ad: not catalog. A page named in the pages table isn't
+    // enough (a catalog ad that lands on "Makeup" is still split by product).
+    if (!m || notOwn.indexOf(m.product) >= 0 || (!prods.has(m.product) && !m.chosen)) ids.add(r[1] + '|' + String(r[3]));
   });
   return ids;
 }
@@ -5254,9 +5264,19 @@ function fixEditedOrders_() {
  * The choice goes to every ad of the campaign in the Ad Map (hidden; it keeps the choice after the month ends), past days
  * too, from the next update. Spend and orders of that campaign then count on that product or name everywhere.
  * An ad's own Override in the Ad Map still wins over its campaign's choice.
+ *
+ * On the right, the pages table: every store page (not a product page) this month's ads go to — a collection, a page like
+ * the flash sale, the home page — and the ones you named. Name a page once: every ad that goes to it, now or later, is
+ * that name (Ad Map source PAGE), so a new campaign to the same page needs nothing. A page that isn't there: paste its
+ * link in the first empty row with its name. The names are kept in the document properties (PAGE_NAMES).
+ * The choices offer every Shopify collection's name too (read once a day from the app: SHOP_COLLECTIONS).
+ * Typing in a choice cell filters the list (Google Sheets' own search in a dropdown).
  */
 const CMAP = {
-  TAB: 'Campaign Map', HEAD_ROW: 4, CATALOG_WORD: 'كتالوج', CHOICE_COL: 9, ID_COL: 10,
+  TAB: 'Campaign Map', HEAD_ROW: 4, CATALOG_WORD: 'كتالوج', CHOICE_COL: 9, ID_COL: 10, HOME: 'الصفحة الرئيسية',
+  PAGE_COL: 12, PAGE_HEADERS: ['الصفحة (اللينك)', 'اسمها (اكتب أو اختار)', 'اسمها في شوبيفاي', 'كامبينات الشهر ده', 'صرف الشهر'],
+  COLLECTIONS: 'SHOP_COLLECTIONS', COLLECTIONS_DAY: 'SHOP_COLLECTIONS_DAY',
+  COLLECTIONS_QUERY: 'query($after:String){collections(first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{handle title}}}',
   HEADERS: ['الحالة', 'الكامبين', 'الحساب', 'إعلانات شغالة دلوقتي', 'صرف النهارده', 'صرف الشهر', 'رايحة فين',
     'الشيت شايفها تبع', 'تبع إيه؟ (اختار أو اكتب)', 'Campaign ID']
 };
@@ -5287,16 +5307,85 @@ function campChoicesFromTab_() {
   return out;
 }
 
-/* Short "where it goes" for an ad: the store page's path, a post, or messages. */
+/*
+ * A store link → its page: "collections/makeup", "pages/flash-sale", "products/lip-oil", or the home page. Same page in
+ * Arabic or English (/ar/…), with or without ?…, with or without the domain (typed by hand). Not the store → ''.
+ */
+function pageKeyOf_(raw) {
+  let u = String(raw || '').trim();
+  if (!u || u === '-') return '';
+  try { u = decodeURIComponent(u); } catch (e) { /* as is */ }
+  if (u === CMAP.HOME) return CMAP.HOME;
+  const m = u.match(/^(?:https?:\/\/)?([^\/?#\s]+\.[^\/?#\s]+)([^?#\s]*)/i);
+  let path = m ? m[2] : u.replace(/[?#].*$/, '');
+  if (m) {
+    const host = m[1].toLowerCase().replace(/^www\./, ''), domains = cfgList_('business.store_domains').map(storeHost_).filter(Boolean);
+    if (domains.length ? !domains.some(d => host === d || host.endsWith('.' + d))
+      : /facebook|fb\.com|fb\.me|whatsapp|wa\.me|instagram|messenger|fbcdn|tiktok/i.test(host)) return '';
+  }
+  path = ('/' + path.trim().replace(/^\/+/, '')).toLowerCase().replace(/\/+$/, '').replace(/^\/(ar|en)(?=\/|$)/, '');
+  return path ? path.replace(/^\//, '') : CMAP.HOME;
+}
+
+/* Page → the name you gave it, from the pages table (what's typed there now wins, an emptied name removes it). */
+let PAGE_NAMES_ = null;
+function pageNames_() {
+  if (PAGE_NAMES_) return PAGE_NAMES_;
+  const props = PropertiesService.getDocumentProperties(), sh = ss_().getSheetByName(CMAP.TAB);
+  let names = {};
+  try { names = JSON.parse(props.getProperty('PAGE_NAMES') || '{}'); } catch (e) { names = {}; }
+  const before = JSON.stringify(names);
+  if (sh && sh.getLastRow() > CMAP.HEAD_ROW && sh.getMaxColumns() >= CMAP.PAGE_COL + 1) {
+    sh.getRange(CMAP.HEAD_ROW + 1, CMAP.PAGE_COL, sh.getLastRow() - CMAP.HEAD_ROW, 2).getValues().forEach(r => {
+      const k = pageKeyOf_(r[0]), n = String(r[1] === null ? '' : r[1]).trim();
+      if (!k) return;
+      if (n) names[k] = n; else delete names[k];
+    });
+  }
+  if (JSON.stringify(names) !== before) props.setProperty('PAGE_NAMES', JSON.stringify(names));
+  PAGE_NAMES_ = names;
+  return names;
+}
+
+/* A long text in the document properties (each value is capped at 9 KB): in parts. */
+function propSetBig_(key, text) {
+  const props = PropertiesService.getDocumentProperties(), n = Number(props.getProperty(key + '_N') || 0), parts = [];
+  for (let i = 0; i < text.length; i += 8000) parts.push(text.slice(i, i + 8000));
+  parts.forEach((x, i) => props.setProperty(key + '_' + i, x));
+  for (let i = parts.length; i < n; i++) props.deleteProperty(key + '_' + i);
+  props.setProperty(key + '_N', String(parts.length));
+}
+function propGetBig_(key) {
+  const props = PropertiesService.getDocumentProperties(), n = Number(props.getProperty(key + '_N') || 0);
+  let out = '';
+  for (let i = 0; i < n; i++) out += props.getProperty(key + '_' + i) || '';
+  return out;
+}
+/* EXT.live, once a day: every Shopify collection's handle → name (for the choices and the pages table). */
+function syncShopifyCollections_() {
+  const props = PropertiesService.getDocumentProperties();
+  if (!shopifyProps_().getProperty('SHOPIFY_TOKEN') || props.getProperty(CMAP.COLLECTIONS_DAY) === todayKey_()) return 0;
+  const out = {};
+  let after = null, more = true, pages = 0;
+  try {
+    while (more && pages < 10 && timeLeft_()) {
+      const res = shopifyGql_(CMAP.COLLECTIONS_QUERY, { after: after }).collections;
+      (res.nodes || []).forEach(c => { if (c && c.handle) out[String(c.handle).toLowerCase()] = String(c.title || '').trim(); });
+      more = res.pageInfo.hasNextPage; after = res.pageInfo.endCursor; pages++;
+    }
+  } catch (e) { setStatus_('SHOP_COLLECTIONS', '✗ ' + errText_(e)); return 0; }
+  propSetBig_(CMAP.COLLECTIONS, JSON.stringify(out));
+  props.setProperty(CMAP.COLLECTIONS_DAY, todayKey_());
+  setStatus_('SHOP_COLLECTIONS', '✓ ' + Object.keys(out).length + ' كوليكشن');
+  return Object.keys(out).length;
+}
+function shopCollections_() {
+  try { return JSON.parse(propGetBig_(CMAP.COLLECTIONS) || '{}'); } catch (e) { return {}; }
+}
+
+/* Short "where it goes" for an ad: the store page, a post, or messages. */
 function campLanding_(links, text) {
-  const store = links.map(l => {
-    let u = String(l);
-    try { u = decodeURIComponent(u); } catch (e) { /* as is */ }
-    const m = u.match(/^(?:https?:\/\/)?([^\/?#\s]+)([^?#\s]*)/i);
-    if (!m || /facebook|fb\.com|fb\.me|whatsapp|wa\.me|instagram|messenger|fbcdn/i.test(m[1])) return '';
-    const path = m[2].replace(/\/+$/, '').replace(/^\/(ar|en)(?=\/|$)/, '') || '/';
-    return path === '/' ? 'الصفحة الرئيسية' : path.replace(/^\//, '');
-  }).filter(Boolean);
+  const store = links.map(pageKeyOf_).filter(Boolean);
   if (store.length) return store[0];
   if (links.some(l => /whatsapp|wa\.me|messenger/i.test(l))) return 'رسايل (ماسنجر / واتساب)';
   return text && text !== '-' ? 'بوست (اللينك مش باين للشيت)' : '';
@@ -5310,7 +5399,7 @@ function campaignMapRows_() {
   const today = todayKey_(), month0 = today.slice(0, 8) + '01', camps = new Map(), byAd = new Map(), catRaw = new Set();
   rawRows_(APP.T.ADMAP, ADMAP_HEADERS.length).forEach(r => byAd.set(adKey_(r[AM.PLAT], String(r[AM.ID]), r[AM.CAMP], r[AM.SET], r[AM.AD]), r));
   if (ss_().getSheetByName(APP.T.CATALOG)) recentRows_(APP.T.CATALOG, CATALOG_HEADERS.length, 1, asKey_, month0).forEach(r => { if (r[3]) catRaw.add(r[1] + '|' + String(r[3])); });
-  const prodNames = new Set(products_().map(p => p.name)), running = activeCampaigns_(), picked = campChoicesFromTab_();
+  const prodNames = new Set(products_().map(p => p.name)), running = activeCampaigns_(), picked = campChoicesFromTab_(), pages = {};
   recentRows_(APP.T.ADS, ADS_HEADERS.length, 1, asKey_, month0).forEach(a => {
     const d = asKey_(a[0]), s = num_(a[10]);
     if (!d || d < month0 || s <= 0) return;
@@ -5334,6 +5423,11 @@ function campaignMapRows_() {
     c.seen[own] = (c.seen[own] || 0) + s;
     const w = campLanding_(links, text);
     if (w) c.where[w] = (c.where[w] || 0) + s;
+    // The pages table: store pages that aren't a known product's own page.
+    if (!prodNames.has(own) || r && r[AM.SRC] === 'PAGE') Array.from(new Set(links.map(pageKeyOf_).filter(Boolean))).forEach(k => {
+      const pg = pages[k] = pages[k] || { spend: 0, camps: new Set() };
+      pg.spend += s; pg.camps.add(key);
+    });
   });
   const top = o => Object.keys(o).sort((x, y) => o[y] - o[x]);
   const label = n => (n === APP.UNMAPPED ? '❌ مش معروف' : n === APP.MULTI ? 'صفحة فيها كذا منتج' : n === APP.CATALOG ? CMAP.CATALOG_WORD : n);
@@ -5348,11 +5442,15 @@ function campaignMapRows_() {
       seen: seen.slice(0, 3).map(n => label(n) + pct(n)).join(' + ') + (seen.length > 3 ? ' + …' : '') };
   });
   const order = { '❌': 0, '⚠️': 1, '✅': 2 };
-  return out.sort((a, b) => (order[a.status] - order[b.status]) || ((b.active > 0) - (a.active > 0)) || (b.today - a.today) || (b.month - a.month));
+  out.sort((a, b) => (order[a.status] - order[b.status]) || ((b.active > 0) - (a.active > 0)) || (b.today - a.today) || (b.month - a.month));
+  out.pages = pages;
+  return out;
 }
 
 /* EXT.views: the tab, drawn again with every update. The yellow cells keep what was typed in them. */
 function writeCampaignMap_() {
+  PAGE_NAMES_ = null;
+  const named = pageNames_(); // what's typed in the pages table, kept before the tab is drawn again
   const rows = campaignMapRows_(), sh = ensureTab_(CMAP.TAB), W = CMAP.HEADERS.length, today = todayKey_();
   const p = today.split('-').map(Number), month = Utilities.formatDate(new Date(Date.UTC(p[0], p[1] - 1, p[2], 12)), 'UTC', 'MMMM yyyy');
   const n = s => rows.filter(x => x.status === s).length;
@@ -5376,11 +5474,16 @@ function writeCampaignMap_() {
   sh.getRange(2, 1).setFontColor('#374151');
   sh.getRange(3, 1).setFontWeight('bold');
   sh.getRange(CMAP.HEAD_ROW, 1, 1, W).setFontWeight('bold').setBackground('#1f2937').setFontColor('#ffffff');
+  // The choices: catalog, the names you gave (pages and campaigns), every Shopify collection, every product.
+  const coll = shopCollections_(), prodList = products_().map(p => p.name).sort((a, b) => a.localeCompare(b));
+  const groups = Object.keys(named).map(k => named[k]).concat(rows.map(x => campChoice_(x.choice)))
+    .filter(c => c && c !== APP.CATALOG && prodList.indexOf(c) < 0);
+  const titles = Object.keys(coll).map(h => coll[h]).filter(Boolean).sort((a, b) => a.localeCompare(b));
+  const list = Array.from(new Set([CMAP.CATALOG_WORD].concat(groups.sort((a, b) => a.localeCompare(b)), titles, prodList))).slice(0, 500);
   if (body.length) {
     const choice = sh.getRange(CMAP.HEAD_ROW + 1, CMAP.CHOICE_COL, body.length, 1);
-    const groups = Array.from(new Set(rows.map(x => campChoice_(x.choice)).filter(c => c && c !== APP.CATALOG && !products_().some(p => p.name === c))));
     choice.setBackground('#fff2cc').setDataValidation(SpreadsheetApp.newDataValidation()
-      .requireValueInList([CMAP.CATALOG_WORD].concat(groups, products_().map(p => p.name)).slice(0, 500), true).setAllowInvalid(true).build());
+      .requireValueInList(list, true).setAllowInvalid(true).build());
     sh.getRange(CMAP.HEAD_ROW + 1, CMAP.ID_COL, body.length, 1).setFontColor('#9ca3af');
     const st = sh.getRange(CMAP.HEAD_ROW + 1, 1, body.length, 1);
     sh.setConditionalFormatRules([
@@ -5388,20 +5491,53 @@ function writeCampaignMap_() {
       SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo('⚠️').setBackground('#fff4ce').setRanges([st]).build(),
       SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo('✅').setBackground('#d9ead3').setRanges([st]).build()]);
   }
+  writePagesTable_(sh, rows.pages, named, coll, list.filter(x => x !== CMAP.CATALOG_WORD && prodList.indexOf(x) < 0));
   sh.setFrozenRows(CMAP.HEAD_ROW);
-  [[1, 60], [2, 360], [3, 150], [4, 90], [5, 100], [6, 100], [7, 200], [8, 260], [9, 280], [10, 150]].forEach(w => sh.setColumnWidth(w[0], w[1]));
+  [[1, 60], [2, 360], [3, 150], [4, 90], [5, 100], [6, 100], [7, 200], [8, 260], [9, 280], [10, 150], [11, 24], [12, 260], [13, 220],
+    [14, 180], [15, 110], [16, 100]].forEach(w => sh.setColumnWidth(w[0], w[1]));
   // The engine's ad-by-ad tab: hidden once (you can show it again; it stays as you leave it).
   const props = PropertiesService.getDocumentProperties(), am = ss_().getSheetByName(APP.T.ADMAP);
   if (am && !props.getProperty('ADMAP_HIDDEN_V1')) { try { am.hideSheet(); } catch (e) { /* مش مهم */ } props.setProperty('ADMAP_HIDDEN_V1', '1'); }
 }
 
-/* onEdit: a choice typed in the yellow column → its row says it's waiting for the next update. */
+/*
+ * The pages table (L:P): pages without a name first (by spend), then the named ones. Empty rows under it to add a page.
+ */
+function writePagesTable_(sh, seen, named, coll, nameList) {
+  const C = CMAP.PAGE_COL, W = CMAP.PAGE_HEADERS.length, keys = Array.from(new Set(Object.keys(seen || {}).concat(Object.keys(named))));
+  const spend = k => (seen[k] ? seen[k].spend : 0);
+  keys.sort((a, b) => ((named[a] ? 1 : 0) - (named[b] ? 1 : 0)) || (spend(b) - spend(a)) || (a < b ? -1 : 1));
+  const shopName = k => { const m = k.match(/^collections\/([^\/]+)/); return m && coll[m[1]] ? coll[m[1]] : ''; };
+  const body = keys.map(k => [k, named[k] || '', shopName(k), seen[k] ? seen[k].camps.size : '', seen[k] ? round2_(seen[k].spend) : '']);
+  const blank = 10, all = [['الصفحات اللي الإعلانات رايحة لها'].concat(new Array(W - 1).fill('')),
+    ['سمّي الصفحة مرة واحدة: أي كامبين رايحة لها (دلوقتي أو بعدين) هتتربط بالاسم ده. صفحة مش هنا؟ الصق لينكها في أول سطر فاضي واكتب اسمها جنبه.']
+      .concat(new Array(W - 1).fill('')),
+    new Array(W).fill(''), CMAP.PAGE_HEADERS.slice()].concat(body, Array.from({ length: blank }, () => new Array(W).fill('')));
+  if (sh.getMaxColumns() < C + W - 1) sh.insertColumnsAfter(sh.getMaxColumns(), C + W - 1 - sh.getMaxColumns());
+  if (all.length > sh.getMaxRows()) sh.insertRowsAfter(sh.getMaxRows(), all.length - sh.getMaxRows());
+  const old = sh.getLastRow();
+  sh.getRange(1, C, all.length, W).setNumberFormat('@').setValues(all).setFontWeight('normal').setBackground(null).setFontColor('#000000');
+  if (old > all.length) sh.getRange(all.length + 1, C, old - all.length, W).clearContent().clearDataValidations().setBackground(null);
+  sh.getRange(1, C).setFontWeight('bold').setFontSize(13);
+  sh.getRange(2, C).setFontColor('#374151');
+  sh.getRange(CMAP.HEAD_ROW, C, 1, W).setFontWeight('bold').setBackground('#1f2937').setFontColor('#ffffff');
+  const n = body.length + blank;
+  sh.getRange(CMAP.HEAD_ROW + 1, C, n, 1).setBackground('#f3f4f6');
+  sh.getRange(CMAP.HEAD_ROW + 1, C + 1, n, 1).setBackground('#fff2cc').setDataValidation(nameList.length
+    ? SpreadsheetApp.newDataValidation().requireValueInList(nameList.slice(0, 500), true).setAllowInvalid(true).build() : null);
+  sh.getRange(CMAP.HEAD_ROW + 1, C + 3, n, 2).setNumberFormat('#,##0');
+  sh.getRange(CMAP.HEAD_ROW + 1, C + 2, n, 1).setFontColor('#6b7280');
+}
+
+/* onEdit: a choice typed in a yellow column → its row says it's waiting for the next update. */
 function campaignMapEdit_(name, a1) {
   if (name !== CMAP.TAB) return;
   const m = String(a1).match(/^([A-Z]+)(\d+)(?::([A-Z]+)(\d+))?$/);
-  if (!m || m[1] !== 'I' || (m[3] && m[3] !== 'I')) return;
+  if (!m || (m[3] && m[3] !== m[1])) return;
+  const col = m[1] === 'I' ? 1 : m[1] === 'L' || m[1] === 'M' ? CMAP.PAGE_COL + 3 : 0;
+  if (!col) return;
   const from = Number(m[2]), to = Number(m[4] || m[2]), sh = ss_().getSheetByName(CMAP.TAB);
-  for (let r = Math.max(from, CMAP.HEAD_ROW + 1); r <= to; r++) sh.getRange(r, 1).setValue('⏳');
+  for (let r = Math.max(from, CMAP.HEAD_ROW + 1); r <= to; r++) sh.getRange(r, col).setValue('⏳');
 }
 
 /*
@@ -5487,7 +5623,7 @@ const EXT = {
   views: [slow => chanceViews_(slow), () => writeShopTab_()],
   edit: [(name, a1) => chanceEdit_(name, a1), (name, a1) => campaignMapEdit_(name, a1)],
   setup: [() => chanceSetup_()],
-  live: [() => syncShopifyStatus_(), () => checkShopifyOrders_(), () => syncShopifyStock_(false), () => refreshAccountNames_(), () => discoverAccounts_(), () => chanceLive_(), () => refreshTodayFunnel_(), () => refreshFunnel_(false),
+  live: [() => syncShopifyStatus_(), () => checkShopifyOrders_(), () => syncShopifyStock_(false), () => syncShopifyCollections_(), () => refreshAccountNames_(), () => discoverAccounts_(), () => chanceLive_(), () => refreshTodayFunnel_(), () => refreshFunnel_(false),
     () => refreshShopTab_(false)],
   today: [() => refreshTodayFunnel_(), () => refreshBalances_(), () => refreshShopCards_()],
   menu: [['📦 تحديث المنتجات والستوك وتوب 100', 'refreshProductsNow'], ['📈 تحديث Daily Account Funnel و Actual ROAS', 'refreshFunnelNow'],

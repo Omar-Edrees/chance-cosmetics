@@ -1,6 +1,7 @@
 /*
  * Ad Map: the product of every ad, decided once per ad ID from hard evidence.
  * Order of evidence: Override (you) > LINK (landing page) > CODE (exact code in names)
+ * PAGE (a page you named in the Campaign Map's pages table: every store link of the ad goes to it) comes first.
  * > TEXT (the product's full name in the ad's own text, when the link can't be read: ads made from a page post)
  * > KEYWORD (suggestion, ⚠️) > NONE (❌, spend stays unmapped). Never a default product.
  * The campaign's choice in the Campaign Map tab (33_campaign_map.gs) goes to all its ads and wins over all of these;
@@ -84,6 +85,9 @@ function parseStoreLinks_(links) {
 }
 
 function decideProduct_(links, camp, set, ad, adText) {
+  const named = pageNames_(), keys = Array.from(new Set(links.map(pageKeyOf_).filter(Boolean)));
+  if (keys.length && keys.every(k => named[k]) && new Set(keys.map(k => named[k])).size === 1)
+    return { product: named[keys[0]], source: 'PAGE', note: 'من اسم الصفحة في ' + CMAP.TAB };
   const prods = products_(), parsed = parseStoreLinks_(links);
   const pages = parsed.slugs.concat(parsed.paths);
   if (pages.length) {
@@ -144,7 +148,7 @@ function fetchMetaLinks_(adIds) {
  */
 function adMapPlan_(freshAds, tiktokLinks, recheckAll) {
   const rows = rawRows_(APP.T.ADMAP, ADMAP_HEADERS.length), byKey = new Map(), ids = new Set(), weekAgo = shiftKey_(todayKey_(), -7);
-  let needed = !!recheckAll;
+  let needed = !!recheckAll || sha_(JSON.stringify(pageNames_())) !== PropertiesService.getDocumentProperties().getProperty('PAGE_NAMES_APPLIED');
   rows.forEach(r => byKey.set(adKey_(r[AM.PLAT], String(r[AM.ID]), r[AM.CAMP], r[AM.SET], r[AM.AD]), r));
   freshAds.forEach(a => {
     if (num_(a[10]) <= 0 && num_(a[11]) <= 0) return;
@@ -187,6 +191,8 @@ function updateAdMap_(freshAds, tiktokLinks, recheckAll) {
  */
 let ADMAP_CHANGED_ = false;
 function refreshAdMap_(freshAds, tiktokLinks, recheckAll, links) {
+  PAGE_NAMES_ = null;
+  PropertiesService.getDocumentProperties().setProperty('PAGE_NAMES_APPLIED', sha_(JSON.stringify(pageNames_())));
   const sh = ensureTab_(APP.T.ADMAP, ADMAP_HEADERS), W = ADMAP_HEADERS.length, hr = sh.getRange(1, 1, 1, W);
   if (hr.getValues()[0].join('|') !== ADMAP_HEADERS.join('|')) hr.setValues([ADMAP_HEADERS]); // new columns (older tabs)
   const rows = readRows_(sh, W), byKey = new Map();
@@ -259,7 +265,7 @@ function refreshAdMap_(freshAds, tiktokLinks, recheckAll, links) {
     // A new or changed Override is a confirmation: remember the link it was confirmed against.
     if (ovr && ovr !== String(r[AM.CONF_VAL] || '')) { r[AM.CONF_VAL] = ovr; r[AM.CONF_AT] = nowText_(); r[AM.MAPPED] = linkSig; }
     if (!ovr && r[AM.CONF_VAL]) { r[AM.CONF_VAL] = ''; r[AM.CONF_AT] = ''; }
-    if (!r[AM.MAPPED] && (ovr || d.source === 'LINK' || d.source === 'CODE' || d.source === 'TEXT')) r[AM.MAPPED] = linkSig;
+    if (!r[AM.MAPPED] && (ovr || ['LINK', 'CODE', 'TEXT', 'PAGE'].indexOf(d.source) >= 0)) r[AM.MAPPED] = linkSig;
     const changed = !!r[AM.MAPPED] && !!linkSig && r[AM.MAPPED] !== linkSig;
     r[AM.CHANGED] = changed;
     const useOvr = ovr && valid.has(ovr), camp = useOvr ? null : campChoice_(r[AM.CHOICE]);
@@ -267,7 +273,7 @@ function refreshAdMap_(freshAds, tiktokLinks, recheckAll, links) {
     r[AM.FINAL] = useOvr ? (ovr === 'MULTI' ? APP.MULTI : ovr) : camp ? camp
       : d.source === 'MULTI' ? APP.MULTI : d.product || APP.UNMAPPED;
     if (camp) r[AM.NOTE] = 'من Campaign Map' + (r[AM.NOTE] ? ' — ' + r[AM.NOTE] : '');
-    r[AM.STATUS] = changed ? '⚠️' : useOvr || camp ? '✅' : (d.source === 'LINK' || d.source === 'CODE' || d.source === 'TEXT') ? '✅'
+    r[AM.STATUS] = changed ? '⚠️' : useOvr || camp ? '✅' : ['LINK', 'CODE', 'TEXT', 'PAGE'].indexOf(d.source) >= 0 ? '✅'
       : (d.source === 'KEYWORD' || d.source === 'MULTI') ? '⚠️' : '❌';
     r[AM.SPEND] = round2_(spend[key] || 0);
   });
@@ -298,7 +304,8 @@ function adMapIndex_() {
   rawRows_(APP.T.ADMAP, ADMAP_HEADERS.length).forEach(r => {
     const final = String(r[AM.FINAL] || APP.UNMAPPED);
     idx.set(adKey_(r[AM.PLAT], String(r[AM.ID]), r[AM.CAMP], r[AM.SET], r[AM.AD]),
-      { product: final, exact: r[AM.STATUS] === '✅' && final !== APP.MULTI && final !== APP.UNMAPPED });
+      { product: final, exact: r[AM.STATUS] === '✅' && final !== APP.MULTI && final !== APP.UNMAPPED,
+        chosen: !!String(r[AM.OVR] || '').trim() || !!campChoice_(r[AM.CHOICE]) });
   });
   return idx;
 }

@@ -103,10 +103,13 @@ function catalogAdIds_() {
   const sh = ss_().getSheetByName(APP.T.CATALOG), ids = new Set();
   if (!sh) return ids;
   const idx = adMapIndex_(), notOwn = [APP.CATALOG, APP.MULTI, APP.UNMAPPED, APP.UNKNOWN_PRODUCT, APP.META_NO_AD, ''];
+  const prods = new Set(products_().map(p => p.name));
   rawRows_(APP.T.CATALOG, CATALOG_HEADERS.length).forEach(r => {
     if (!r[3]) return;
     const m = idx.get(adKey_(r[1], String(r[3]), '', '', ''));
-    if (!m || notOwn.indexOf(m.product) >= 0) ids.add(r[1] + '|' + String(r[3]));
+    // Its own product page, or a name you gave its campaign / the ad: not catalog. A page named in the pages table isn't
+    // enough (a catalog ad that lands on "Makeup" is still split by product).
+    if (!m || notOwn.indexOf(m.product) >= 0 || (!prods.has(m.product) && !m.chosen)) ids.add(r[1] + '|' + String(r[3]));
   });
   return ids;
 }
