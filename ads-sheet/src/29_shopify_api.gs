@@ -19,7 +19,7 @@ const SHOPIFY = {
   FIRST_FROM: '2026-11-07T15:00:00Z', // the fixed file was read at 2026-11-07 17:45 Cairo: read again from a bit before
   SINCE_KEY: 'SHOPIFY_SINCE', DAY_KEY: 'SHOPIFY_STATUS_DAY', AT_KEY: 'SHOPIFY_STATUS_AT', PAGES: 20,
   ORDERS_QUERY: 'query($q:String!,$after:String){orders(first:100,after:$after,sortKey:UPDATED_AT,query:$q){' +
-    'pageInfo{hasNextPage endCursor} nodes{id createdAt updatedAt cancelledAt displayFinancialStatus returnStatus ' +
+    'pageInfo{hasNextPage endCursor} nodes{id createdAt updatedAt cancelledAt edited displayFinancialStatus returnStatus ' +
     'subtotalLineItemsQuantity originalTotalPriceSet{shopMoney{amount}} currentTotalPriceSet{shopMoney{amount}} ' +
     'fulfillments{status displayStatus}}}}'
 };
@@ -164,14 +164,23 @@ function syncShopifyStatus_() {
   if (!shopifyProps_().getProperty('SHOPIFY_TOKEN')) return 0;
   const props = PropertiesService.getDocumentProperties();
   let since = props.getProperty(SHOPIFY.SINCE_KEY) || SHOPIFY.FIRST_FROM, after = null, more = true, pages = 0;
-  const rows = [];
+  // Once, on a sheet already reading: the last 10 days again, so orders edited before the sheet looked at edits get fixed too.
+  if (!props.getProperty('SHOPIFY_EDITED_V1')) {
+    const back = new Date(Date.now() - 10 * 86400000).toISOString().replace(/\.\d+Z$/, 'Z');
+    if (props.getProperty(SHOPIFY.SINCE_KEY) && back < since) since = back;
+    props.setProperty('SHOPIFY_EDITED_V1', '1');
+  }
+  const rows = [], edited = [];
   try {
     while (more && pages < SHOPIFY.PAGES && timeLeft_()) {
       const res = shopifyGql_(SHOPIFY.ORDERS_QUERY, { q: "updated_at:>='" + since + "'", after: after }).orders;
-      res.nodes.forEach(o => rows.push(shopifyStatusRow_(o)));
+      res.nodes.forEach(o => { rows.push(shopifyStatusRow_(o)); if (o.edited && !o.cancelledAt) edited.push(o.id); });
       more = res.pageInfo.hasNextPage; after = res.pageInfo.endCursor; pages++;
     }
   } catch (e) { setStatus_('SHOPIFY', '✗ ' + errText_(e)); if (!rows.length) return 0; more = true; }
+  // Edited orders: the pieces in them now go to the orders tab (32_shopify_orders.gs).
+  queueEditedOrders_(edited);
+  try { fixEditedOrders_(); } catch (e) { setStatus_('SHOP_ORDERS_EDITED', '✗ ' + errText_(e)); }
   if (rows.length) {
     withLock_(() => shopifyMergeStatus_(rows));
     since = rows.reduce((m, r) => (r[2] > m ? r[2] : m), since);

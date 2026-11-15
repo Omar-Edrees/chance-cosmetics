@@ -1,14 +1,15 @@
 /*
  * Ad Map: the product of every ad, decided once per ad ID from hard evidence.
  * Order of evidence: Override (you) > LINK (landing page) > CODE (exact code in names)
+ * > TEXT (the product's full name in the ad's own text, when the link can't be read: ads made from a page post)
  * > KEYWORD (suggestion, ⚠️) > NONE (❌, spend stays unmapped). Never a default product.
  * Orders never move spend.
  */
 const ADMAP_HEADERS = ['Ad ID', 'Platform', 'Account ID', 'Account', 'Campaign', 'Ad set', 'Ad', 'Landing URLs',
   'Auto product', 'Source', 'Override', 'Final product', 'Status', 'Confirmed at', 'Confirmed value',
-  'Link changed', 'Mapped link', 'Spend MTD', 'Last spend', 'Note'];
+  'Link changed', 'Mapped link', 'Spend MTD', 'Last spend', 'Note', 'Ad text'];
 const AM = { ID: 0, PLAT: 1, ACC: 2, ACCN: 3, CAMP: 4, SET: 5, AD: 6, LINKS: 7, AUTO: 8, SRC: 9, OVR: 10, FINAL: 11,
-  STATUS: 12, CONF_AT: 13, CONF_VAL: 14, CHANGED: 15, MAPPED: 16, SPEND: 17, LAST: 18, NOTE: 19 };
+  STATUS: 12, CONF_AT: 13, CONF_VAL: 14, CHANGED: 15, MAPPED: 16, SPEND: 17, LAST: 18, NOTE: 19, TEXT: 20 };
 
 /* Ads without an ID (some TikTok exports) get a stable key from their names. */
 function adKey_(platform, adId, camp, set, ad) {
@@ -27,6 +28,30 @@ function linksFromCreative_(c) {
   ((c.asset_feed_spec || {}).link_urls || []).forEach(x => push(x && x.website_url));
   push(c.object_url); push(c.link_url);
   return Array.from(new Set(out));
+}
+
+/* The ad's own words (primary text, headline, description), from every place Meta keeps them. Kept short. */
+function textFromCreative_(c) {
+  const out = [], push = v => { if (v && typeof v === 'string' && out.indexOf(v) < 0) out.push(v); };
+  if (!c) return '';
+  const spec = c.object_story_spec || {}, ld = spec.link_data || {}, vd = spec.video_data || {}, af = c.asset_feed_spec || {};
+  [c.body, c.title, ld.message, ld.name, ld.description, vd.message, vd.title].forEach(push);
+  (ld.child_attachments || []).forEach(x => { if (x) { push(x.name); push(x.description); } });
+  ['bodies', 'titles', 'descriptions'].forEach(k => (af[k] || []).forEach(x => push(x && x.text)));
+  return out.join(' | ').replace(/\s+/g, ' ').trim().slice(0, 1000);
+}
+/* phrase is in text as whole words: no letter or digit right before or after it (an emoji or Arabic next to it is fine). */
+function wordsIn_(text, phrase) {
+  const w = c => /[a-z0-9]/.test(c || '');
+  for (let i = text.indexOf(phrase); i >= 0; i = text.indexOf(phrase, i + 1)) {
+    if (!w(text.charAt(i - 1)) && !w(text.charAt(i + phrase.length))) return true;
+  }
+  return false;
+}
+/* The page has no store link we can read (none, or only Messenger / WhatsApp / a post the token can't open). */
+function noStorePage_(links) {
+  const p = parseStoreLinks_(links);
+  return !p.slugs.length && !p.paths.length && !p.multi;
 }
 
 /* Store URLs only. Returns {slugs:[...], paths:[...], multi:bool, store:bool}.
@@ -56,7 +81,7 @@ function parseStoreLinks_(links) {
   return res;
 }
 
-function decideProduct_(links, camp, set, ad) {
+function decideProduct_(links, camp, set, ad, adText) {
   const prods = products_(), parsed = parseStoreLinks_(links);
   const pages = parsed.slugs.concat(parsed.paths);
   if (pages.length) {
@@ -71,6 +96,15 @@ function decideProduct_(links, camp, set, ad) {
   const text = norm_([camp, set, ad].join(' '));
   const codeHits = prods.filter(p => p.codes.some(c => hasToken_(text, c)));
   if (codeHits.length === 1) return { product: codeHits[0].name, source: 'CODE', note: '' };
+  // TEXT: the product's whole name (or an order alias) written in the ad itself. A name inside a longer one that's also
+  // there ("Lip Oil" in "Lip Oil Set") is the longer one's.
+  const copy = norm_(adText || '');
+  if (copy && copy !== '-') {
+    const said = prods.map(p => ({ p: p, names: [norm_(p.name)].concat(p.aliases).filter(a => a && a.length >= 8 && wordsIn_(copy, a)) }))
+      .filter(x => x.names.length);
+    const top = said.filter(x => !said.some(y => y !== x && y.names.some(b => x.names.every(a => b !== a && b.indexOf(a) >= 0))));
+    if (top.length === 1) return { product: top[0].p.name, source: 'TEXT', note: 'من نص الإعلان (لينك الإعلان مش متاح)' };
+  }
   const kw = prods.filter(p => [norm_(p.name)].concat(p.aliases).some(a => a && a.length >= 3 && text.indexOf(a) >= 0));
   if (kw.length === 1) return { product: kw[0].name, source: 'KEYWORD', note: 'مقترح من الاسم، محتاج تأكيد' };
   return { product: '', source: 'NONE', note: codeHits.length > 1 || kw.length > 1 ? 'الاسم بيشاور على أكتر من منتج' : 'مفيش دليل' };
@@ -82,10 +116,10 @@ function fetchMetaLinks_(adIds) {
     if (!timeLeft_() || Date.now() > stop) break; // the rest stay blank and are read next run
     const chunk = adIds.slice(i, i + 25);
     const res = metaMany_(chunk.map(id => ({ path: id, params: {
-      fields: 'creative{object_story_spec,asset_feed_spec,object_url,link_url,effective_object_story_id}' } })));
+      fields: 'creative{object_story_spec,asset_feed_spec,object_url,link_url,effective_object_story_id,body,title}' } })));
     res.forEach((r, j) => {
       const id = chunk[j];
-      if (r.error) { out[id] = { links: [], error: r.error }; return; }
+      if (r.error) { out[id] = { links: [], error: r.error, text: '' }; return; }
       const c = r.payload.creative || {};
       let links = linksFromCreative_(c), error = '';
       if (!links.length && c.effective_object_story_id && timeLeft_()) {
@@ -95,7 +129,7 @@ function fetchMetaLinks_(adIds) {
           if (v && v.link) links = [v.link];
         } catch (e) { error = 'لينك البوست مش متاح بالتوكن ده'; }
       }
-      out[id] = { links: links, error: error };
+      out[id] = { links: links, error: error, text: textFromCreative_(c) };
     });
   }
   return out;
@@ -119,11 +153,17 @@ function adMapPlan_(freshAds, tiktokLinks, recheckAll) {
   });
   rows.forEach(r => {
     if (String(r[AM.OVR] || '').trim() !== String(r[AM.CONF_VAL] || '')) needed = true;
-    if (r[AM.PLAT] === 'META' && r[AM.ID] && (!r[AM.LINKS] || (recheckAll && asKey_(r[AM.LAST]) >= weekAgo))) { needed = true; ids.add(String(r[AM.ID])); }
+    if (r[AM.PLAT] === 'META' && r[AM.ID] && (!r[AM.LINKS] || needsText_(r) || (recheckAll && asKey_(r[AM.LAST]) >= weekAgo))) { needed = true; ids.add(String(r[AM.ID])); }
     if (r[AM.PLAT] === 'TIKTOK' && tiktokLinks && tiktokLinks[r[AM.ID]] && tiktokLinks[r[AM.ID]] !== r[AM.LINKS]) needed = true;
   });
   return { needed: needed, ids: Array.from(ids) };
 }
+/* A Meta ad without a store link whose text wasn't read yet (rows from before the Ad text column, or new). */
+function needsText_(r) {
+  return r[AM.PLAT] === 'META' && !!r[AM.ID] && !r[AM.TEXT] && !!r[AM.LINKS] &&
+    noStorePage_(String(r[AM.LINKS]).split(',').map(x => x.trim()).filter(x => x && x !== '-'));
+}
+
 /*
  * Updates the Ad Map only when something changed for it, and reads the Meta links before taking the lock,
  * so a slow link read never makes the other updates wait. Returns the number of ads, or false if nothing to do.
@@ -142,7 +182,8 @@ function updateAdMap_(freshAds, tiktokLinks, recheckAll) {
  */
 let ADMAP_CHANGED_ = false;
 function refreshAdMap_(freshAds, tiktokLinks, recheckAll, links) {
-  const sh = ensureTab_(APP.T.ADMAP, ADMAP_HEADERS), W = ADMAP_HEADERS.length;
+  const sh = ensureTab_(APP.T.ADMAP, ADMAP_HEADERS), W = ADMAP_HEADERS.length, hr = sh.getRange(1, 1, 1, W);
+  if (hr.getValues()[0].join('|') !== ADMAP_HEADERS.join('|')) hr.setValues([ADMAP_HEADERS]); // new columns (older tabs)
   const rows = readRows_(sh, W), byKey = new Map();
   rows.forEach(r => { r[AM.ID] = String(r[AM.ID]); r[AM.ACC] = String(r[AM.ACC]); byKey.set(adKey_(r[AM.PLAT], r[AM.ID], r[AM.CAMP], r[AM.SET], r[AM.AD]), r); });
 
@@ -158,7 +199,7 @@ function refreshAdMap_(freshAds, tiktokLinks, recheckAll, links) {
   const weekAgo = shiftKey_(todayKey_(), -7);
   const needMeta = [];
   byKey.forEach(r => {
-    if (r[AM.PLAT] === 'META' && r[AM.ID] && (r._new || !r[AM.LINKS] || (recheckAll && asKey_(r[AM.LAST]) >= weekAgo))) needMeta.push(r[AM.ID]);
+    if (r[AM.PLAT] === 'META' && r[AM.ID] && (r._new || !r[AM.LINKS] || needsText_(r) || (recheckAll && asKey_(r[AM.LAST]) >= weekAgo))) needMeta.push(r[AM.ID]);
     if (r[AM.PLAT] === 'TIKTOK' && tiktokLinks && tiktokLinks[r[AM.ID]]) r[AM.LINKS] = tiktokLinks[r[AM.ID]];
   });
   if (needMeta.length && accounts_('META').length) {
@@ -167,6 +208,7 @@ function refreshAdMap_(freshAds, tiktokLinks, recheckAll, links) {
       const g = got[r[AM.ID]];
       if (!g) return;
       r[AM.LINKS] = g.links.length ? g.links.join(', ') : '-';
+      r[AM.TEXT] = g.text || '-';
       r._err = g.error;
     });
   }
@@ -191,7 +233,7 @@ function refreshAdMap_(freshAds, tiktokLinks, recheckAll, links) {
   const unassigned = new Set(), valid = new Set(products_().map(p => p.name).concat(['MULTI']));
   byKey.forEach((r, key) => {
     const links = String(r[AM.LINKS] || '').split(',').map(x => x.trim()).filter(x => x && x !== '-');
-    const d = decideProduct_(links, r[AM.CAMP], r[AM.SET], r[AM.AD]);
+    const d = decideProduct_(links, r[AM.CAMP], r[AM.SET], r[AM.AD], r[AM.TEXT]);
     (d.unknown || []).forEach(s => unassigned.add(s));
     r[AM.AUTO] = d.product; r[AM.SRC] = d.source;
     r[AM.NOTE] = [d.note, r._err || ''].filter(Boolean).join(' — ');
@@ -201,13 +243,13 @@ function refreshAdMap_(freshAds, tiktokLinks, recheckAll, links) {
     // A new or changed Override is a confirmation: remember the link it was confirmed against.
     if (ovr && ovr !== String(r[AM.CONF_VAL] || '')) { r[AM.CONF_VAL] = ovr; r[AM.CONF_AT] = nowText_(); r[AM.MAPPED] = linkSig; }
     if (!ovr && r[AM.CONF_VAL]) { r[AM.CONF_VAL] = ''; r[AM.CONF_AT] = ''; }
-    if (!r[AM.MAPPED] && (ovr || d.source === 'LINK' || d.source === 'CODE')) r[AM.MAPPED] = linkSig;
+    if (!r[AM.MAPPED] && (ovr || d.source === 'LINK' || d.source === 'CODE' || d.source === 'TEXT')) r[AM.MAPPED] = linkSig;
     const changed = !!r[AM.MAPPED] && !!linkSig && r[AM.MAPPED] !== linkSig;
     r[AM.CHANGED] = changed;
     const useOvr = ovr && valid.has(ovr);
     r[AM.FINAL] = useOvr ? (ovr === 'MULTI' ? APP.MULTI : ovr)
       : d.source === 'MULTI' ? APP.MULTI : d.product || APP.UNMAPPED;
-    r[AM.STATUS] = changed ? '⚠️' : useOvr ? '✅' : (d.source === 'LINK' || d.source === 'CODE') ? '✅'
+    r[AM.STATUS] = changed ? '⚠️' : useOvr ? '✅' : (d.source === 'LINK' || d.source === 'CODE' || d.source === 'TEXT') ? '✅'
       : (d.source === 'KEYWORD' || d.source === 'MULTI') ? '⚠️' : '❌';
     r[AM.SPEND] = round2_(spend[key] || 0);
   });
@@ -216,7 +258,7 @@ function refreshAdMap_(freshAds, tiktokLinks, recheckAll, links) {
   const order = { '❌': 0, '⚠️': 1, '✅': 2 }, out = Array.from(byKey.values())
     .sort((a, b) => (order[a[AM.STATUS]] - order[b[AM.STATUS]]) || (num_(b[AM.SPEND]) - num_(a[AM.SPEND])))
     .map(r => r.slice(0, W));
-  if (!writeRows_(sh, out, W, [1, 3, 4, 5, 6, 7, 15, 17, 19])) return out.length; // same as before: nothing to redraw
+  if (!writeRows_(sh, out, W, [1, 3, 4, 5, 6, 7, 15, 17, 19, 21])) return out.length; // same as before: nothing to redraw
   ADMAP_CHANGED_ = true;
   const n = Math.max(out.length, 1);
   sh.getRange(2, AM.OVR + 1, n, 1).setDataValidation(SpreadsheetApp.newDataValidation()

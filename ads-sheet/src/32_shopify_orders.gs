@@ -16,11 +16,14 @@ const SHOP_ORDERS = {
   HEADERS: ['Order ID', 'Created At', 'Total Price', 'Products', 'UTM Source', 'UTM Campaign', 'UTM Content', 'UTM ID', 'UTM Term',
     'Attr UTM Source', 'Attr UTM Campaign', 'Attr UTM Content', 'Attr UTM ID', 'Attr UTM Term', 'Order Referrer', 'Source Name', 'City'],
   QUERY: 'query($q:String!,$after:String){orders(first:20,after:$after,sortKey:CREATED_AT,query:$q){pageInfo{hasNextPage endCursor} ' +
-    'nodes{id createdAt sourceName originalTotalPriceSet{shopMoney{amount}} customAttributes{key value} ' +
-    'lineItems(first:30){pageInfo{hasNextPage endCursor} nodes{title quantity}} customerJourneySummary{lastVisit{referrerUrl utmParameters{source campaign content term}}}}}}',
+    'nodes{id createdAt cancelledAt sourceName originalTotalPriceSet{shopMoney{amount}} customAttributes{key value} ' +
+    'lineItems(first:30){pageInfo{hasNextPage endCursor} nodes{title quantity currentQuantity}} customerJourneySummary{lastVisit{referrerUrl utmParameters{source campaign content term}}}}}}',
   // The shipping address's governorate only (the same field the fixed file 24_order_gov.gs was read from).
   // An order with more than 30 lines: the rest, 100 at a time.
-  ITEMS_QUERY: 'query($id:ID!,$after:String){order(id:$id){lineItems(first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{title quantity}}}}',
+  ITEMS_QUERY: 'query($id:ID!,$after:String){order(id:$id){lineItems(first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{title quantity currentQuantity}}}}',
+  // Orders edited after they were read (a piece removed, a color swapped): their lines now, 10 orders a call.
+  EDITED_QUERY: 'query($ids:[ID!]!){nodes(ids:$ids){... on Order{id cancelledAt lineItems(first:50){pageInfo{hasNextPage endCursor} nodes{title quantity currentQuantity}}}}}',
+  EDITED: 'SHOP_ORDERS_EDITED',
   ADDR_QUERY: 'query($ids:[ID!]!){nodes(ids:$ids){... on Order{id shippingAddress{province}}}}',
   COUNT_QUERY: 'query($a:String!,$b:String!){a:ordersCount(query:$a,limit:null){count} b:ordersCount(query:$b,limit:null){count}}'
 };
@@ -38,11 +41,22 @@ function shopOrderRow_(o, province) {
   (o.customAttributes || []).forEach(a => { attr[String(a.key || '').trim().toLowerCase()] = String(a.value === null || a.value === undefined ? '' : a.value).trim(); });
   const visit = (o.customerJourneySummary || {}).lastVisit || {}, u = visit.utmParameters || {};
   const gov = Object.keys(attr).find(k => /محافظ|province|governorate/.test(k));
-  const items = shopOrderItems_(o).map(li => String(li.title || '').trim() + ' x' + (li.quantity || 1)).join(' | ');
+  const items = shopOrderItemsText_(o, shopOrderItems_(o));
   return [o.id, o.createdAt, num_(((o.originalTotalPriceSet || {}).shopMoney || {}).amount), items,
     u.source || '', u.campaign || '', u.content || '', '', u.term || '',
     attr.utm_source || '', attr.utm_campaign || '', attr.utm_content || '', attr.utm_id || '', attr.utm_term || '',
     attr['order referrer'] || visit.referrerUrl || '', o.sourceName || '', province || (gov ? attr[gov] : '')];
+}
+
+/*
+ * "Title x2 | Title2 x1": the pieces in the order now. An order edited after it was made (a piece removed, a color swapped)
+ * keeps the removed lines with currentQuantity 0: they aren't sold. A cancelled order keeps what was ordered (its product
+ * still shows in the cancelled numbers), and so does an order whose lines would all be gone.
+ */
+function shopOrderItemsText_(o, lines) {
+  const now = o.cancelledAt ? [] : lines.filter(li => li.currentQuantity === undefined || li.currentQuantity === null || Number(li.currentQuantity) > 0)
+    .map(li => ({ title: li.title, quantity: li.currentQuantity === undefined || li.currentQuantity === null ? li.quantity : li.currentQuantity }));
+  return (now.length ? now : lines).map(li => String(li.title || '').trim() + ' x' + (li.quantity || 1)).join(' | ');
 }
 
 /* Every line of an order: the first 30 come with the order; the rest are read on their own (rare). */
@@ -159,4 +173,56 @@ function shopifyMergeOrders_(rows) {
   sh.getRange(at, 3, out.length, 1).setNumberFormat('0.00');
   sh.getRange(at, 1, out.length, W).setValues(out);
   try { sh.hideSheet(); } catch (e) { /* مش مهم */ }
+}
+
+/*
+ * Orders Shopify says were edited (29_shopify_api.gs reads them with every update, SHOP_ORDERS.EDITED is the queue): their
+ * Products cell in the tab ← the pieces in them now. Orders Raw reads the tab's last rows every update and all of it once a day.
+ */
+function queueEditedOrders_(ids) {
+  if (!ids.length) return;
+  const props = PropertiesService.getDocumentProperties();
+  let q = [];
+  try { q = JSON.parse(props.getProperty(SHOP_ORDERS.EDITED) || '[]'); } catch (e) { q = []; }
+  ids.forEach(id => { if (q.indexOf(id) < 0) q.push(id); });
+  props.setProperty(SHOP_ORDERS.EDITED, JSON.stringify(q.slice(-3000)));
+}
+function fixEditedOrders_() {
+  const props = PropertiesService.getDocumentProperties(), sh = ss_().getSheetByName(SHOP_ORDERS.TAB);
+  let q = [];
+  try { q = JSON.parse(props.getProperty(SHOP_ORDERS.EDITED) || '[]'); } catch (e) { q = []; }
+  if (!q.length || !sh || sh.getLastRow() < 2) return 0;
+  const items = {}, done = [];
+  try {
+    for (let i = 0; i < q.length && i < 300 && timeLeft_(); i += 10) {
+      const chunk = q.slice(i, i + 10);
+      (shopifyGql_(SHOP_ORDERS.EDITED_QUERY, { ids: chunk }).nodes || []).forEach(o => {
+        if (!o || !o.id || !o.lineItems) return;
+        const li = o.lineItems || {}, lines = (li.nodes || []).slice();
+        let page = li.pageInfo || {};
+        while (page.hasNextPage) {
+          const more = shopifyGql_(SHOP_ORDERS.ITEMS_QUERY, { id: o.id, after: page.endCursor }).order.lineItems;
+          (more.nodes || []).forEach(x => lines.push(x));
+          page = more.pageInfo || {};
+        }
+        items[o.id] = shopOrderItemsText_(o, lines);
+      });
+      chunk.forEach(id => done.push(id)); // an order Shopify doesn't show any more (older than 60 days) stays as it is
+    }
+  } catch (e) { setStatus_('SHOP_ORDERS_EDITED', '✗ ' + errText_(e)); }
+  let changed = 0;
+  if (Object.keys(items).length) withLock_(() => {
+    const ids = sh.getRange(2, 1, sh.getLastRow() - 1, 1).getValues(), P = SHOP_ORDERS.HEADERS.indexOf('Products') + 1;
+    ids.forEach((r, i) => {
+      const t = items[String(r[0])];
+      if (t === undefined) return;
+      const cell = sh.getRange(i + 2, P);
+      if (String(cell.getValue()) !== t) { cell.setValue(t); changed++; }
+    });
+  });
+  const left = q.filter(id => done.indexOf(id) < 0);
+  if (left.length) props.setProperty(SHOP_ORDERS.EDITED, JSON.stringify(left)); else props.deleteProperty(SHOP_ORDERS.EDITED);
+  if (done.length) setStatus_('SHOP_ORDERS_EDITED', '✓ ' + done.length + ' أوردر اتعدل في شوبيفاي، ' + changed + ' منهم اتغيرت منتجاته' +
+    (left.length ? '، والباقي (' + left.length + ') في التحديث الجاي' : ''));
+  return changed;
 }

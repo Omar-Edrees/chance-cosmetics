@@ -1071,6 +1071,10 @@ function fakeShopify(e, orders, opt) {
         return json(200, { data: { productVariants: { nodes: v.slice(page * size, page * size + size),
           pageInfo: { hasNextPage: (page + 1) * size < v.length, endCursor: String(page + 1) } } } });
       }
+      if (/graphql\.json$/.test(url) && /nodes\(ids/.test(JSON.parse(p.payload).query) && /currentQuantity/.test(JSON.parse(p.payload).query)) { // أوردرات اتعدلت
+        return json(200, { data: { nodes: JSON.parse(p.payload).variables.ids.map(id => ((o.editedNow || {})[id]
+          ? { id, cancelledAt: null, lineItems: { nodes: o.editedNow[id], pageInfo: { hasNextPage: false } } } : null)) } });
+      }
       if (/graphql\.json$/.test(url) && /nodes\(ids/.test(JSON.parse(p.payload).query)) { // عنوان الشحن (المحافظة بس)
         if (o.addrError) return json(403, { errors: 'not approved to access the ShippingAddress' });
         return json(200, { data: { nodes: JSON.parse(p.payload).variables.ids.map(id => (o.provinces || {})[id] ? { id, shippingAddress: { province: o.provinces[id] } } : { id, shippingAddress: null }) } });
@@ -1505,4 +1509,69 @@ test('Today: من غير خدمة Google Sheets API، مكان الكروت في
   const tv = e.ss.getSheetByName('Today').getDataRange().getValues();
   assert.match(String(tv[7][0]), /فعّل Google Sheets API/);
   assert.equal(tv[9][0], 'PLATFORM');
+});
+
+test('ربط الإعلانات: إعلان معمول من بوست (اللينك مش متاح) بيتربط بالمنتج من اسمه الكامل في نص الإعلان، والإعلان الجديد اللي لسه ماصرفش بيتحسب على منتجه في الستوك', () => {
+  const probe = env(), today = probe.c.todayKey_(), d = n => probe.c.shiftKey_(today, -n), B = '(blank)';
+  const flow = (id, day, products) => ['gid://shopify/Order/' + id, ' #' + id, ' N', B, 500, ' ' + day + 'T10:00:00+03:00',
+    B, B, B, B, B, B, B, B, 'Direct(Chancestoreegy)', products, '4655075'];
+  const post = body => ({ creative: { body, effective_object_story_id: '107_109' } });
+  const e = env({ orderHead: FLOW_HEAD, ads: { [A1]: [adRow(today, '444', 200, 'MB video 05'), adRow(today, '666', 50, 'Offer'), adRow(today, '777', 30, 'Lips')] },
+    activeAds: { [A1]: ['444', '555', '666'] },
+    creatives: { 555: 'https://chance-cosmetics.com/products/eye-pen' },
+    objects: {
+      444: post('شفايف ناعمة زي المارشميلو 😍\nمع Sheglam Marshmallow Puff Lip Pen متوفر بدرجاته دلوقتي'),
+      666: post('عروض Black Friday على منتجات SHEGLAM كلها'), // مفيش اسم منتج: يفضل مش مربوط
+      777: post('Sheglam Marshmallow Puff Lip Pen Set و Sheglam Marshmallow Puff Lip Pen'), // الاسم الأطول بيكسب لو الاتنين جوه بعض
+    },
+    stock: [['P1', 'V1', 'Sheglam Marshmallow Puff Lip Pen', 'Default Title', 'MP', 'marshmallow-pen', 20, 350],
+      ['P2', 'V2', 'Eye Pen', 'Default Title', 'EP', 'eye-pen', 30, 150],
+      ['P3', 'V3', 'Sheglam Marshmallow Puff Lip Pen Set', 'Default Title', 'MS', 'marshmallow-set', 9, 900]],
+    orders: [flow(1, d(1), 'Sheglam Marshmallow Puff Lip Pen x5'), flow(2, d(2), 'Sheglam Marshmallow Puff Lip Pen x5')] });
+  e.c.setupAll();
+  e.c.liveTick(); e.c.liveTick();
+  const map = e.ss.getSheetByName('Ad Map').getDataRange().getValues(), head = map[0], row = id => map.find(r => r[0] === id);
+  assert.equal(head[20], 'Ad text');
+  const r444 = row('444');
+  assert.deepEqual([r444[9], r444[11], r444[12]], ['TEXT', 'Sheglam Marshmallow Puff Lip Pen', '✅']);
+  assert.match(r444[20], /Sheglam Marshmallow Puff Lip Pen/);
+  assert.deepEqual([row('666')[9], row('666')[12]], ['NONE', '❌']);
+  assert.equal(row('777')[11], 'Sheglam Marshmallow Puff Lip Pen Set');
+  const spend = n => e.c.dailyRows_().filter(r => r[0] === today && r[1] === 'META' && r[2] === n).reduce((a, r) => a + r[3], 0);
+  assert.equal(spend('Sheglam Marshmallow Puff Lip Pen'), 200);
+  // 555 شغال ولسه ماصرفش (مش في Ad Map): منتجه من اللينك، فبيظهر في "عليها إعلانات"
+  assert.equal(row('555'), undefined);
+  assert.deepEqual(JSON.parse(JSON.stringify(e.c.activeMap_())), { 'Sheglam Marshmallow Puff Lip Pen': 1, 'Eye Pen': 1, '❌ صرف مش مربوط بمنتج': 1 });
+  const v = e.ss.getSheetByName('Today').getDataRange().getValues(), i = v.findIndex(r => r[0] === 'منتجات عليها إعلانات شغالة');
+  assert.deepEqual(v.slice(i + 1, i + 3).map(r => r[0]), ['Sheglam Marshmallow Puff Lip Pen', 'Eye Pen']);
+  // المرة الجاية مابيقراش لينك 555 تاني
+  const before = e.requests.filter(u => /\/555\?/.test(u)).length;
+  e.c.refreshActive_();
+  assert.equal(e.requests.filter(u => /\/555\?/.test(u)).length, before);
+});
+
+test('الأوردرات من أبليكيشن شوبيفاي: القطع اللي اتشالت من الأوردر بعد ما اتعمل مش متباعة، والأوردر اللي اتعدل بعد ما اتقرا بيتصلح', () => {
+  const probe = env(), today = probe.c.todayKey_();
+  const order = (id, hm, lines, x) => Object.assign({ id: 'gid://shopify/Order/' + id, createdAt: today + 'T' + hm + ':00Z', sourceName: 'web',
+    cancelledAt: null, originalTotalPriceSet: { shopMoney: { amount: '500.0' } }, customAttributes: [], lineItems: { nodes: lines },
+    customerJourneySummary: { lastVisit: null } }, x || {});
+  const created = [
+    order(1, '06:00', [{ title: 'Lip Oil', quantity: 2, currentQuantity: 1 }, { title: 'Blush', quantity: 1, currentQuantity: 0 }]),
+    order(2, '06:30', [{ title: 'Lip Oil', quantity: 1, currentQuantity: 0 }], { cancelledAt: today + 'T07:00:00Z' }),
+    // أوردر 3 من امبارح: برا الـ 6 ساعات اللي القراية بترجعهم، فالتعديل مابيوصلش غير من حالة الأوردر
+    order(3, '07:00', [{ title: 'Lip Oil', quantity: 1, currentQuantity: 1 }], { createdAt: probe.c.shiftKey_(today, -1) + 'T07:00:00Z' })];
+  const e = env({ orderHead: FLOW_HEAD.slice(0, 17), orders: [] });
+  const opt = { created, editedNow: { 'gid://shopify/Order/3': [{ title: 'Lip Oil', quantity: 1, currentQuantity: 0 }, { title: 'Mask', quantity: 2, currentQuantity: 2 }] } };
+  fakeShopify(e, [shopOrder(3, today, { edited: true, updatedAt: today + 'T09:00:00Z' })], opt);
+  Object.assign(e.user, { SHOPIFY_TOKEN: 'TOKEN1', SHOPIFY_TOKEN_EXP: String(Date.now() + 3600000) });
+  e.c.setupAll();
+  e.c.liveTick(); e.c.liveTick();
+  const tab = e.ss.getSheetByName('Shopify Orders').getDataRange().getValues().slice(1), items = id => tab.find(r => r[0] === 'gid://shopify/Order/' + id)[3];
+  assert.equal(items(1), 'Lip Oil x1', 'قطعة Lip Oil و Blush اتشالوا');
+  assert.equal(items(2), 'Lip Oil x1', 'الملغي بيفضل باللي اتطلب');
+  assert.equal(items(3), 'Mask x2', 'اتعدل بعد ما اتقرا');
+  const raw = e.ss.getSheetByName('Orders Raw').getDataRange().getValues().slice(1);
+  assert.equal(raw.find(r => r[0] === 'gid://shopify/Order/3')[6], 'Mask x2');
+  assert.match(e.ss.getSheetByName('Health').getDataRange().getValues().map(r => r.join(' ')).join('\n'), /الأوردرات اللي اتعدلت في شوبيفاي .*✓ 1 أوردر اتعدل في شوبيفاي/);
+  assert.equal(e.doc.SHOP_ORDERS_EDITED, undefined, 'الطابور فضي');
 });
