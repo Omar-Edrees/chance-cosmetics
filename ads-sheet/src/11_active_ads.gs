@@ -37,6 +37,7 @@ function refreshActive_() {
   props.setProperty('ACTIVE_NEW', JSON.stringify(now)); // only ads still active and still not in the Ad Map
   PropertiesService.getDocumentProperties().setProperty('ACTIVE_PRODUCTS', JSON.stringify(out));
   PropertiesService.getDocumentProperties().setProperty('ACTIVE_CAMPAIGNS', JSON.stringify(camps));
+  propSetBig_(MC.ACTIVE_ADS, ads.map(a => String(a.id)).join(',')); // Meta Campaigns: which ads run now
   setStatus_('ACTIVE', '✓ ' + Object.keys(out).reduce((s, k) => s + out[k], 0) + ' إعلان شغال');
 }
 /* Campaign ID → ACTIVE ads in it now. */

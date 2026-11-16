@@ -65,6 +65,8 @@ class FakeRange {
   setBackgrounds(rows) { return this.each((r, c, i, j) => { this.sheet.attr(r, c).bg = rows[i][j]; }); }
   /* Range.insertCells(ROWS): خانات فاضية مكان المساحة دي، واللي تحتها في نفس الأعمدة بس بينزل (القيم والمعادلات والتنسيق) */
   insertCells() { this.sheet.insertCellsDown(this.row, this.col, this.rows, this.cols); return this; }
+  /* جروب صفوف (+ / −): العمق لكل صف */
+  shiftRowGroupDepth(d) { const dep = this.sheet.depth = this.sheet.depth || []; for (let r = this.row; r < this.row + this.rows; r++) dep[r] = Math.max(0, (dep[r] || 0) + d); return this; }
   /* فلتر بسيط: بيفتكر المساحة والشروط بس */
   createFilter() {
     const sheet = this.sheet, f = { range: this, criteria: {} };
@@ -89,12 +91,14 @@ class FakeSheet {
   insertColumnsAfter(after, n) { this.maxCols = this.getMaxColumns() + n; }
   /* زي جوجل: الصفوف اللي بعد `after` بتنزل n صف (القيم والمعادلات والتنسيق). */
   insertRowsAfter(after, n) {
+    if (this.depth && this.depth.length > after + 1) this.depth.splice(after + 1, 0, ...new Array(n).fill(0));
     [this.values, this.formulas].forEach(grid => { if (grid.length > after) grid.splice(after, 0, ...Array.from({ length: n }, () => [])); });
     this.shiftAttrs(after + 1, n);
     this.maxRows += n;
   }
   deleteRows(start, n) {
     if (this.maxRows - n < 1) throw new Error('مينفعش تمسح كل الصفوف');
+    if (this.depth) this.depth.splice(start, n);
     [this.values, this.formulas].forEach(grid => { if (grid.length >= start) grid.splice(start - 1, n); });
     Object.keys(this.attrs).forEach(k => { const r = Number(k.split(',')[0]); if (r >= start && r < start + n) delete this.attrs[k]; });
     this.shiftAttrs(start + n, -n);
@@ -183,6 +187,24 @@ class FakeSheet {
     return img;
   }
   hideSheet() { this.hidden = true; return this; }
+  /* جروبات الصفوف: كل مجموعة صفوف ورا بعض عمقها depth أو أكتر */
+  rowGroups() {
+    const dep = this.depth || [], out = [];
+    for (let d = 1; d <= 8; d++) for (let r = 1; r < dep.length; r++) {
+      if ((dep[r] || 0) >= d && (dep[r - 1] || 0) < d) { let e = r; while ((dep[e + 1] || 0) >= d) e++; out.push({ start: r, end: e, depth: d }); }
+    }
+    return out;
+  }
+  getRowGroup(row, depth) {
+    const g = this.rowGroups().find(x => x.depth === depth && row >= x.start && row <= x.end);
+    if (!g) return null;
+    const sheet = this, key = g.start + ':' + depth;
+    sheet.collapsed = sheet.collapsed || new Set();
+    return { start: g.start, end: g.end, isCollapsed: () => sheet.collapsed.has(key), expand: () => { sheet.collapsed.delete(key); },
+      collapse: () => { sheet.collapsed.add(key); } };
+  }
+  collapseAllRowGroups() { this.collapsed = new Set(this.rowGroups().map(g => g.start + ':' + g.depth)); return this; }
+  setRowGroupControlPosition(p) { this.groupControl = p; return this; }
   getSheetId() { return this.sheetId || (this.sheetId = 1000 + this.name.length * 7 + this.name.charCodeAt(0)); }
   isSheetHidden() { return !!this.hidden; }
   /* رسوم بيانية: الـ builder بيسجل كل نداء، و build بيرجعهم */

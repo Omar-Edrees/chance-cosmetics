@@ -34,6 +34,24 @@ function env(options) {
   const reply = url => {
     requests.push(url);
     const id = (url.match(/act_(\d+)/) || [])[1];
+    if (/\/insights\?/.test(url) && /reach/.test(url)) { // Meta Campaigns: كل مستوى لوحده في الفترة، صف لكل كامبين / أد سيت / إعلان
+      const t = JSON.parse(decodeURIComponent(url.match(/time_range=([^&]+)/)[1])), level = url.match(/level=(\w+)/)[1], by = {};
+      (ads[id] || []).filter(r => r.date_start >= t.since && r.date_start <= t.until).forEach(r => {
+        const k = level === 'campaign' ? r.campaign_id : level === 'adset' ? r.adset_id : r.ad_id;
+        const x = by[k] = by[k] || { campaign_id: r.campaign_id, campaign_name: r.campaign_name, spend: 0, impressions: 0, reach: 0, inline_link_clicks: 0, v3: 0 };
+        if (level !== 'campaign') Object.assign(x, { adset_id: r.adset_id, adset_name: r.adset_name });
+        if (level === 'ad') Object.assign(x, { ad_id: r.ad_id, ad_name: r.ad_name });
+        x.spend += Number(r.spend); x.impressions += Number(r.impressions); x.reach += Number(r.reach || Number(r.impressions) / 2);
+        x.inline_link_clicks += Number(r.inline_link_clicks); x.v3 += Number(r.v3 || 0);
+      });
+      return { data: Object.keys(by).map(k => { const x = by[k]; return Object.assign({}, x, { spend: String(x.spend), impressions: String(x.impressions),
+        reach: String(x.reach), inline_link_clicks: String(x.inline_link_clicks), actions: [{ action_type: 'video_view', value: String(x.v3) }], v3: undefined }); }) };
+    }
+    if (/\/v[\d.]+\/\?ids=/.test(url)) { // ميزانيات الكامبينات والأد سيتس
+      const out = {};
+      decodeURIComponent(url.match(/ids=([^&]+)/)[1]).split(',').forEach(x => { if ((opt.budgets || {})[x]) out[x] = Object.assign({ id: x }, opt.budgets[x]); });
+      return out;
+    }
     if (/\/insights\?/.test(url) && /breakdowns=product_id/.test(url)) { // كتالوج: الصرف لكل منتج
       const t = JSON.parse(decodeURIComponent(url.match(/time_range=([^&]+)/)[1]));
       return { data: ((opt.catalog || {})[id] || []).filter(r => r.date_start >= t.since && r.date_start <= t.until) };
@@ -89,6 +107,7 @@ function env(options) {
     SpreadsheetApp: {
       getActive: () => active, openById: id => { if (id !== ORDERS_ID) throw new Error('not found ' + id); return source; },
       newDataValidation: builder, newConditionalFormatRule: builder, ProtectionType: { SHEET: 'SHEET', RANGE: 'RANGE' },
+      GroupControlTogglePosition: { BEFORE: 'BEFORE', AFTER: 'AFTER' },
       getUi: () => ({ alert: m => { alerts.push(m); } }),
     },
     PropertiesService: { getDocumentProperties: () => store(doc), getUserProperties: () => store(user) },
@@ -1699,4 +1718,73 @@ test('Closing: GROSS SALES (المنتجات قبل الخصم ومن غير ا�
   e.c.resetCaches_();
   e.c.writeClosing_();
   assert.equal(closingRow(e.ss.getSheetByName('Closing'), dayLabel(e.c, today))['GROSS SALES'], '');
+});
+
+test('Meta Campaigns: الكامبين وتحتها الأد سيتس وتحتها الإعلانات، والقرار بـ Shopify ROAS لآخر 3 أيام قدام الـ 7 والـ 14، والمترك الواقع، واللي مفتوح بيفضل مفتوح', () => {
+  const probe = env(), today = probe.c.todayKey_(), d = n => probe.c.shiftKey_(today, -n), B = '(blank)';
+  const ad = (n, camp, set, adId, spend, o) => Object.assign(adRow(d(n), adId, spend), { campaign_id: camp, campaign_name: 'Camp ' + camp,
+    adset_id: set, adset_name: 'Set ' + set, ad_name: 'Ad ' + adId, impressions: '1000', inline_link_clicks: String((o || {}).clicks || 20), v3: (o || {}).v3 || 300 });
+  const flow = (id, n, adId) => ['gid://shopify/Order/' + id, ' #' + id, ' N', B, 400, ' ' + d(n) + 'T10:00:00+03:00',
+    B, B, B, B, B, 'facebook', 'x', adId, 'Facebook', 'Lip Oil x1', '4655075'];
+  const rows = [], orders = [];
+  let oid = 1;
+  for (let n = 1; n <= 17; n++) {
+    rows.push(ad(n, 'C1', 'S1', '1200000000111', 100)); orders.push(flow(oid++, n, '1200000000111')); // كسبانة طول الوقت: رؤاس 4
+    rows.push(ad(n, 'C4', 'S4', '1200000000411', 200)); // بتصرف من غير أوردرات
+    if (n <= 3) rows.push(ad(n, 'C2', 'S2', '1200000000211', 100, { clicks: 8, v3: 100 })); // الـ CTR وقع في آخر 3 أيام
+    if (n >= 4 && n <= 10) { rows.push(ad(n, 'C2', 'S2', '1200000000211', 100)); orders.push(flow(oid++, n, '1200000000211')); }
+    if (n >= 11) { rows.push(ad(n, 'C3', 'S3', '1200000000311', 100)); orders.push(flow(oid++, n, '1200000000311')); } // كانت كويسة ووقفت
+  }
+  rows.push(ad(3, 'C3', 'S3', '1200000000311', 100));
+  rows.push(ad(2, 'C2', 'S2', '1200000000212', 30, { clicks: 8, v3: 100 })); orders.push(flow(oid++, 2, '1200000000211'));
+  const ads = { [A1]: rows, [A2]: [ad(1, 'C5', 'S5', '1200000000511', 50)] };
+  const e = env({ orderHead: FLOW_HEAD.slice(0, 17), ads, orders,
+    activeAds: { [A1]: ['1200000000111', '1200000000211', '1200000000212', '1200000000411'], [A2]: ['1200000000511'] }, budgets: { C1: { daily_budget: '50000' }, S4: { daily_budget: '20000' } },
+    stock: [['P1', 'V1', 'Lip Oil', 'Default Title', 'LO', 'lip-oil', 40, 300]] });
+  e.c.setupAll();
+  const st = e.ss.getSheetByName('Settings'), keys = st.getDataRange().getValues().map(r => r[0]);
+  st.getRange(keys.indexOf('be.roas') + 1, 2).setValue(2);
+  e.c.liveTick(); e.c.liveTick();
+  const sh = e.ss.getSheetByName('Meta Campaigns');
+  assert.ok(sh, 'التاب اتعمل');
+  assert.equal(e.ss.getSheetByName('Meta Campaigns Raw').hidden, true, 'تاب الأرقام الخام مخفي');
+  const v = () => sh.getDataRange().getValues(), head = () => v().findIndex(r => r[0] === 'القرار');
+  const body = () => v().slice(head() + 1).filter(r => r[20] !== '');
+  assert.deepEqual(v()[head()].slice(0, 14), ['القرار', 'الكامبين / الأد سيت / الإعلان', 'الحساب', 'الحالة', 'الميزانية في اليوم', 'المنتج',
+    'صرف 3 أيام', 'أوردرات 3 أيام', 'رؤاس 3 أيام', 'رؤاس الـ 7 أيام قبلها', 'رؤاس الـ 14 يوم قبلها', 'رؤاس التعادل', 'المترك الواقع', 'السبب وتعمل إيه']);
+  // من بره الكامبينات بس، اللي محتاجة قرار الأول
+  const camps = body().filter(r => /^Camp /.test(r[1]));
+  assert.deepEqual(camps.map(r => [r[0], r[1], r[3], r[4], r[6], r[7], r[8], r[9], r[10], r[11], r[12]]), [
+    ['🔴 وقّفها', 'Camp C4', 'شغالة', 200, 600, 0, 0, 0, 0, 2, 'صفر أوردرات'],
+    ['🟠 وقعت', 'Camp C2', 'شغالة', '', 330, 1, 1.21, 4, 4, 2, 'CTR ↓60%'],
+    ['🔁 رجّعها', 'Camp C3', 'واقفة', '', 100, 0, 0, '', 4, 2, 'صفر أوردرات'],
+    ['🟢 زوّد الميزانية', 'Camp C1', 'شغالة', 500, 300, 3, 4, 4, 4, 2, ''],
+    ['⏳ لسه بدري', 'Camp C5', 'شغالة', '', 50, 0, 0, '', '', 2, '']]);
+  assert.match(camps[1][13], /كانت 4 ونزلت 1\.21 .*الكرياتيف تعب: الـ CTR نزل 60%، والـ Hook نزل 67% ← جرّب كرياتيف جديد/);
+  assert.match(camps[2][13], /كانت كويسة \(رؤاس 4 والتعادل 2\) ← رجّعها/);
+  assert.match(camps[0][13], /تحت التعادل .* ← وقّفها/);
+  // تحت كل كامبين أد سيتسها وتحت كل أد سيت إعلاناته، مقفولين
+  const rowOf = name => head() + 2 + body().findIndex(r => r[1].trim().replace(/^[↳•]\s*/, '') === name);
+  const c2 = rowOf('Camp C2');
+  assert.deepEqual(body().slice(body().findIndex(r => r[1] === 'Camp C2'), body().findIndex(r => r[1] === 'Camp C3')).map(r => r[1].trim()),
+    ['Camp C2', '↳ Set S2', '• Ad 1200000000211', '• Ad 1200000000212']);
+  assert.equal(body().find(r => r[1].trim() === '• Ad 1200000000211')[0], '🟠 وقع');
+  assert.equal(sh.depth[c2] || 0, 0); assert.equal(sh.depth[c2 + 1], 1); assert.equal(sh.depth[c2 + 2], 2);
+  assert.equal(sh.getRowGroup(c2 + 1, 1).isCollapsed(), true, 'مقفولة');
+  assert.ok(String(sh.attr(c2, 16).note).indexOf('الـ 7 أيام قبلها: 2.00%') === 0, 'الـ CTR بتاع الـ 7 أيام في الملاحظة');
+  // الكارت: مين موقّع الرؤس ومين تزوّد عليه
+  const card = name => v().find(r => r[0] === name);
+  assert.ok(card('كل الحسابات') && card('Chance 26'));
+  assert.match(String(card('Chance 26')[12]), /^Camp C4 \(/);
+  assert.match(String(card('Chance 26')[14]), /Camp C1 \(4\).*🔁 Camp C3/);
+  // تفتح الكامبين، وكامبين جديدة تيجي: اللي فتحته يفضل مفتوح
+  sh.getRowGroup(c2 + 1, 1).expand();
+  ads[A1].push(ad(1, 'C6', 'S6', '1200000000611', 40));
+  e.doc.MCAMP_AT = '0';
+  e.c.liveTick();
+  const c2b = rowOf('Camp C2'), c1 = rowOf('Camp C1');
+  assert.ok(body().some(r => r[1] === 'Camp C6'));
+  assert.equal(sh.getRowGroup(c2b + 1, 1).isCollapsed(), false, 'C2 لسه مفتوحة');
+  assert.equal(sh.getRowGroup(c1 + 1, 1).isCollapsed(), true, 'C1 مقفولة');
+  assert.equal(sh.getRowGroup(c2b + 2, 2).isCollapsed(), true, 'إعلانات الأد سيت مقفولة');
 });
