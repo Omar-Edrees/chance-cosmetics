@@ -33,7 +33,7 @@ const SHOPTAB = {
   COUNT: '#,##0', MONEY: '#,##0', PCT: '0.00%',
   /* Sunday first, as Date.getUTCDay(). Shopify's day_of_week is 0 = Monday. */
   DAY_NAMES: ['الأحد', 'الاتنين', 'التلات', 'الأربع', 'الخميس', 'الجمعة', 'السبت'],
-  KEYS: ['sessions', 'atc', 'checkout', 'done', 'bounced', 'orders', 'value', 'reversals', 'total', 'newOrders', 'retOrders', 'newSales', 'retSales'],
+  KEYS: ['sessions', 'atc', 'checkout', 'done', 'bounced', 'orders', 'value', 'reversals', 'total', 'newOrders', 'retOrders', 'newSales', 'retSales', 'gross'],
   QL: 'query($q:String!){shopifyqlQuery(query:$q){tableData{columns{name dataType} rows} parseErrors}}'
 };
 /* What this run read from Shopify for the tab (null: nothing, so the views leave the tab as it is). */
@@ -56,7 +56,8 @@ function shopTabSessions_(r) {
     done: num_(r.sessions_that_completed_checkout), bounced: num_(r.bounce_rate) * num_(r.sessions) };
 }
 function shopTabSales_(r) {
-  return { orders: num_(r.orders), value: num_(r.gross_sales) + num_(r.discounts), reversals: -num_(r.sales_reversals), total: num_(r.total_sales) };
+  return { orders: num_(r.orders), value: num_(r.gross_sales) + num_(r.discounts), reversals: -num_(r.sales_reversals), total: num_(r.total_sales),
+    gross: num_(r.gross_sales) };
 }
 /* New / Returning rows → the four fields (Shopify's "" row, a few refunds with no customer, is left out). */
 function shopTabKind_(r) {
@@ -245,7 +246,8 @@ function shopTabCardModel_(fast, spend) {
   /* {key, title, values [today, yesterday, last week], pct, up: up is good (null: neither)} */
   const cards = [];
   if (spend) cards.push({ key: 'spend', title: 'Ad spend (Meta)', values: [cut(today, 1), cut(y, f), cut(w, f)], pct: false, up: null });
-  [['sessions', 'Sessions', t => t.sessions, false, true], ['total', 'Total sales', t => t.total, false, true], ['orders', 'Orders', t => t.orders, false, true],
+  [['sessions', 'Sessions', t => t.sessions, false, true], ['total', 'Total sales', t => t.total, false, true], ['gross', 'Gross sales', t => t.gross, false, true],
+    ['orders', 'Orders', t => t.orders, false, true],
     ['cr', 'Conversion rate', t => R(t.done, t.sessions), true, true], ['aov', 'AOV', t => R(t.value, t.orders), false, true],
     ['bounce', 'Bounce rate', t => R(t.bounced, t.sessions), true, false]]
     .forEach(m => cards.push({ key: m[0], title: m[1], values: [a, b, c].map(m[2]), pct: m[3], up: m[4] }));
@@ -301,10 +303,16 @@ function shopTabDrawCards_(g, r, model, slots) {
  * its numbers and subtitle change (updateChartSpec), so a card moved or sized by hand stays so. A deleted card comes back.
  * The numbers sit in the cells under the cards (white on white): a scorecard reads cells.
  */
-/* [key, title, percent?, up is good? (null: neither)] — the order of the cards. */
+/*
+ * [key, title, percent?, up is good? (null: neither)] — the order of the cards (and of their cells). A new card goes last, so it
+ * comes where no card was made before (the cards moved by hand stay where they are).
+ * Gross sales = the products of the orders placed today at their price, before discounts, without shipping and before returns
+ * (Shopify's gross_sales); Total sales is after the returns and cancellations recorded today, of older orders too.
+ */
 function todayCardDefs_() {
   return [['spend', 'Ad spend (Meta)', false, null], ['sessions', 'Sessions', false, true], ['total', 'Total sales', false, true],
-    ['orders', 'Orders', false, true], ['cr', 'Conversion rate', true, true], ['aov', 'AOV', false, true], ['bounce', 'Bounce rate', true, false]];
+    ['orders', 'Orders', false, true], ['cr', 'Conversion rate', true, true], ['aov', 'AOV', false, true], ['bounce', 'Bounce rate', true, false],
+    ['gross', 'Gross sales', false, true]];
 }
 /* The advanced service "Google Sheets API" (identifier Sheets) is on in Apps Script: the cards need it. */
 function todayCardsReady_() { return typeof Sheets !== 'undefined' && !!Sheets && !!Sheets.Spreadsheets; }
@@ -442,7 +450,7 @@ function shopTabDaysMap_(fast, slow) {
   const S = SHOPTAB, days = {};
   Object.keys(slow.days || {}).forEach(k => { const t = shopTabZero_(); S.KEYS.forEach((x, i) => { t[x] = slow.days[k][i] || 0; }); days[k] = t; });
   const t0 = shopTabCut_(fast.hours, fast.today, 23, 1);
-  S.KEYS.slice(9).forEach(k => { t0[k] = fast.kinds[k] || 0; });
+  ['newOrders', 'retOrders', 'newSales', 'retSales'].forEach(k => { t0[k] = fast.kinds[k] || 0; });
   days[fast.today] = t0;
   return days;
 }
@@ -595,9 +603,10 @@ function shopTabLayout_(sh) {
   props.setProperty(S.LAYOUT_KEY, String(S.LAYOUT));
 }
 
-/* 1) The cards (without the spend: this page is Shopify's) and what the changes mean. Returns {r, value: the number row}. */
+/* 1) The cards (without the spend and gross sales: Today's only; 6 cards fill the page) and what the changes mean. Returns {r, value: the number row}. */
 function shopTabTop_(g, r, model) {
-  const S = SHOPTAB, own = { day: model.day, at: model.at, wName: model.wName, wDate: model.wDate, cards: model.cards.filter(c => c.key !== 'spend') };
+  const S = SHOPTAB, own = { day: model.day, at: model.at, wName: model.wName, wDate: model.wDate,
+    cards: model.cards.filter(c => c.key !== 'spend' && c.key !== 'gross') };
   const value = r + 1;
   r = shopTabDrawCards_(g, r, own, own.cards.map((c, i) => [1 + i * S.CARD, S.CARD])) + 1;
   model.diag.forEach(x => x[1].forEach((line, i) => {

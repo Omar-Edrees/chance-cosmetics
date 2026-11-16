@@ -1498,14 +1498,18 @@ test('تاب Shopify: بيتقري من شوبيفاي مع التحديث وي�
   assert.match(e.ss.getSheetByName('Health').getDataRange().getValues().map(r => r.join(' ')).join('\n'), /تاب Shopify .*✓ اتقرا/);
   const tv = e.ss.getSheetByName('Today').getDataRange().getValues();
   assert.match(String(tv[0][0]), /DAILY AD CLOSING/, 'Today زي ما هو من فوق');
-  assert.deepEqual(tv.slice(7, 14).map(r => r.slice(0, 2)), [['Ad spend (Meta)', 300], ['Sessions', 1000], ['Total sales', 19500], ['Orders', 20],
-    ['Conversion rate', 0.02], ['AOV', 1000], ['Bounce rate', 0.5]], 'أرقام الكروت في الخلايا اللي تحتها، من صف 8 (صرف Meta بالساعة: 100 لكل أكاونت)');
+  assert.deepEqual(tv.slice(7, 15).map(r => r.slice(0, 2)), [['Ad spend (Meta)', 300], ['Sessions', 1000], ['Total sales', 19500], ['Orders', 20],
+    ['Conversion rate', 0.02], ['AOV', 1000], ['Bounce rate', 0.5], ['Gross sales', 21000]],
+    'أرقام الكروت في الخلايا اللي تحتها، من صف 8 (صرف Meta بالساعة: 100 لكل أكاونت). Gross sales قبل الخصم والمرتجعات');
+  assert.deepEqual(tv.slice(14, 15).map(r => r.slice(2, 3)), [[20000]], 'Gross sales إمبارح لحد نفس الساعة');
   assert.equal(tv[17][0], 'PLATFORM', 'جدول الأكاونتات تحت الكروت بـ 10 صفوف');
   assert.equal(api.length, 1);
   const adds = api[0].filter(r => r.addChart).map(r => r.addChart.chart);
-  assert.equal(adds.length, 7, '7 كروت');
-  assert.deepEqual(Array.from(adds.map(a => a.spec.title)), ['Ad spend (Meta)', 'Sessions', 'Total sales', 'Orders', 'Conversion rate', 'AOV', 'Bounce rate']);
+  assert.equal(adds.length, 8, '8 كروت');
+  assert.deepEqual(Array.from(adds.map(a => a.spec.title)), ['Ad spend (Meta)', 'Sessions', 'Total sales', 'Orders', 'Conversion rate', 'AOV', 'Bounce rate',
+    'Gross sales']);
   const sc = adds[1].spec.scorecardChart, src = x => x.sourceRange.sources[0];
+  assert.equal(src(adds[7].spec.scorecardChart.keyValueData).startRowIndex, 14, 'Gross sales: النهارده من B15');
   assert.deepEqual([src(sc.keyValueData).startRowIndex, src(sc.keyValueData).startColumnIndex, src(sc.baselineValueData).startColumnIndex], [8, 1, 2],
     'Sessions: النهارده من B9 وإمبارح من C9');
   assert.equal(sc.baselineValueFormat.comparisonType, 'PERCENTAGE_DIFFERENCE');
@@ -1514,6 +1518,7 @@ test('تاب Shopify: بيتقري من شوبيفاي مع التحديث وي�
   const cpos = adds.map(a => a.position.overlayPosition);
   assert.deepEqual([cpos[0].anchorCell.rowIndex, cpos[0].anchorCell.columnIndex, cpos[3].offsetXPixels, cpos[4].offsetYPixels], [7, 0, 654, 102], '4 في الصف تحت عنوان الجدول');
   assert.equal(String(v[3][0]), 'Sessions', 'تاب Shopify من غير كارت الصرف ومن غير عنوان');
+  assert.ok(!at('Gross sales'), 'كارت Gross sales في Today بس');
   assert.ok(!v.some(r => /^النهارده لحد/.test(String(r[0]))), 'مفيش عنوان فوق الكروت');
   const n = queries.length;
   e.c.liveTick();
