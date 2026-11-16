@@ -108,6 +108,7 @@ function catchUpGap_() {
 function ensureTriggers_() {
   if (PropertiesService.getDocumentProperties().getProperty('TRIGGERS_PAUSED')) return;
   const have = ScriptApp.getProjectTriggers().map(t => t.getHandlerFunction());
+  try { ensureCardEditTrigger_(have); } catch (e) { console.error('edit trigger: ' + errText_(e)); }
   if (have.indexOf('liveTick') >= 0 && have.indexOf('dailySync') >= 0) return;
   let every = cfgNum_('sync.live_minutes') || 15;
   every = [1, 5, 10, 15, 30].filter(v => v <= every).pop() || 15;

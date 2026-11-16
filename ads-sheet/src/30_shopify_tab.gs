@@ -21,12 +21,15 @@
  */
 const SHOPTAB = {
   TAB: 'Shopify', DATA: 'Shopify Data', SLOW_KEY: 'SHOPTAB_SLOW', CHARTS_KEY: 'SHOPTAB_CHARTS', TC_KEY: 'TODAY_CARD_CHARTS', CARDS_KEY: 'SHOPTAB_CARDS', SPEND_KEY: 'SHOPTAB_SPEND_PAST', LAYOUT_KEY: 'SHOPTAB_LAYOUT', LAYOUT: 2,
-  EVERY_MS: 3 * 3600000, PART: 8000, V: 1,
+  MONTH_KEY: 'SHOPTAB_MONTH_HOURS', EVERY_MS: 3 * 3600000, PART: 8000, V: 2,
   MONTHS: 3, DAYS: 30, CLICK_DAYS: 14, HEAT_DAYS: 28, STEP: 0.05, MIN_SESSIONS: 300, MIN_ORDERS: 10, TOP: 10, MAX_STOCKLESS: 15,
   /* The page: COLS narrow columns (CW px each); a card is 8 columns, a chart half the page (W × H px, SLOT_ROWS rows). */
   COLS: 48, CW: 25, CARD: 8, SLOT_ROWS: 17, CHART_W: 590, CHART_H: 320,
   /* Today's cards: from row TC_ROW, TC_ROWS rows kept; TC_PER_ROW cards a row, TC_W × TC_H px each (the accounts table is ~870px wide). */
   TC_ROW: 8, TC_ROWS: 10, TC_PER_ROW: 4, TC_W: 214, TC_H: 98, TC_GAP: 4,
+  /* The cards' period, chosen in Today (row TC_MODE_ROW, column B): today, or this month until now. */
+  TC_MODE_ROW: 7, MODES: ['النهارده', 'الشهر ده'],
+  MONTH_NAMES: ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو', 'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'],
   DARK: '#1f2937', LABEL: '#f3f4f6', SOFT: '#4b5563', UP: '#15803d', DOWN: '#b91c1c',
   HEAT: ['#ffffff', '#e8eefc', '#c7d6fa', '#9db7f5', '#6f93ee', '#3f6be3'],
   COLORS: ['#2563eb', '#16a34a', '#f59e0b', '#7c3aed', '#dc2626', '#0891b2'],
@@ -82,6 +85,7 @@ function shopTabFetchFast_(hoursOnly) {
     'bounce_rate TIMESERIES hour' + range + ' LIMIT 1000').forEach(r => put(r.hour, shopTabSessions_(r)));
   shopTabQl_('FROM sales SHOW orders, gross_sales, discounts, sales_reversals, total_sales TIMESERIES hour' + range + ' LIMIT 1000')
     .forEach(r => put(r.hour, shopTabSales_(r)));
+  Object.assign(hours, shopTabMonthHours_(today));
   if (hoursOnly) return { atMs: Date.now(), today: today, hours: hours };
   const pages = from => {
     const out = {};
@@ -93,6 +97,43 @@ function shopTabFetchFast_(hoursOnly) {
   shopTabQl_('FROM sales SHOW orders, total_sales GROUP BY new_or_returning_customer SINCE ' + today + ' UNTIL ' + today)
     .forEach(r => shopTabAdd_(kinds, shopTabKind_(r)));
   return { atMs: Date.now(), today: today, hours: hours, pagesToday: pages(today), pagesWeek: pages(shiftKey_(today, -6)), kinds: kinds };
+}
+
+/*
+ * The month cards compare this month until now with the last two months until the same day and time. Those two days, hour
+ * by hour: read once a day (they don't change any more), kept in SHOPTAB.MONTH_KEY. {day: {hour: numbers}}.
+ */
+function shopTabMonthHours_(today) {
+  const props = PropertiesService.getDocumentProperties(), days = [1, 2].map(n => shopTabMonthRef_(today, n).day);
+  let kept = null;
+  try { kept = JSON.parse(props.getProperty(SHOPTAB.MONTH_KEY) || 'null'); } catch (e) { kept = null; }
+  if (kept && kept.day === today) return kept.hours;
+  const tz = tz_(), out = {};
+  days.forEach(d => {
+    const x = out[d] = {};
+    const put = (ts, vals) => {
+      const t = new Date(ts);
+      if (isNaN(t) || dayKey_(t) !== d) return;
+      const h = Number(Utilities.formatDate(t, tz, 'H'));
+      shopTabAdd_(x[h] = x[h] || shopTabZero_(), vals);
+    };
+    const range = ' SINCE ' + d + ' UNTIL ' + d;
+    shopTabQl_('FROM sessions SHOW sessions, sessions_with_cart_additions, sessions_that_reached_checkout, sessions_that_completed_checkout, ' +
+      'bounce_rate TIMESERIES hour' + range + ' LIMIT 100').forEach(r => put(r.hour, shopTabSessions_(r)));
+    shopTabQl_('FROM sales SHOW orders, gross_sales, discounts, sales_reversals, total_sales TIMESERIES hour' + range + ' LIMIT 100')
+      .forEach(r => put(r.hour, shopTabSales_(r)));
+  });
+  props.setProperty(SHOPTAB.MONTH_KEY, JSON.stringify({ day: today, hours: out }));
+  return out;
+}
+/*
+ * The month `back` months before today's: {from: its first day, day: the same day of the month as today (its last day when
+ * it is shorter), whole: today's day is past its end (so it counts whole), name}.
+ */
+function shopTabMonthRef_(today, back) {
+  const p = today.split('-').map(Number), first = new Date(Date.UTC(p[0], p[1] - 1 - back, 1)), m = first.getUTCMonth();
+  const last = new Date(Date.UTC(first.getUTCFullYear(), m + 1, 0)).getUTCDate(), from = first.toISOString().slice(0, 10);
+  return { from: from, day: from.slice(0, 8) + String(Math.min(p[2], last)).padStart(2, '0'), whole: p[2] > last, name: SHOPTAB.MONTH_NAMES[m] };
 }
 
 /* Ad set / campaign / ad ID (utm_term) → our Meta account: the ID in Ads Raw, else its last 4 digits. '' for anything else. */
@@ -209,50 +250,95 @@ function refreshShopTabNow() {
 /* ---------- The cards (the Shopify tab and Today) ---------- */
 
 /*
- * Meta spend hour by hour (all Meta accounts, the accounts' time zone): {day: [24]} for today, yesterday and the same
- * weekday last week. The two past days are read once a day (SHOPTAB.SPEND_KEY).
+ * Meta spend (all Meta accounts, the accounts' time zone): {hours: {day: [24]}, days: {day: spend}}. hours: today, yesterday,
+ * the same weekday last week, and the same day of the last two months (the month cards). days: every day from the first of
+ * the month two months ago until yesterday. All but today is read once a day (SHOPTAB.SPEND_KEY).
  */
 function shopTabSpendHours_(today) {
-  const accs = accounts_('META'), y = shiftKey_(today, -1), w = shiftKey_(today, -7), props = PropertiesService.getDocumentProperties(), out = {};
+  const accs = accounts_('META'), props = PropertiesService.getDocumentProperties(), out = { hours: {}, days: {} };
   if (!accs.length) return out;
-  let past = null;
-  try { past = JSON.parse(props.getProperty(SHOPTAB.SPEND_KEY) || 'null'); } catch (e) { past = null; }
-  const have = past && past.day === today, days = have ? [today] : [today, y, w], reqs = [];
-  days.forEach(d => { out[d] = new Array(24).fill(0); accs.forEach(a => reqs.push({ d: d, path: 'act_' + a.id + '/insights', params: { level: 'account',
+  const past = [shiftKey_(today, -1), shiftKey_(today, -7)].concat([1, 2].map(n => shopTabMonthRef_(today, n).day));
+  const from = shopTabMonthRef_(today, 2).from, yest = shiftKey_(today, -1);
+  let kept = null;
+  try { kept = JSON.parse(props.getProperty(SHOPTAB.SPEND_KEY) || 'null'); } catch (e) { kept = null; }
+  const have = kept && kept.day === today && kept.days && past.every(d => kept.hours[d]), days = have ? [today] : [today].concat(past), reqs = [];
+  days.forEach(d => { out.hours[d] = new Array(24).fill(0); accs.forEach(a => reqs.push({ d: d, path: 'act_' + a.id + '/insights', params: { level: 'account',
     fields: 'spend', breakdowns: 'hourly_stats_aggregated_by_advertiser_time_zone', time_range: JSON.stringify({ since: d, until: d }), limit: 100 } })); });
+  if (!have) accs.forEach(a => reqs.push({ daily: true, path: 'act_' + a.id + '/insights', params: { level: 'account', fields: 'spend,date_start',
+    time_range: JSON.stringify({ since: from, until: yest }), time_increment: 1, limit: 500 } }));
   const res = metaMany_(reqs.map(x => ({ path: x.path, params: x.params })));
   res.forEach((x, i) => {
     if (x.error) throw new Error('صرف Meta بالساعة: ' + x.error);
     (x.payload.data || []).forEach(r => {
+      if (reqs[i].daily) {
+        const d = String(r.date_start || '');
+        if (d >= from && d <= yest) out.days[d] = (out.days[d] || 0) + num_(r.spend);
+        return;
+      }
       const h = Number(String(r.hourly_stats_aggregated_by_advertiser_time_zone || '').slice(0, 2));
-      if (h >= 0 && h < 24) out[reqs[i].d][h] += num_(r.spend);
+      if (h >= 0 && h < 24) out.hours[reqs[i].d][h] += num_(r.spend);
     });
   });
-  if (have) Object.assign(out, past.hours);
-  else props.setProperty(SHOPTAB.SPEND_KEY, JSON.stringify({ day: today, hours: { [y]: out[y], [w]: out[w] } }));
+  if (have) { Object.assign(out.hours, kept.hours); out.days = kept.days; }
+  else {
+    const keep = {};
+    past.forEach(d => { keep[d] = out.hours[d]; });
+    props.setProperty(SHOPTAB.SPEND_KEY, JSON.stringify({ day: today, hours: keep, days: out.days }));
+  }
   return out;
 }
 
 /*
- * The cards: today until now, yesterday and the same weekday last week until the same time, and what the changes mean.
- * spend (or null): Meta spend by hour. Saved in SHOPTAB.CARDS_KEY for the Shopify tab and Today.
+ * The cards: today until now, yesterday and the same weekday last week until the same time, and what the changes mean;
+ * and the same cards for this month (month: see shopTabMonthModel_). spend (or null): Meta spend (shopTabSpendHours_).
+ * Saved in SHOPTAB.CARDS_KEY for the Shopify tab and Today.
  */
 function shopTabCardModel_(fast, spend) {
-  const S = SHOPTAB, R = shopTabRatio_, now = new Date(fast.atMs), tz = tz_(), H = Number(Utilities.formatDate(now, tz, 'H'));
+  const S = SHOPTAB, now = new Date(fast.atMs), tz = tz_(), H = Number(Utilities.formatDate(now, tz, 'H'));
   const f = Number(Utilities.formatDate(now, tz, 'm')) / 60, today = fast.today, y = shiftKey_(today, -1), w = shiftKey_(today, -7);
   const a = shopTabCut_(fast.hours, today, H, 1), b = shopTabCut_(fast.hours, y, H, f), c = shopTabCut_(fast.hours, w, H, f);
-  const cut = (d, part) => { const x = (spend || {})[d]; if (!x) return ''; let t = 0; for (let h = 0; h <= H; h++) t += num_(x[h]) * (h < H ? 1 : part); return round2_(t); };
+  const hs = (spend || {}).hours || {};
+  const cut = (d, part) => { const x = hs[d]; if (!x) return ''; let t = 0; for (let h = 0; h <= H; h++) t += num_(x[h]) * (h < H ? 1 : part); return round2_(t); };
   const wName = S.DAY_NAMES[shopTabWeekday_(w)] + ' اللي فات';
-  /* {key, title, values [today, yesterday, last week], pct, up: up is good (null: neither)} */
-  const cards = [];
-  if (spend) cards.push({ key: 'spend', title: 'Ad spend (Meta)', values: [cut(today, 1), cut(y, f), cut(w, f)], pct: false, up: null });
+  return { day: today, atMs: fast.atMs, at: Utilities.formatDate(now, tz, 'HH:mm'), wName: wName, wDate: Number(w.slice(8, 10)) + '/' + Number(w.slice(5, 7)),
+    cards: shopTabCardsOf_([a, b, c], spend ? [cut(today, 1), cut(y, f), cut(w, f)] : null),
+    month: shopTabMonthModel_(fast, spend, H, f, a, cut),
+    diag: [['قدام إمبارح: ', shopTabDiagnose_(a, b)], ['قدام ' + wName + ': ', shopTabDiagnose_(a, c)]] };
+}
+/* The cards for three periods' numbers: [{key, title, values [3], pct, up: up is good (null: neither)}]. spend: [3] or null (no spend card). */
+function shopTabCardsOf_(periods, spend) {
+  const R = shopTabRatio_, cards = [];
+  if (spend) cards.push({ key: 'spend', title: 'Ad spend (Meta)', values: spend, pct: false, up: null });
   [['sessions', 'Sessions', t => t.sessions, false, true], ['total', 'Total sales', t => t.total, false, true], ['gross', 'Gross sales', t => t.gross, false, true],
     ['orders', 'Orders', t => t.orders, false, true],
     ['cr', 'Conversion rate', t => R(t.done, t.sessions), true, true], ['aov', 'AOV', t => R(t.value, t.orders), false, true],
     ['bounce', 'Bounce rate', t => R(t.bounced, t.sessions), true, false]]
-    .forEach(m => cards.push({ key: m[0], title: m[1], values: [a, b, c].map(m[2]), pct: m[3], up: m[4] }));
-  return { day: today, atMs: fast.atMs, at: Utilities.formatDate(now, tz, 'HH:mm'), wName: wName, wDate: Number(w.slice(8, 10)) + '/' + Number(w.slice(5, 7)),
-    cards: cards, diag: [['قدام إمبارح: ', shopTabDiagnose_(a, b)], ['قدام ' + wName + ': ', shopTabDiagnose_(a, c)]] };
+    .forEach(m => cards.push({ key: m[0], title: m[1], values: periods.map(m[2]), pct: m[3], up: m[4] }));
+  return cards;
+}
+/*
+ * The month cards: this month from its first day until now, against the last month and the one before it from their first
+ * day until the same day and time (that day's hour now by the minutes gone, like the day cards; a shorter month counts whole).
+ * The days before today come from the slow part (read today, so yesterday is whole), today and the two days from the hours
+ * (shopTabMonthHours_). Spend: Meta's days (spend.days) + the hours. a: today until now; cut(day, part): spend until now.
+ * null until the slow part of today is read. {name, bName, cName: the months' labels, cards}.
+ */
+function shopTabMonthModel_(fast, spend, H, f, a, cut) {
+  const slow = shopTabSlow_(), today = fast.today;
+  if (!slow || slow.day !== today) return null;
+  const refs = [0, 1, 2].map(n => shopTabMonthRef_(today, n)), days = shopTabSlowDays_(slow), before = d => shiftKey_(d, -1);
+  const sum = (from, to) => Object.keys(days).filter(k => k >= from && k <= to).reduce((t, k) => shopTabAdd_(t, days[k]), shopTabZero_());
+  const per = refs.map((r, n) => (!n ? shopTabAdd_(sum(r.from, before(today)), a) : r.whole ? sum(r.from, r.day)
+    : fast.hours[r.day] ? shopTabAdd_(sum(r.from, before(r.day)), shopTabCut_(fast.hours, r.day, H, f)) : null));
+  if (per.some(x => !x)) return null;
+  let sp = null;
+  if (spend && spend.days) {
+    const sd = spend.days, sumS = (from, to) => Object.keys(sd).filter(k => k >= from && k <= to).reduce((t, k) => t + num_(sd[k]), 0);
+    sp = refs.map((r, n) => (!n ? round2_(sumS(r.from, before(today)) + num_(cut(today, 1))) : r.whole ? round2_(sumS(r.from, r.day))
+      : spend.hours[r.day] ? round2_(sumS(r.from, before(r.day)) + num_(cut(r.day, f))) : ''));
+  }
+  const label = r => r.name + (r.whole ? ' كله' : ' لحد ' + Number(r.day.slice(8, 10)));
+  return { name: refs[0].name, bName: label(refs[1]), cName: label(refs[2]), cards: shopTabCardsOf_(per, sp) };
 }
 /* Reads Meta's spend by hour and saves the cards. Returns a note for the status ('' when all went well). */
 function shopTabSaveCards_(fast) {
@@ -329,27 +415,83 @@ function todayCardNote_(g) {
   g.merge(SHOPTAB.TC_ROW, 1, 1, 6);
   return null;
 }
-/* The cards' numbers in the cells under them: row SHOPTAB.TC_ROW + i = [title, today, yesterday, last week]. */
+/* The period the cards show, as chosen in Today (column B of row SHOPTAB.TC_MODE_ROW): 'day' or 'month'. */
+function todayCardMode_() {
+  try {
+    const sh = ss_().getSheetByName(APP.T.TODAY);
+    return sh && String(sh.getRange(SHOPTAB.TC_MODE_ROW, 2).getValue()).trim() === SHOPTAB.MODES[1] ? 'month' : 'day';
+  } catch (e) { return 'day'; }
+}
+/*
+ * What the cards show for a period: {cards, cName: the third period (the subtitle), desc: what the change is against,
+ * note: the line next to the choice}. The month before its numbers are ready: no cards and a note.
+ */
+function todayCardView_(model, mode) {
+  if (mode === 'month') {
+    const m = model && model.month;
+    if (!m) return { cards: [], cName: '', desc: ' ', note: 'أرقام الشهر بتتحسب مع التحديث الجاي (🔄 أو استنى ربع ساعة).' };
+    return { cards: m.cards, cName: m.cName, desc: '\u200F\u202Bعن ' + m.bName + '\u202C',
+      note: 'من أول ' + m.name + ' لحد دلوقتي. التغيير عن ' + m.bName + '، وتحت ' + m.cName + '، لحد نفس الساعة.' };
+  }
+  return { cards: model ? model.cards : [], cName: model ? model.wName : '', desc: 'عن إمبارح',
+    note: 'النهارده لحد دلوقتي. التغيير عن إمبارح، وتحت ' + (model ? model.wName : 'نفس اليوم الأسبوع اللي فات') + '، لحد نفس الساعة.' };
+}
+/*
+ * Row SHOPTAB.TC_MODE_ROW: the cards' period (a list in column B) and what it means; then the cards' numbers in the cells
+ * under them: row SHOPTAB.TC_ROW + i = [title, now, the period before (the change), the one before it (the subtitle)].
+ * Returns the view (todayCardView_).
+ */
 function todayCardCells_(g) {
-  const S = SHOPTAB, model = shopTabCards_(), hide = { fc: '#ffffff', bg: '#ffffff' };
+  const S = SHOPTAB, mode = todayCardMode_(), view = todayCardView_(shopTabCards_(), mode), hide = { fc: '#ffffff', bg: '#ffffff' };
+  g.set(S.TC_MODE_ROW, 1, 'الكروت', { bg: '#f3f4f6', b: 'bold' });
+  g.set(S.TC_MODE_ROW, 2, S.MODES[mode === 'month' ? 1 : 0], { bg: '#fff2cc', b: 'bold', al: 'center' });
+  g.set(S.TC_MODE_ROW, 3, view.note, { fc: S.SOFT });
   for (let r = S.TC_ROW; r < S.TC_ROW + S.TC_ROWS; r++) g.fill(r, 1, 6, hide);
   todayCardDefs_().forEach((d, i) => {
-    const c = model && model.cards.find(x => x.key === d[0]), v = c ? c.values : ['', '', ''];
+    const c = view.cards.find(x => x.key === d[0]), v = c ? c.values : ['', '', ''];
     g.set(S.TC_ROW + i, 1, d[1], hide);
     v.forEach((x, j) => g.set(S.TC_ROW + i, 2 + j, x, Object.assign({ nf: d[2] ? S.PCT : S.COUNT }, hide)));
   });
-  return model;
+  return view;
+}
+/* The list in Today to choose the cards' period (after Today is written). */
+function todayCardModeRule_(sh) {
+  sh.getRange(SHOPTAB.TC_MODE_ROW, 2).setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(SHOPTAB.MODES, true)
+    .setAllowInvalid(false).build());
+}
+/*
+ * Installable edit trigger (a simple onEdit can't call the Sheets API): choosing the period in Today rewrites the cards'
+ * cells and charts at once, from the saved numbers (nothing is read from Shopify or Meta).
+ */
+function todayCardsEdit(e) {
+  try {
+    const S = SHOPTAB, rg = e && e.range;
+    if (!rg || rg.getRow() !== S.TC_MODE_ROW || rg.getColumn() !== 2 || rg.getSheet().getName() !== APP.T.TODAY || !todayCardsReady_()) return;
+    const sh = rg.getSheet(), g = todayGrid_(), view = todayCardCells_(g), n = S.TC_ROW + S.TC_ROWS - S.TC_MODE_ROW, v = [], nf = [];
+    for (let r = 0; r < n; r++) {
+      const line = g.rows[S.TC_MODE_ROW - 1 + r] || [];
+      v.push([]); nf.push([]);
+      for (let c = 0; c < 6; c++) { v[r].push(line[c] ? line[c].v : ''); nf[r].push(line[c] ? line[c].nf : 'General'); }
+    }
+    sh.getRange(S.TC_MODE_ROW, 1, n, 6).setNumberFormats(nf).setValues(v);
+    todayCardCharts_(sh, view);
+  } catch (err) { console.log('todayCardsEdit: ' + errText_(err)); }
+}
+/* The edit trigger above exists when the sheet is connected to Shopify. have: the triggers' function names. */
+function ensureCardEditTrigger_(have) {
+  if (have.indexOf('todayCardsEdit') >= 0 || !shopifyProps_().getProperty('SHOPIFY_TOKEN')) return;
+  ScriptApp.newTrigger('todayCardsEdit').forSpreadsheet(ss_()).onEdit().create();
 }
 function shopTabRgb_(hex) { return { red: parseInt(hex.slice(1, 3), 16) / 255, green: parseInt(hex.slice(3, 5), 16) / 255, blue: parseInt(hex.slice(5, 7), 16) / 255 }; }
-/* A card's chart: key value = today (column B), baseline = yesterday (column C), last week in the subtitle. */
-function todayCardSpec_(d, i, sheetId, model) {
-  const S = SHOPTAB, row = S.TC_ROW - 1 + i, c = model && model.cards.find(x => x.key === d[0]);
+/* A card's chart: key value = now (column B), baseline = the period before (column C), the one before it in the subtitle. view: todayCardView_. */
+function todayCardSpec_(d, i, sheetId, view) {
+  const S = SHOPTAB, row = S.TC_ROW - 1 + i, c = view.cards.find(x => x.key === d[0]);
   const cell = col => ({ sourceRange: { sources: [{ sheetId: sheetId, startRowIndex: row, endRowIndex: row + 1, startColumnIndex: col, endColumnIndex: col + 1 }] } });
   let sub = ' ';
   if (c) {
     const chg = shopTabChange_(c.values[0], c.values[2]);
     // RLM + RLE … PDF: the chart writes left to right, and without them the Arabic and the numbers come out jumbled.
-    sub = '\u200F\u202B' + model.wName + ': ' + shopTabShow_(c.values[2], d[2]) +
+    sub = '\u200F\u202B' + view.cName + ': ' + shopTabShow_(c.values[2], d[2]) +
       (chg === '' ? '' : ' (' + (chg > 0 ? '+' : chg < 0 ? '-' : '') + Math.round(Math.abs(chg) * 100) + '%)') + '\u202C';
   }
   const good = d[3] === null ? S.SOFT : d[3] ? S.UP : S.DOWN, bad = d[3] === null ? S.SOFT : d[3] ? S.DOWN : S.UP;
@@ -358,17 +500,17 @@ function todayCardSpec_(d, i, sheetId, model) {
     subtitleTextFormat: { bold: true, fontSize: 10, foregroundColor: shopTabRgb_('#374151') }, subtitleTextPosition: { horizontalAlignment: 'CENTER' },
     scorecardChart: { keyValueData: cell(1), baselineValueData: cell(2), numberFormatSource: 'FROM_DATA',
       keyValueFormat: { textFormat: { bold: true, fontSize: 24, foregroundColor: shopTabRgb_('#000000') }, position: { horizontalAlignment: 'CENTER' } },
-      baselineValueFormat: { comparisonType: 'PERCENTAGE_DIFFERENCE', description: 'عن إمبارح', textFormat: { bold: true, fontSize: 11 },
+      baselineValueFormat: { comparisonType: 'PERCENTAGE_DIFFERENCE', description: view.desc, textFormat: { bold: true, fontSize: 11 },
         position: { horizontalAlignment: 'CENTER' }, positiveColor: shopTabRgb_(good), negativeColor: shopTabRgb_(bad) } } };
 }
 /* Makes the missing cards and updates the others (after Today is written). Errors go to Health. */
-function todayCardCharts_(sh, model) {
+function todayCardCharts_(sh, view) {
   const S = SHOPTAB, props = PropertiesService.getDocumentProperties(), sheetId = sh.getSheetId(), defs = todayCardDefs_();
   let ids = {};
   try { ids = JSON.parse(props.getProperty(S.TC_KEY) || '{}'); } catch (e) { ids = {}; }
   const have = new Set(sh.getCharts().map(c => String(c.getChartId()))), reqs = [], made = [];
   defs.forEach((d, i) => {
-    const spec = todayCardSpec_(d, i, sheetId, model), id = ids[d[0]];
+    const spec = todayCardSpec_(d, i, sheetId, view), id = ids[d[0]];
     if (id !== undefined && have.has(String(id))) { reqs.push({ updateChartSpec: { chartId: id, spec: spec } }); return; }
     made.push([reqs.length, d[0]]);
     reqs.push({ addChart: { chart: { spec: spec, position: { overlayPosition: {
@@ -445,10 +587,15 @@ function shopTabShow_(v, pct) {
   if (typeof v !== 'number' || !isFinite(v)) return '—';
   return pct ? (Math.round(v * 10000) / 100).toFixed(2) + '%' : String(Math.round(v)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
+/* The slow part's days: {day: numbers}. */
+function shopTabSlowDays_(slow) {
+  const days = {};
+  Object.keys(slow.days || {}).forEach(k => { const t = shopTabZero_(); SHOPTAB.KEYS.forEach((x, i) => { t[x] = slow.days[k][i] || 0; }); days[k] = t; });
+  return days;
+}
 /* Day → numbers: the slow part's days, today from this run's hours. */
 function shopTabDaysMap_(fast, slow) {
-  const S = SHOPTAB, days = {};
-  Object.keys(slow.days || {}).forEach(k => { const t = shopTabZero_(); S.KEYS.forEach((x, i) => { t[x] = slow.days[k][i] || 0; }); days[k] = t; });
+  const days = shopTabSlowDays_(slow);
   const t0 = shopTabCut_(fast.hours, fast.today, 23, 1);
   ['newOrders', 'retOrders', 'newSales', 'retSales'].forEach(k => { t0[k] = fast.kinds[k] || 0; });
   days[fast.today] = t0;

@@ -101,7 +101,7 @@ function env(options) {
     const body = reply(url); return { getResponseCode: () => 200, getContentText: () => JSON.stringify(body) };
   };
   const triggers = [];
-  const trigger = fn => { const b = { timeBased: () => b, everyMinutes: () => b, atHour: () => b, nearMinute: () => b, everyDays: () => b,
+  const trigger = fn => { const b = { timeBased: () => b, everyMinutes: () => b, atHour: () => b, nearMinute: () => b, everyDays: () => b, forSpreadsheet: () => b, onEdit: () => b,
     inTimezone: () => b, create: () => { const t = { getHandlerFunction: () => fn }; triggers.push(t); return t; } }; return b; };
   const c = load('ads-sheet', {
     SpreadsheetApp: {
@@ -1531,6 +1531,32 @@ test('تاب Shopify: بيتقري من شوبيفاي مع التحديث وي�
   e.doc.TODAY_CARD_CHARTS_SIG = 'x'; e.doc['GH_Today'] = 'x';
   e.c.liveTick();
   assert.deepEqual(Array.from(api[api.length - 1].filter(r => r.addChart).map(r => r.addChart.chart.spec.title)), ['Ad spend (Meta)'], 'الكارت اللي اتمسح بيرجع لوحده');
+  // الكروت بالشهر: الاختيار في B7، وتريجر التعديل بيقلب الكروت على طول من الأرقام المتخزنة
+  assert.equal(tv[6][1], 'النهارده', 'الاختيار في B7، والأول النهارده');
+  assert.ok(e.triggers.some(t => t.getHandlerFunction() === 'todayCardsEdit'), 'تريجر التعديل اتعمل لوحده');
+  const sameMonth = y.slice(0, 7) === today.slice(0, 7), months = ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو', 'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'];
+  const p = today.split('-').map(Number), last = months[new Date(Date.UTC(p[0], p[1] - 2, 1)).getUTCMonth()];
+  const n0 = queries.length;
+  td.getRange(7, 2).setValue('الشهر ده');
+  e.c.todayCardsEdit({ range: td.getRange(7, 2) });
+  assert.equal(queries.length, n0, 'التبديل مابيقراش حاجة من شوبيفاي');
+  const mv = td.getDataRange().getValues(), row = t => mv.find(r => r[0] === t);
+  assert.equal(row('Sessions')[1], 1000 + (sameMonth ? 800 : 0), 'من أول الشهر: الأيام اللي فاتت من الجزء اللي بيتقري كل 3 ساعات + النهارده لحد دلوقتي');
+  assert.equal(row('Orders')[1], 20 + (sameMonth ? 20 : 0));
+  assert.equal(row('Gross sales')[1], 21000 + (sameMonth ? 20000 : 0));
+  assert.equal(row('Ad spend (Meta)')[1], 300, 'صرف الشهر: أيام Meta اللي فاتت (مفيش صرف قبل النهارده هنا) + النهارده بالساعة');
+  assert.match(String(mv[6][2]), new RegExp('^من أول ' + months[p[1] - 1] + ' لحد دلوقتي. التغيير عن ' + last + ' (كله|لحد ' + Math.min(p[2], 31) + ')'));
+  const ups = api[api.length - 1].filter(r => r.updateChartSpec).map(r => r.updateChartSpec.spec);
+  assert.equal(ups.length, 8, 'الكروت كلها اتحدثت مكانها');
+  assert.match(ups[1].scorecardChart.baselineValueFormat.description, new RegExp('عن ' + last));
+  td.getRange(7, 2).setValue('النهارده');
+  e.c.todayCardsEdit({ range: td.getRange(7, 2) });
+  assert.equal(td.getDataRange().getValues().find(r => r[0] === 'Sessions')[1], 1000, 'ورجعت للنهارده');
+  assert.equal(api[api.length - 1].filter(r => r.updateChartSpec)[1].updateChartSpec.spec.scorecardChart.baselineValueFormat.description, 'عن إمبارح');
+  td.getRange(7, 2).setValue('الشهر ده');
+  e.doc['GH_Today'] = 'x';
+  e.c.liveTick();
+  assert.equal(e.ss.getSheetByName('Today').getDataRange().getValues().find(r => r[0] === 'Sessions')[1], 1000 + (sameMonth ? 800 : 0), 'التحديث الجاي بيفضل على الشهر');
 });
 
 test('Today: من غير خدمة Google Sheets API، مكان الكروت فيه سطر بيقول تعمل إيه', () => {
