@@ -1468,6 +1468,9 @@ test('تاب Shopify: بيتقري من شوبيفاي مع التحديث وي�
   e.c.liveTick();
   const sh = e.ss.getSheetByName('Shopify'), data = e.ss.getSheetByName('Shopify Data');
   assert.ok(sh && data && !data.hidden, 'التاب اتعمل، وداتا الرسوم في تاب ظاهر (الرسوم بتطلع فاضية من تاب مخفي)');
+  const sessionQs = queries.filter(q => /^FROM sessions /.test(q));
+  assert.ok(sessionQs.length >= 6, 'كل قرايات الزيارات اتعملت');
+  sessionQs.forEach(q => assert.match(q, /WHERE (.* AND )?human_or_bot_session = 'human' /, 'الزيارات من غير البوتات، زي شوبيفاي: ' + q));
   assert.ok(queries.length >= 12 && queries.every(q => /^FROM /.test(q)), 'تقارير بس');
   const v = sh.getDataRange().getValues(), at = t => { for (let r = 0; r < v.length; r++) { const c = v[r].indexOf(t); if (c >= 0) return [r, c]; } return null; };
   const card = t => { const p = at(t); return [v[p[0] + 1][p[1]], v[p[0] + 2][p[1]], v[p[0] + 3][p[1]]]; };

@@ -12,6 +12,8 @@
  *  3) Orders by weekday and hour (the last 4 full weeks, an average day), colored like Shopify's "Weekly sales patterns".
  * The charts read the tab SHOPTAB.DATA (grey, not hidden: charts on a hidden tab came out empty), and are made again only
  * when what they read moves (SHOPTAB_CHARTS).
+ * Sessions are people only (human_or_bot_session = 'human'), as on Shopify's own pages: bot sessions are left out of every
+ * sessions query, so sessions, conversion and bounce rate match Shopify's.
  * These are Shopify's numbers, not the sheet's: orders are every store order (the outside account's too), and total sales is
  * as Shopify shows it (returns and cancellations recorded that day come off). AOV = (gross sales − discounts) ÷ orders, the
  * value of the orders placed, so returns of older orders don't move it. The COD form places its orders in a session of its
@@ -21,7 +23,9 @@
  */
 const SHOPTAB = {
   TAB: 'Shopify', DATA: 'Shopify Data', SLOW_KEY: 'SHOPTAB_SLOW', CHARTS_KEY: 'SHOPTAB_CHARTS', TC_KEY: 'TODAY_CARD_CHARTS', CARDS_KEY: 'SHOPTAB_CARDS', SPEND_KEY: 'SHOPTAB_SPEND_PAST', LAYOUT_KEY: 'SHOPTAB_LAYOUT', LAYOUT: 2,
-  MONTH_KEY: 'SHOPTAB_MONTH_HOURS', EVERY_MS: 3 * 3600000, PART: 8000, V: 2,
+  MONTH_KEY: 'SHOPTAB_MONTH_HOURS', EVERY_MS: 3 * 3600000, PART: 8000, V: 3,
+  /* People only, as Shopify's own pages show sessions: bot sessions (most of them land, bounce and never buy) are left out. */
+  HUMAN: "human_or_bot_session = 'human'",
   MONTHS: 3, DAYS: 30, CLICK_DAYS: 14, HEAT_DAYS: 28, STEP: 0.05, MIN_SESSIONS: 300, MIN_ORDERS: 10, TOP: 10, MAX_STOCKLESS: 15,
   /* The page: COLS narrow columns (CW px each); a card is 8 columns, a chart half the page (W × H px, SLOT_ROWS rows). */
   COLS: 48, CW: 25, CARD: 8, SLOT_ROWS: 17, CHART_W: 590, CHART_H: 320,
@@ -82,14 +86,14 @@ function shopTabFetchFast_(hoursOnly) {
   };
   const range = ' SINCE ' + week + ' UNTIL ' + today;
   shopTabQl_('FROM sessions SHOW sessions, sessions_with_cart_additions, sessions_that_reached_checkout, sessions_that_completed_checkout, ' +
-    'bounce_rate TIMESERIES hour' + range + ' LIMIT 1000').forEach(r => put(r.hour, shopTabSessions_(r)));
+    'bounce_rate WHERE ' + SHOPTAB.HUMAN + ' TIMESERIES hour' + range + ' LIMIT 1000').forEach(r => put(r.hour, shopTabSessions_(r)));
   shopTabQl_('FROM sales SHOW orders, gross_sales, discounts, sales_reversals, total_sales TIMESERIES hour' + range + ' LIMIT 1000')
     .forEach(r => put(r.hour, shopTabSales_(r)));
   Object.assign(hours, shopTabMonthHours_(today));
   if (hoursOnly) return { atMs: Date.now(), today: today, hours: hours };
   const pages = from => {
     const out = {};
-    shopTabQl_("FROM sessions SHOW sessions WHERE landing_page_path CONTAINS '/products/' GROUP BY landing_page_path SINCE " + from +
+    shopTabQl_("FROM sessions SHOW sessions WHERE landing_page_path CONTAINS '/products/' AND " + SHOPTAB.HUMAN + " GROUP BY landing_page_path SINCE " + from +
       ' UNTIL ' + today + ' ORDER BY sessions DESC LIMIT 1000').forEach(r => { out[String(r.landing_page_path)] = num_(r.sessions); });
     return out;
   };
@@ -107,7 +111,7 @@ function shopTabMonthHours_(today) {
   const props = PropertiesService.getDocumentProperties(), days = [1, 2].map(n => shopTabMonthRef_(today, n).day);
   let kept = null;
   try { kept = JSON.parse(props.getProperty(SHOPTAB.MONTH_KEY) || 'null'); } catch (e) { kept = null; }
-  if (kept && kept.day === today) return kept.hours;
+  if (kept && kept.day === today && kept.v === SHOPTAB.V) return kept.hours;
   const tz = tz_(), out = {};
   days.forEach(d => {
     const x = out[d] = {};
@@ -119,11 +123,11 @@ function shopTabMonthHours_(today) {
     };
     const range = ' SINCE ' + d + ' UNTIL ' + d;
     shopTabQl_('FROM sessions SHOW sessions, sessions_with_cart_additions, sessions_that_reached_checkout, sessions_that_completed_checkout, ' +
-      'bounce_rate TIMESERIES hour' + range + ' LIMIT 100').forEach(r => put(r.hour, shopTabSessions_(r)));
+      'bounce_rate WHERE ' + SHOPTAB.HUMAN + ' TIMESERIES hour' + range + ' LIMIT 100').forEach(r => put(r.hour, shopTabSessions_(r)));
     shopTabQl_('FROM sales SHOW orders, gross_sales, discounts, sales_reversals, total_sales TIMESERIES hour' + range + ' LIMIT 100')
       .forEach(r => put(r.hour, shopTabSales_(r)));
   });
-  props.setProperty(SHOPTAB.MONTH_KEY, JSON.stringify({ day: today, hours: out }));
+  props.setProperty(SHOPTAB.MONTH_KEY, JSON.stringify({ v: SHOPTAB.V, day: today, hours: out }));
   return out;
 }
 /*
@@ -154,7 +158,7 @@ function shopTabFetchSlow_() {
   const day = r => { const k = String(r.day || '').slice(0, 10); return days[k] = days[k] || shopTabZero_(); };
   const range = ' SINCE ' + from + ' UNTIL ' + today;
   shopTabQl_('FROM sessions SHOW sessions, sessions_with_cart_additions, sessions_that_reached_checkout, sessions_that_completed_checkout, ' +
-    'bounce_rate TIMESERIES day' + range + ' LIMIT 1000').forEach(r => shopTabAdd_(day(r), shopTabSessions_(r)));
+    'bounce_rate WHERE ' + SHOPTAB.HUMAN + ' TIMESERIES day' + range + ' LIMIT 1000').forEach(r => shopTabAdd_(day(r), shopTabSessions_(r)));
   shopTabQl_('FROM sales SHOW orders, gross_sales, discounts, sales_reversals, total_sales TIMESERIES day' + range + ' LIMIT 1000')
     .forEach(r => shopTabAdd_(day(r), shopTabSales_(r)));
   shopTabQl_('FROM sales SHOW orders, total_sales GROUP BY new_or_returning_customer TIMESERIES day' + range + ' LIMIT 2000')
@@ -166,8 +170,8 @@ function shopTabFetchSlow_() {
     if (d >= 0 && d < 7 && h >= 0 && h < 24) heat[d][h] += num_(r.orders);
   });
   const last30 = ' SINCE ' + d30 + ' UNTIL ' + today;
-  const device = shopTabQl_('FROM sessions SHOW sessions GROUP BY session_device_type' + last30).map(r => [String(r.session_device_type || ''), num_(r.sessions)]);
-  const region = shopTabQl_('FROM sessions SHOW sessions GROUP BY session_region' + last30 + ' ORDER BY sessions DESC LIMIT 100')
+  const device = shopTabQl_('FROM sessions SHOW sessions WHERE ' + S.HUMAN + ' GROUP BY session_device_type' + last30).map(r => [String(r.session_device_type || ''), num_(r.sessions)]);
+  const region = shopTabQl_('FROM sessions SHOW sessions WHERE ' + S.HUMAN + ' GROUP BY session_region' + last30 + ' ORDER BY sessions DESC LIMIT 100')
     .map(r => [String(r.session_region || ''), num_(r.sessions)]);
   const ref = shopTabQl_('FROM sales SHOW orders, total_sales GROUP BY order_referrer_source, order_referrer_name' + last30 +
     ' ORDER BY total_sales DESC LIMIT 100').map(r => [String(r.order_referrer_source || ''), String(r.order_referrer_name || ''), num_(r.orders), num_(r.total_sales)]);
@@ -185,7 +189,7 @@ function shopTabFetchClicks_(out, today) {
   accs.forEach(a => { out.clicks[a.id] = {}; });
   const cell = (id, d) => (out.clicks[id][d] = out.clicks[id][d] || [0, 0]);
   const accOf = shopTabAccountOf_(accs);
-  shopTabQl_('FROM sessions SHOW sessions GROUP BY utm_term TIMESERIES day SINCE ' + from + ' UNTIL ' + today + ' LIMIT 10000').forEach(r => {
+  shopTabQl_('FROM sessions SHOW sessions WHERE ' + SHOPTAB.HUMAN + ' GROUP BY utm_term TIMESERIES day SINCE ' + from + ' UNTIL ' + today + ' LIMIT 10000').forEach(r => {
     const id = accOf(r.utm_term), d = String(r.day || '').slice(0, 10);
     if (id && d) cell(id, d)[0] += num_(r.sessions);
   });
