@@ -320,7 +320,7 @@ function dayLabel(c, key) {
 
 test('Closing: يوم بيوم والأسبوع والشهر من نفس الأرقام، والشهر ده بس', () => {
   const e = scenario(), sh = e.ss.getSheetByName('Closing'), v = sh.getDataRange().getValues();
-  assert.equal(sh.getLastColumn(), 16, 'مفيش أعمدة زيادة جنب الجدول');
+  assert.equal(sh.getLastColumn(), 18, 'مفيش أعمدة زيادة جنب الجدول');
   const day = closingRow(sh, dayLabel(e.c, e.today)), month = closingRow(sh, 'MONTH TOTAL');
   assert.equal(day['TOTAL SPEND'], 1100);
   assert.equal(day['TOTAL ORDERS'], 3);
@@ -335,31 +335,31 @@ test('Closing: يوم بيوم والأسبوع والشهر من نفس الأ�
   assert.ok(v.some(r => r[0] === dayLabel(e.c, e.today.slice(0, 8) + days)), 'آخر يوم في الشهر موجود');
   const next = e.c.shiftKey_(e.today, 1);
   if (next.slice(0, 7) === e.today.slice(0, 7)) assert.equal(closingRow(sh, dayLabel(e.c, next))['TOTAL SPEND'], '', 'الأيام اللي لسه ماجتش فاضية');
-  assert.deepEqual(v.find(r => r[0] === 'DATE'), ['DATE', 'TOTAL SPEND', 'TOTAL ORDERS', 'ROAS', 'ACTUAL ROAS', 'AOV', 'GROSS SALES', 'SHOPIFY SALES', 'REVENUE', 'TOTAL UNITS', 'UPO',
-    'CONFIRMED ORDERS', 'DELIVERED ORDERS', 'CPL', 'CPO', 'CROSS-SELL REVENUE']);
+  assert.deepEqual(v.find(r => r[0] === 'DATE'), ['DATE', 'TOTAL SPEND', 'TOTAL ORDERS', 'ROAS', 'ACTUAL ROAS', 'AOV', 'GROSS SALES', 'NET SALES', 'REVENUE', 'TOTAL UNITS', 'UPO',
+    'TOTAL ORDERS', 'CONFIRMED ORDERS', 'IN SHIPPING', 'DELIVERED ORDERS', 'CPL', 'CPO', 'CROSS-SELL REVENUE']);
 });
 
 test('Closing: الأعمدة اللي على يمين الجدول من الشكل القديم بتتمسح', () => {
   const e = scenario(), sh = e.ss.getSheetByName('Closing');
-  sh.getRange(10, 17, 1, 2).setValues([['AOV قديم', 1313.4]]);
+  sh.getRange(10, 19, 1, 2).setValues([['AOV قديم', 1313.4]]);
   e.c.liveTick();
-  assert.equal(sh.getLastColumn(), 16);
+  assert.equal(sh.getLastColumn(), 18);
 });
 
 test('Closing: المتأكد والمتسلم و REVENUE الفعلي والكروس سيل من حالة شوبيفاي، والأيام بعد آخر قراية فاضية', () => {
   const probe = env(), today = probe.c.todayKey_(), month = today.slice(0, 7), d1 = month + '-01', d2 = month + '-02', B = '(blank)';
   const flow = (id, day, total, products) => ['gid://shopify/Order/' + id, ' #' + id, ' N', B, total, ' ' + day + 'T10:00:00+03:00', B, B, B, B, B, '', '', '', '', products, 'web'];
   const e = env({ orderHead: FLOW_HEAD.slice(0, 17), ads: { [A1]: [adRow(d1, '111', 1000), adRow(d2, '111', 500)] },
-    orders: [flow(1, d1, 500, 'Lip Oil x1'), flow(2, d1, 300, 'Lip Oil x1'), flow(3, d1, 200, 'Blush x1'), flow(4, d1, 400, 'Blush x1'), flow(5, d2, 600, 'Blush x1')] });
+    orders: [flow(1, d1, 500, 'Lip Oil x1'), flow(2, d1, 300, 'Lip Oil x1'), flow(3, d1, 200, 'Blush x1'), flow(4, d1, 400, 'Blush x1'), flow(6, d1, 100, 'Blush x1'), flow(5, d2, 600, 'Blush x1')] });
   const st = { 1: { code: 'D', revenue: 800, cross: 300, units: 3 }, 2: { code: 'D', revenue: null, cross: 0, units: null }, 3: { code: 'R', revenue: null },
-    4: { code: 'C', revenue: null } };
+    4: { code: 'C', revenue: null }, 6: { code: 'S', revenue: null } };
   e.c.orderStatus_ = id => st[String(id).split('/').pop()] || null;
   e.c.orderStatusDay_ = () => d1;
   e.c.setupAll();
   e.c.liveTick(); e.c.liveTick();
   const sh = e.ss.getSheetByName('Closing'), a = closingRow(sh, dayLabel(e.c, d1));
-  assert.deepEqual([a['TOTAL SPEND'], a['TOTAL ORDERS'], a.ROAS, a.AOV, a['TOTAL UNITS'], a['CONFIRMED ORDERS'], a['DELIVERED ORDERS'], a.REVENUE,
-    a['ACTUAL ROAS'], a.CPO, a['CROSS-SELL REVENUE'], a.CPL], [1000, 4, 1.4, 350, 6, 3, 2, 1100, 1.1, 500, 300, 250],
+  assert.deepEqual([a['TOTAL SPEND'], a['TOTAL ORDERS'], a.ROAS, a.AOV, a['TOTAL UNITS'], a['CONFIRMED ORDERS'], a['IN SHIPPING'], a['DELIVERED ORDERS'], a.REVENUE,
+    a['ACTUAL ROAS'], a.CPO, a['CROSS-SELL REVENUE'], a.CPL], [1000, 5, 1.5, 300, 7, 4, 1, 2, 1100, 1.1, 500, 300, 200],
   'المتسلم: أوردر 1 (اتزود عليه 300 بعد ما اتعمل) وأوردر 2؛ والقطع من شوبيفاي لأوردر 1');
   if (today >= d2) {
     const b = closingRow(sh, dayLabel(e.c, d2));
@@ -1726,7 +1726,7 @@ test('Campaign Map: لينك الصفحة بأي شكل هو نفس الصفحة
   assert.equal(e.c.syncShopifyCollections_(), 0, 'مرة في اليوم');
 });
 
-test('Closing: GROSS SALES (المنتجات قبل الخصم ومن غير الشحن، وقت الأوردر) و SHOPIFY SALES (إجمالي الأوردر) قبل REVENUE', () => {
+test('Closing: GROSS SALES (المنتجات قبل الخصم ومن غير الشحن، وقت الأوردر) و NET SALES (بعد الخصم ومن غير الشحن) قبل REVENUE', () => {
   const probe = env(), today = probe.c.todayKey_();
   const order = (id, hm, total) => ({ id: 'gid://shopify/Order/' + id, createdAt: today + 'T' + hm + ':00Z', sourceName: 'web', cancelledAt: null,
     originalTotalPriceSet: { shopMoney: { amount: String(total) } }, customAttributes: [], lineItems: { nodes: [{ title: 'Lip Oil', quantity: 2, currentQuantity: 2 }] },
@@ -1743,15 +1743,18 @@ test('Closing: GROSS SALES (المنتجات قبل الخصم ومن غير ا�
   const tab = e.ss.getSheetByName('Shopify Orders').getDataRange().getValues();
   assert.equal(tab[0][17], 'Gross Sales');
   assert.deepEqual(tab.slice(1).map(r => r[17]), [698, 449]);
+  assert.equal(tab[0][18], 'Net Sales');
+  assert.deepEqual(tab.slice(1).map(r => r[18]), [649, 449]);
   const day = closingRow(e.ss.getSheetByName('Closing'), dayLabel(e.c, today));
-  assert.deepEqual([day['GROSS SALES'], day['SHOPIFY SALES'], day.AOV], [1147, 1268, 634]);
+  assert.deepEqual([day['GROSS SALES'], day['NET SALES'], day.ROAS, day.AOV], [1147, 1098, '', 634]);
   assert.match(e.ss.getSheetByName('Health').getDataRange().getValues().map(r => r.join(' ')).join('\n'), /الجروس سيلز من شوبيفاي .*✓ 2 أوردر/);
   // أوردر جديد لسه ماتقراش الجروس بتاعه: اليوم يبان فاضي مش ناقص
   opt.created.push(order(3, '08:00', 300));
   e.c.syncOrders_();
   e.c.resetCaches_();
   e.c.writeClosing_();
-  assert.equal(closingRow(e.ss.getSheetByName('Closing'), dayLabel(e.c, today))['GROSS SALES'], '');
+  const late = closingRow(e.ss.getSheetByName('Closing'), dayLabel(e.c, today));
+  assert.deepEqual([late['GROSS SALES'], late['NET SALES']], ['', '']);
 });
 
 test('Meta Campaigns: الكامبين وتحتها الأد سيتس وتحتها الإعلانات، والقرار بـ Shopify ROAS لآخر 3 أيام قدام الـ 7 والـ 14، والمترك الواقع، واللي مفتوح بيفضل مفتوح', () => {

@@ -11,7 +11,7 @@
  * Ad accounts and stores are read-only from here: no writes to Meta, TikTok or order sources.
  */
 const APP = {
-  VERSION: '1.57.1',
+  VERSION: '1.58.0',
   T: {
     SETTINGS: 'Settings', ACCOUNTS: 'Accounts', PRODUCTS: 'Products', ADMAP: 'Ad Map',
     ADS: 'Ads Raw', ACC_RAW: 'Account Raw', ORDERS: 'Orders Raw', DAILY: 'Daily Log',
@@ -3835,10 +3835,11 @@ function todayStockCover_(g, r, today) {
  * and the Closing tab starts the new month. Any ended month can be (re)archived from the menu.
  *
  * Columns: TOTAL SPEND (Meta + TikTok, Daily Log), TOTAL ORDERS (every store order but the outside account's, as GRAND TOTAL
- * in Today), ROAS (sales of all orders ÷ spend = Shopify ROAS), ACTUAL ROAS (delivered sales ÷ spend), AOV (sales ÷ orders),
+ * in Today), ROAS (the orders' totals as made, after discounts with shipping, ÷ spend = Shopify ROAS), ACTUAL ROAS (delivered sales ÷ spend), AOV (sales ÷ orders),
  * GROSS SALES (the orders' products at their price before discounts, no shipping, as made: 32_shopify_orders.gs),
- * SHOPIFY SALES (the orders' totals as made: after discounts, with shipping; ROAS and AOV use it), REVENUE (delivered orders only, what was collected), TOTAL UNITS, UPO (units ÷ orders), CONFIRMED (shipped), DELIVERED,
- * CPL (spend ÷ orders), CPO (spend ÷ delivered), CROSS-SELL REVENUE (what was added to delivered orders after they were placed).
+ * NET SALES (the same products after their discounts, no shipping, as made), REVENUE (delivered orders only, what was
+ * collected), TOTAL UNITS, UPO (units ÷ orders), TOTAL ORDERS again (next to the status columns), CONFIRMED (shipped),
+ * IN SHIPPING (shipped, not delivered or back yet), DELIVERED, CPL (spend ÷ orders), CPO (spend ÷ delivered), CROSS-SELL REVENUE (what was added to delivered orders after they were placed).
  * Where each order stands comes from 19_order_status.gs (read from Shopify up to ORDER_STATUS_AT): later days show those
  * columns empty, and ACTUAL ROAS / CPO of a week or month use only the spend of the days that have them.
  */
@@ -3854,11 +3855,13 @@ const CLOSING = {
     ['AOV', t => ratioOrBlank_(t.sales, t.orders, 0), '#,##0', false],
     // Every order of the day has it (read from Shopify), else empty rather than too small.
     ['GROSS SALES', t => (t.orders > 0 && t.grossN === t.orders ? round2_(t.gross) : ''), '#,##0', false],
-    ['SHOPIFY SALES', t => (t.orders > 0 ? round2_(t.sales) : ''), '#,##0', false],
+    ['NET SALES', t => (t.orders > 0 && t.netN === t.orders ? round2_(t.net) : ''), '#,##0', false],
     ['REVENUE', t => (t.known ? round2_(t.revenue) : ''), '#,##0', true],
     ['TOTAL UNITS', t => t.units, '#,##0', false],
     ['UPO', t => ratioOrBlank_(t.units, t.orders, 2), '0.00', false],
+    ['TOTAL ORDERS', t => t.orders, '#,##0', false],
     ['CONFIRMED ORDERS', t => (t.known ? t.confirmed : ''), '#,##0', true],
+    ['IN SHIPPING', t => (t.known ? t.shipping : ''), '#,##0', true],
     ['DELIVERED ORDERS', t => (t.known ? t.delivered : ''), '#,##0', true],
     ['CPL', t => ratioOrBlank_(t.spend, t.orders, 0), '#,##0', false],
     ['CPO', t => (t.known ? ratioOrBlank_(t.knownSpend, t.delivered, 0) : ''), '#,##0', true],
@@ -3874,7 +3877,7 @@ function closingMonthName_(month) {
   return Utilities.formatDate(new Date(Date.UTC(p[0], p[1] - 1, 15, 12)), 'UTC', 'MMMM yyyy');
 }
 function closingArchiveName_(month) { return closingMonthName_(month) + CLOSING.ARCHIVE_SUFFIX; }
-function closingZero_() { return { spend: 0, knownSpend: 0, orders: 0, sales: 0, gross: 0, grossN: 0, units: 0, confirmed: 0, delivered: 0, revenue: 0, cross: 0, known: false }; }
+function closingZero_() { return { spend: 0, knownSpend: 0, orders: 0, sales: 0, gross: 0, grossN: 0, net: 0, netN: 0, units: 0, confirmed: 0, shipping: 0, delivered: 0, revenue: 0, cross: 0, known: false }; }
 function closingAdd_(into, x) { Object.keys(into).forEach(k => { if (k === 'known') into.known = into.known || x.known; else into[k] += x[k]; }); return into; }
 
 /*
@@ -3886,16 +3889,18 @@ function closingData_(month) {
   const from = month + '-01', to = closingKey_(month, closingDays_(month)), days = {};
   const day = k => days[k] || (days[k] = closingZero_());
   dailyRows_().forEach(r => { if (r[0] >= from && r[0] <= to && r[1] !== APP.META_OUT) day(r[0]).spend += num_(r[3]); });
-  const known = metaIdsOf_(rawRows_(APP.T.ADS, ADS_HEADERS.length)), gross = grossSalesMap_();
+  const known = metaIdsOf_(rawRows_(APP.T.ADS, ADS_HEADERS.length)), gross = grossSalesMap_(), net = grossSalesMap_(true);
   recentRows_(APP.T.ORDERS, ORDERS_HEADERS.length, 2, sortKey_, from).forEach(o => {
     const d = asKey_(o[2]);
     if (!d || d < from || d > to || outsideMeta_(o, known)) return;
     const t = day(d), st = orderStatus_(o[0]);
     t.orders++; t.sales += num_(o[7]);
     if (gross.has(String(o[0]))) { t.gross += gross.get(String(o[0])); t.grossN++; }
+    if (net.has(String(o[0]))) { t.net += net.get(String(o[0])); t.netN++; }
     t.units += st && st.units ? st.units : (lineItems_(o[6]).reduce((a, i) => a + i.qty, 0) || 1);
     if (!st) return;
     if ('RDS'.indexOf(st.code) >= 0) t.confirmed++;
+    if (st.code === 'S') t.shipping++;
     if (st.code === 'D') { t.delivered++; t.revenue += st.revenue === null || st.revenue === undefined ? num_(o[7]) : st.revenue; t.cross += st.cross || 0; }
   });
   Object.keys(days).forEach(k => { if (k <= orderStatusDay_()) { days[k].known = true; days[k].knownSpend = days[k].spend; } });
@@ -3919,9 +3924,10 @@ function closingGrid_(month, title, note, today, updated) {
   g.merge(2, 5, 1, 2);
   g.set(2, 7, note, { fc: C.SOFT });
   g.merge(2, 7, 1, W - 6);
-  g.set(3, 1, 'TOTAL ORDERS = كل أوردرات شوبيفاي (ماعدا الأكاونت اللي مش معانا). SHOPIFY SALES = إجمالي كل الأوردرات وقت ما اتعملت (بعد الخصم ومعاه الشحن)، ' +
-    'و ROAS = SHOPIFY SALES ÷ الصرف، و AOV عليها. GROSS SALES = المنتجات بسعرها قبل الخصم ومن غير الشحن، وقت ما الأوردر اتعمل (فاضي لحد ما يتقري من شوبيفاي). ' +
-    'CONFIRMED = اتشحن. DELIVERED = اتسلم واتحصّل. REVENUE = مبيعات المتسلم بس، و ACTUAL ROAS = REVENUE ÷ الصرف. ' +
+  g.set(3, 1, 'TOTAL ORDERS = كل أوردرات شوبيفاي (ماعدا الأكاونت اللي مش معانا)، ومتكرر قبل CONFIRMED عشان المقارنة. ' +
+    'ROAS = إجمالي كل الأوردرات وقت ما اتعملت (بعد الخصم ومعاه الشحن) ÷ الصرف، و AOV = نفس الإجمالي ÷ الأوردرات. ' +
+    'GROSS SALES = المنتجات بسعرها قبل الخصم ومن غير الشحن، و NET SALES = نفس المنتجات بعد الخصم ومن غير الشحن، وقت ما الأوردر اتعمل (فاضيين لحد ما يتقروا من شوبيفاي). ' +
+    'CONFIRMED = اتشحن. IN SHIPPING = اتشحن ولسه في الشحن (مااتسلمش ومارجعش). DELIVERED = اتسلم واتحصّل. REVENUE = مبيعات المتسلم بس، و ACTUAL ROAS = REVENUE ÷ الصرف. ' +
     'UPO = القطع ÷ الأوردرات. CPL = الصرف ÷ كل الأوردرات. CPO = الصرف ÷ المتسلم. CROSS-SELL REVENUE = اللي اتزود على الأوردرات المتسلمة بعد ما اتعملت (جوه REVENUE). ' +
     'حالة الأوردرات من شوبيفاي لحد ' + orderStatusAt_() + '، والأيام اللي بعدها أعمدة الحالة فيها فاضية لحد التحديث الجاي.', { fc: C.SOFT });
   g.merge(3, 1, 1, W);
@@ -5210,9 +5216,10 @@ const SHOP_ORDERS = {
   TAB: 'Shopify Orders', FIRST_FROM: '2026-10-13T09:00:00Z', PAGES: 25, OVERLAP_H: 6, TAIL: 1500,
   SINCE: 'SHOP_ORDERS_SINCE', READY: 'SHOP_ORDERS_READY', AT: 'SHOP_ORDERS_AT', NO_ADDR: 'SHOP_ORDERS_NO_ADDR',
   HEADERS: ['Order ID', 'Created At', 'Total Price', 'Products', 'UTM Source', 'UTM Campaign', 'UTM Content', 'UTM ID', 'UTM Term',
-    'Attr UTM Source', 'Attr UTM Campaign', 'Attr UTM Content', 'Attr UTM ID', 'Attr UTM Term', 'Order Referrer', 'Source Name', 'City', 'Gross Sales'],
+    'Attr UTM Source', 'Attr UTM Campaign', 'Attr UTM Content', 'Attr UTM ID', 'Attr UTM Term', 'Order Referrer', 'Source Name', 'City', 'Gross Sales', 'Net Sales'],
   // Gross sales of an order when it was made: its products at their price before any discount, no shipping, from the
-  // order's first sales agreement (reason ORDER), so later edits and cancellations don't change it. 10 orders a call.
+  // order's first sales agreement (reason ORDER), so later edits and cancellations don't change it. Net sales: the same
+  // products after their discounts (gross − discounts), still without shipping. 10 orders a call.
   GROSS_QUERY: 'query($ids:[ID!]!){nodes(ids:$ids){... on Order{id agreements(first:1){nodes{reason sales(first:50){nodes{lineType ' +
     'totalAmount{shopMoney{amount}} totalDiscountAmountBeforeTaxes{shopMoney{amount}}}}}}}}}',
   QUERY: 'query($q:String!,$after:String){orders(first:20,after:$after,sortKey:CREATED_AT,query:$q){pageInfo{hasNextPage endCursor} ' +
@@ -5245,7 +5252,7 @@ function shopOrderRow_(o, province) {
   return [o.id, o.createdAt, num_(((o.originalTotalPriceSet || {}).shopMoney || {}).amount), items,
     u.source || '', u.campaign || '', u.content || '', '', u.term || '',
     attr.utm_source || '', attr.utm_campaign || '', attr.utm_content || '', attr.utm_id || '', attr.utm_term || '',
-    attr['order referrer'] || visit.referrerUrl || '', o.sourceName || '', province || (gov ? attr[gov] : ''), ''];
+    attr['order referrer'] || visit.referrerUrl || '', o.sourceName || '', province || (gov ? attr[gov] : ''), '', ''];
 }
 
 /*
@@ -5362,8 +5369,8 @@ function shopifyMergeOrders_(rows) {
   const older = new Set(L - 1 > n ? sh.getRange(2, 1, L - 1 - n, 1).getValues().map(r => String(r[0])) : []);
   const tail = n ? sh.getRange(start, 1, n, W).getValues() : [], fresh = new Map();
   rows.forEach(r => { if (!older.has(String(r[0]))) fresh.set(String(r[0]), r); });
-  // City: a new read without a governorate keeps the one read before. Gross Sales: read once, kept.
-  const keep = ['City', 'Gross Sales'].map(h => SHOP_ORDERS.HEADERS.indexOf(h));
+  // City: a new read without a governorate keeps the one read before. Gross / Net Sales: read once, kept.
+  const keep = ['City', 'Gross Sales', 'Net Sales'].map(h => SHOP_ORDERS.HEADERS.indexOf(h));
   const out = tail.map(r => { const f = fresh.get(String(r[0])); if (f) keep.forEach(C => { if (f[C] === '' && r[C] !== '') f[C] = r[C]; }); return f || r; }),
     had = new Set(tail.map(r => String(r[0])));
   fresh.forEach((r, id) => { if (!had.has(id)) out.push(r); });
@@ -5379,57 +5386,62 @@ function shopifyMergeOrders_(rows) {
 }
 
 /*
- * EXT.live: Gross Sales of the orders in the tab that don't have it yet (new ones, and once the ones read before the column
- * existed), newest first, up to 300 a run. Shopify shows the last 60 days only: an older order gets "-".
+ * EXT.live: Gross Sales and Net Sales of the orders in the tab that don't have them yet (new ones, and once the ones read
+ * before a column existed), newest first, up to 300 a run. Shopify shows the last 60 days only: an older order gets "-"
+ * (a Gross Sales read before stays).
  */
 function fillGrossSales_() {
   const sh = ss_().getSheetByName(SHOP_ORDERS.TAB);
   if (!shopifyProps_().getProperty('SHOPIFY_TOKEN') || !sh || sh.getLastRow() < 2) return 0;
-  const G = SHOP_ORDERS.HEADERS.indexOf('Gross Sales') + 1, L = sh.getLastRow();
-  if (sh.getMaxColumns() < G) sh.insertColumnsAfter(sh.getMaxColumns(), G - sh.getMaxColumns());
+  const G = SHOP_ORDERS.HEADERS.indexOf('Gross Sales') + 1, N = SHOP_ORDERS.HEADERS.indexOf('Net Sales') + 1, L = sh.getLastRow();
+  if (sh.getMaxColumns() < N) sh.insertColumnsAfter(sh.getMaxColumns(), N - sh.getMaxColumns());
   if (String(sh.getRange(1, G).getValue()) !== 'Gross Sales') sh.getRange(1, G).setValue('Gross Sales');
-  const ids = sh.getRange(2, 1, L - 1, 2).getValues(), col = sh.getRange(2, G, L - 1, 1).getValues();
+  if (String(sh.getRange(1, N).getValue()) !== 'Net Sales') sh.getRange(1, N).setValue('Net Sales');
+  const ids = sh.getRange(2, 1, L - 1, 2).getValues(), col = sh.getRange(2, G, L - 1, 2).getValues();
   const cut = new Date(Date.now() - 59 * 86400000).toISOString();
   const need = [];
   for (let i = ids.length - 1; i >= 0 && need.length < 300; i--) {
-    if (col[i][0] === '' && ids[i][0]) need.push(i);
+    if ((col[i][0] === '' || col[i][1] === '') && ids[i][0]) need.push(i);
   }
   const got = {};
   try {
     for (let i = 0; i < need.length && timeLeft_(); i += 10) {
       const chunk = need.slice(i, i + 10);
       const old = chunk.filter(j => String(ids[j][1]) < cut), ask = chunk.filter(j => String(ids[j][1]) >= cut);
-      old.forEach(j => { got[j] = '-'; });
+      old.forEach(j => { got[j] = ['-', '-']; });
       if (!ask.length) continue;
       const nodes = shopifyGql_(SHOP_ORDERS.GROSS_QUERY, { ids: ask.map(j => String(ids[j][0])) }).nodes || [];
       ask.forEach((j, n) => {
         const o = nodes[n], a = o && o.agreements && (o.agreements.nodes || [])[0];
-        if (!o) { got[j] = '-'; return; }
-        if (!a || a.reason !== 'ORDER') { got[j] = '-'; return; }
-        const amt = x => num_(((x || {}).shopMoney || {}).amount);
-        got[j] = round2_((a.sales.nodes || []).filter(s => s.lineType === 'PRODUCT')
-          .reduce((t, s) => t + amt(s.totalAmount) + amt(s.totalDiscountAmountBeforeTaxes), 0));
+        if (!o || !a || a.reason !== 'ORDER') { got[j] = ['-', '-']; return; }
+        const amt = x => num_(((x || {}).shopMoney || {}).amount), lines = (a.sales.nodes || []).filter(s => s.lineType === 'PRODUCT');
+        const net = lines.reduce((t, s) => t + amt(s.totalAmount), 0);
+        got[j] = [round2_(net + lines.reduce((t, s) => t + amt(s.totalDiscountAmountBeforeTaxes), 0)), round2_(net)];
       });
     }
   } catch (e) { setStatus_('SHOP_GROSS', '✗ ' + errText_(e)); }
   const n = Object.keys(got).length;
   if (!n) return 0;
   withLock_(() => {
-    // Rows may have moved if new orders came in meanwhile: write by order ID.
+    // Rows may have moved if new orders came in meanwhile: write by order ID. A cell read before keeps what it has.
     const now = sh.getRange(2, 1, sh.getLastRow() - 1, 1).getValues(), at = new Map(now.map((r, i) => [String(r[0]), i]));
-    const out = sh.getRange(2, G, now.length, 1).getValues();
-    Object.keys(got).forEach(j => { const i = at.get(String(ids[j][0])); if (i !== undefined) out[i][0] = got[j]; });
-    sh.getRange(2, G, out.length, 1).setNumberFormat('0.00').setValues(out);
+    const out = sh.getRange(2, G, now.length, 2).getValues();
+    Object.keys(got).forEach(j => {
+      const i = at.get(String(ids[j][0]));
+      if (i === undefined) return;
+      [0, 1].forEach(c => { if (out[i][c] === '') out[i][c] = got[j][c]; });
+    });
+    sh.getRange(2, G, out.length, 2).setNumberFormat('0.00').setValues(out);
     dropRaw_(SHOP_ORDERS.TAB);
   });
-  const left = col.filter(r => r[0] === '').length - n;
+  const left = col.filter(r => r[0] === '' || r[1] === '').length - n;
   setStatus_('SHOP_GROSS', '✓ ' + n + ' أوردر' + (left > 0 ? '، والباقي (' + left + ') في التحديث الجاي' : ''));
   return n;
 }
 
-/* Order ID → Gross Sales (orders the app read; "-" or empty = not known). */
-function grossSalesMap_() {
-  const out = new Map(), G = SHOP_ORDERS.HEADERS.indexOf('Gross Sales');
+/* Order ID → Gross Sales, or Net Sales with net (orders the app read; "-" or empty = not known). */
+function grossSalesMap_(net) {
+  const out = new Map(), G = SHOP_ORDERS.HEADERS.indexOf(net ? 'Net Sales' : 'Gross Sales');
   if (!ss_().getSheetByName(SHOP_ORDERS.TAB)) return out;
   rawRows_(SHOP_ORDERS.TAB, SHOP_ORDERS.HEADERS.length).forEach(r => {
     if (r[G] !== '' && r[G] !== '-' && r[G] !== null && isFinite(Number(r[G]))) out.set(String(r[0]), Number(r[G]));
