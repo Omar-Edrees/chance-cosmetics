@@ -174,6 +174,7 @@ function backfillStep() {
     runLiveExt_();
     withLock_(() => rebuildViews_({ full: true, slow: slowViewsDue_() }));
     props.deleteProperty('BACKFILL');
+    props.setProperty(CLOSING.DIRTY_KEY, '1'); // archives of the months still in Actual ROAS get the spend pulled again
     const through = asKey_(props.getProperty('SYNCED_THROUGH') || ''), done = st.until < todayKey_() ? st.until : shiftKey_(todayKey_(), -1);
     if (!through || through < done) props.setProperty('SYNCED_THROUGH', done);
     stopTrigger();

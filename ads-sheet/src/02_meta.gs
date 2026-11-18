@@ -134,8 +134,11 @@ function discoverAccounts_() {
   });
   props.setProperty('ACC_DISCOVER_TRIED', JSON.stringify(tried));
   if (added.length) {
-    startBackfill_(today.slice(0, 8) + '01', today, added);
-    setStatus_('ACC_DISCOVER', '✓ اتضاف ' + added.join(', ') + ' — صرفه بيتسحب من أول الشهر');
+    // From the first day the sheet has spend for, like the other accounts (not the month only: its orders from before
+    // count too, so its spend has to).
+    const since = spendFrom_() || today.slice(0, 8) + '01';
+    startBackfill_(since, today, added);
+    setStatus_('ACC_DISCOVER', '✓ اتضاف ' + added.join(', ') + ' — صرفه بيتسحب من ' + since);
   } else if (denied.length) {
     setStatus_('ACC_DISCOVER', '⚠️ أوردرات من كامبين/إعلان مش متاح بالتوكن: ' + denied.join(', ') + ' — ضيف حسابه للـ System User');
   }

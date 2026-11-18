@@ -11,7 +11,7 @@
  * Ad accounts and stores are read-only from here: no writes to Meta, TikTok or order sources.
  */
 const APP = {
-  VERSION: '1.58.0',
+  VERSION: '1.59.0',
   T: {
     SETTINGS: 'Settings', ACCOUNTS: 'Accounts', PRODUCTS: 'Products', ADMAP: 'Ad Map',
     ADS: 'Ads Raw', ACC_RAW: 'Account Raw', ORDERS: 'Orders Raw', DAILY: 'Daily Log',
@@ -565,8 +565,11 @@ function discoverAccounts_() {
   });
   props.setProperty('ACC_DISCOVER_TRIED', JSON.stringify(tried));
   if (added.length) {
-    startBackfill_(today.slice(0, 8) + '01', today, added);
-    setStatus_('ACC_DISCOVER', '✓ اتضاف ' + added.join(', ') + ' — صرفه بيتسحب من أول الشهر');
+    // From the first day the sheet has spend for, like the other accounts (not the month only: its orders from before
+    // count too, so its spend has to).
+    const since = spendFrom_() || today.slice(0, 8) + '01';
+    startBackfill_(since, today, added);
+    setStatus_('ACC_DISCOVER', '✓ اتضاف ' + added.join(', ') + ' — صرفه بيتسحب من ' + since);
   } else if (denied.length) {
     setStatus_('ACC_DISCOVER', '⚠️ أوردرات من كامبين/إعلان مش متاح بالتوكن: ' + denied.join(', ') + ' — ضيف حسابه للـ System User');
   }
@@ -1521,7 +1524,7 @@ function writeHealth_() {
     ['إعلانات ❌ / ⚠️ / ✅', st['❌'] + ' / ' + st['⚠️'] + ' / ' + st['✅']],
     ['أوردرات الشهر مش معروف منصتها', unk.p], ['أوردرات الشهر مش معروف منتجها', unk.pr],
     ['صفحات منتجات مش متسجلة', PropertiesService.getDocumentProperties().getProperty('UNASSIGNED_SLUGS') || 'مفيش ✅'],
-    ['حسابات إعلانية لقيتها من الأوردرات', getStatus_('ACC_DISCOVER')], ['Daily Account Funnel', getStatus_('FUNNEL')], ['Meta Campaigns', getStatus_('MCAMP')], ['صرف الكتالوج', getStatus_('CATALOG')], ['الأوردرات من شوبيفاي (الأبليكيشن)', getStatus_('SHOP_ORDERS')], ['مطابقة الأوردرات مع شوبيفاي', getStatus_('SHOP_ORDERS_CHECK')], ['محافظة الأوردرات', getStatus_('SHOP_ORDERS_ADDR')], ['حالة الأوردرات من شوبيفاي (الأبليكيشن)', getStatus_('SHOPIFY')], ['الأوردرات اللي اتعدلت في شوبيفاي', getStatus_('SHOP_ORDERS_EDITED')], ['الجروس سيلز من شوبيفاي', getStatus_('SHOP_GROSS')], ['الإعلانات الشغالة', getStatus_('ACTIVE')], ['الستوك من شوبيفاي (الأبليكيشن)', getStatus_('STOCK_APP')], ['تاب Shopify', getStatus_('SHOPTAB')], ['كروت Today', typeof Sheets === 'undefined' ? '⚠️ فعّل Google Sheets API من Services في Apps Script' : getStatus_('TODAY_CARDS')]];
+    ['حسابات إعلانية لقيتها من الأوردرات', getStatus_('ACC_DISCOVER')], ['مطابقة الصرف مع Meta', getStatus_('SPEND_CHECK')], ['Daily Account Funnel', getStatus_('FUNNEL')], ['Meta Campaigns', getStatus_('MCAMP')], ['صرف الكتالوج', getStatus_('CATALOG')], ['الأوردرات من شوبيفاي (الأبليكيشن)', getStatus_('SHOP_ORDERS')], ['مطابقة الأوردرات مع شوبيفاي', getStatus_('SHOP_ORDERS_CHECK')], ['محافظة الأوردرات', getStatus_('SHOP_ORDERS_ADDR')], ['حالة الأوردرات من شوبيفاي (الأبليكيشن)', getStatus_('SHOPIFY')], ['الأوردرات اللي اتعدلت في شوبيفاي', getStatus_('SHOP_ORDERS_EDITED')], ['الجروس سيلز من شوبيفاي', getStatus_('SHOP_GROSS')], ['الإعلانات الشغالة', getStatus_('ACTIVE')], ['الستوك من شوبيفاي (الأبليكيشن)', getStatus_('STOCK_APP')], ['تاب Shopify', getStatus_('SHOPTAB')], ['كروت Today', typeof Sheets === 'undefined' ? '⚠️ فعّل Google Sheets API من Services في Apps Script' : getStatus_('TODAY_CARDS')]];
   writeRows_(ensureTab_(APP.T.HEALTH, ['البند', 'الحالة']), rows, 2, []);
 }
 
@@ -1788,6 +1791,7 @@ function backfillStep() {
     runLiveExt_();
     withLock_(() => rebuildViews_({ full: true, slow: slowViewsDue_() }));
     props.deleteProperty('BACKFILL');
+    props.setProperty(CLOSING.DIRTY_KEY, '1'); // archives of the months still in Actual ROAS get the spend pulled again
     const through = asKey_(props.getProperty('SYNCED_THROUGH') || ''), done = st.until < todayKey_() ? st.until : shiftKey_(todayKey_(), -1);
     if (!through || through < done) props.setProperty('SYNCED_THROUGH', done);
     stopTrigger();
@@ -2876,6 +2880,7 @@ function refreshFunnel_(force) {
   const data = time_('Account Funnel — Meta', () => fetchFunnel_());
   withLock_(() => { writeFunnel_(data); writeActual_(data); });
   props.setProperty(FUNNEL.AT_KEY, String(Date.now()));
+  try { checkSpend_(data); } catch (e) { setStatus_('SPEND_CHECK', '✗ ' + errText_(e)); }
   const failed = data.accounts.filter(a => a.error).map(a => a.name);
   setStatus_('FUNNEL', (failed.length ? '⚠️ ماقدرتش أقرا: ' + failed.join('، ') : '✓') + ' — ' + data.accounts.length + ' حساب');
   return true;
@@ -3369,9 +3374,12 @@ function writeToday_() {
  * instead of Meta's funnel: SPEND, TOTAL ORDERS, CANCELLED (before shipping), CONFIRMED (shipped), RETURNED (shipped and came
  * back), IN SHIPPING (shipped, not delivered or back yet), DELIVERED (delivered and paid), then AOV, REVENUE (delivered
  * orders only), ROAS and CPO (spend per delivered order).
- * Orders: the same as the funnel's SHOPIFY ORDERS (the business: every store order but those from an ad account not in the
- * sheet; an account: the orders from its ads, DIRECT and MANUAL ones as in funnelShop_). Where each order stands comes from 19_order_status.gs (read once from Shopify);
- * a newer order counts in TOTAL ORDERS only. Spend: Meta's, from the funnel's reads. Written with the funnel, every 3 hours.
+ * The whole business: the same day totals as Closing and its archives (bizDays_ in 28_closing.gs), so the two tabs can't
+ * differ. An account: the orders from its ads, DIRECT and MANUAL ones as in funnelShop_. Where each order stands comes from
+ * 19_order_status.gs; a newer order counts in TOTAL ORDERS only.
+ * Spend: the sheet's own (Daily Log for the business, Meta and TikTok; Ads Raw for an account) for every day the sheet has
+ * spend from (spendFrom_), Meta's account totals (the funnel's reads) before that. 35_spend_check.gs keeps the sheet's spend
+ * equal to Meta's. Written with the funnel, every 3 hours.
  */
 const ACTUAL = {
   TITLE: 'ACTUAL ROAS', BAND: '#1f2937', MONTH_BG: '#f3f4f6', AVG3_BG: '#e8eefc',
@@ -3383,9 +3391,12 @@ const ACTUAL = {
   ]
 };
 
-/* Store orders by day since `from`, for the whole business and each account: {all: {day: counts}, acc: {id: {day: counts}}}. */
+/*
+ * Store orders by day since `from`, for the whole business and each account, and the sheet's spend by day:
+ * {all: {day: counts + spend}, acc: {id: {day: counts}}, spend: {account id: {day: spend}}}.
+ */
 function actualShop_(from) {
-  const out = { all: {}, acc: {} }, z = () => ({ orders: 0, cancelled: 0, confirmed: 0, returned: 0, shipping: 0, delivered: 0, revenue: 0 });
+  const out = { all: {}, acc: {}, spend: {} }, z = () => ({ orders: 0, cancelled: 0, confirmed: 0, returned: 0, shipping: 0, delivered: 0, revenue: 0 });
   const add = (map, d, o, st) => {
     const x = map[d] = map[d] || z();
     x.orders++;
@@ -3396,16 +3407,25 @@ function actualShop_(from) {
     if (st.code === 'S') x.shipping++;
     if (st.code === 'D') { x.delivered++; x.revenue += st.revenue === null ? num_(o[7]) : st.revenue; }
   };
-  funnelShop_(from, (o, d, acc) => {
-    const st = orderStatus_(o[0]);
-    add(out.all, d, o, st);
-    if (acc) add(out.acc[acc] = out.acc[acc] || {}, d, o, st);
+  out.spend = funnelShop_(from, (o, d, acc) => {
+    if (acc) add(out.acc[acc] = out.acc[acc] || {}, d, o, orderStatus_(o[0]));
+  }).spend;
+  const biz = bizDays_(from, todayKey_());
+  Object.keys(biz).forEach(d => {
+    const t = biz[d];
+    out.all[d] = { orders: t.orders, cancelled: t.cancelled, confirmed: t.confirmed, returned: t.returned, shipping: t.shipping,
+      delivered: t.delivered, revenue: t.revenue, spend: t.spend };
   });
   return out;
 }
+/* Spend for from–to: the sheet's (by day) when it has spend from `from` on, else Meta's (meta). */
+function actualSpend_(days, from, to, meta, cover) {
+  if (!cover || from < cover) return num_(meta);
+  return Object.keys(days || {}).reduce((s, d) => s + (d >= from && d <= to ? num_(days[d]) : 0), 0);
+}
 function actualSum_(days, from, to, spend) {
   const t = { spend: spend || 0, orders: 0, cancelled: 0, confirmed: 0, returned: 0, shipping: 0, delivered: 0, revenue: 0 };
-  Object.keys(days || {}).forEach(d => { if (d >= from && d <= to) Object.keys(days[d]).forEach(k => { t[k] += days[d][k]; }); });
+  Object.keys(days || {}).forEach(d => { if (d >= from && d <= to) Object.keys(days[d]).forEach(k => { if (k !== 'spend') t[k] += days[d][k]; }); });
   return t;
 }
 
@@ -3413,7 +3433,7 @@ function actualSum_(days, from, to, spend) {
 function writeActual_(data) {
   const A = ACTUAL, sh = ensureTab_(X.ACTUAL), g = todayGrid_(), W = 2 + A.COLS.length, today = todayKey_();
   g.width = W;
-  const past = data.months.slice(1), shop = actualShop_(data.months[data.months.length - 1] + '-01');
+  const past = data.months.slice(1), shop = actualShop_(data.months[data.months.length - 1] + '-01'), cover = spendFrom_();
   const range3 = funnelMonthName_(past[past.length - 1]).slice(0, 3) + '–' + funnelMonthName_(past[0]);
   const monthEnd = ym => { const p = ym.split('-').map(Number); return new Date(Date.UTC(p[0], p[1], 0)).toISOString().slice(0, 10); };
   g.set(1, 1, A.TITLE + ' — الأرقام الفعلية من شوبيفاي | آخر تحديث ' + nowText_(), { bg: A.BAND, fc: '#ffffff', b: 'bold', al: 'center' });
@@ -3422,6 +3442,8 @@ function writeActual_(data) {
   g.set(2, 1, 'TOTAL ORDERS = أوردرات شوبيفاي (البيزنس كله: كلها ماعدا الأكاونت اللي مش معانا؛ الأكاونت: اللي جت من إعلاناته، و DIRECT على الأكاونت اللي بيصرف على المنتج، والمانيول على أكاونت المسيجات). ' +
     'CANCELLED = اتلغى قبل الشحن. CONFIRMED = اتشحن (RETURNED + IN SHIPPING + DELIVERED). RETURNED = اتشحن ورجع أو اتلغى بعد الشحن. ' +
     'IN SHIPPING = في الشحن ولسه ماتسلمش ولا رجع. DELIVERED = اتسلم واتحصّل. REVENUE = مبيعات المتسلم بس، و AOV عليه. ROAS = REVENUE ÷ SPEND. CPO = SPEND ÷ DELIVERED. ' +
+    'البيزنس كله = نفس أرقام Closing والأرشيف بالظبط (SPEND = Meta + TikTok). SPEND من الشيت من ' + (cover || '—') +
+    '، وقبل كده من Meta. صرف الشيت بيتقارن بصرف Meta كل 3 ساعات (Health ← مطابقة الصرف مع Meta). ' +
     'حالة الأوردرات من شوبيفاي لحد ' + orderStatusAt_() + '، والأوردر الأحدث محسوب في TOTAL ORDERS بس.', { al: 'left' });
   g.merge(2, 1, 1, W);
   ['DATE', 'SPEND'].concat(A.COLS.map(c => c[0])).forEach((h, i) => g.set(3, 1 + i, h, { bg: '#fff200', b: 'bold', al: 'center' }));
@@ -3435,27 +3457,32 @@ function writeActual_(data) {
     });
     r++;
   };
-  const section = (name, months, days, error, shopDays) => {
+  // spendDays: the sheet's spend by day ({day: spend}); a month or day before `cover` takes Meta's.
+  const section = (name, months, days, error, shopDays, spendDays) => {
     g.set(r, 1, name + (error ? '   ⚠️ ماقدرتش أقرا الحساب: ' + error : ''), { bg: A.BAND, fc: '#ffffff', b: 'bold' });
     g.fill(r, 2, W - 1, { bg: A.BAND });
     g.merge(r, 1, 1, W);
     r++;
     if (error) return;
+    const monthSpend = (ym, i) => actualSpend_(spendDays, ym + '-01', i ? monthEnd(ym) : today, (months[ym] || {}).spend, cover);
     data.months.forEach((ym, i) => line(funnelMonthName_(ym) + (i ? '' : ' (لحد النهارده)'),
-      actualSum_(shopDays, ym + '-01', i ? monthEnd(ym) : today, (months[ym] || {}).spend), { bg: A.MONTH_BG, b: 'bold' }));
+      actualSum_(shopDays, ym + '-01', i ? monthEnd(ym) : today, monthSpend(ym, i)), { bg: A.MONTH_BG, b: 'bold' }));
     line('آخر 3 شهور (' + range3 + ')', actualSum_(shopDays, past[past.length - 1] + '-01', monthEnd(past[0]),
-      past.reduce((s, ym) => s + num_((months[ym] || {}).spend), 0)), { bg: A.AVG3_BG, b: 'bold' });
+      past.reduce((s, ym) => s + monthSpend(ym, 1), 0)), { bg: A.AVG3_BG, b: 'bold' });
     days.forEach(d => {
       const p = d.date.split('-').map(Number);
-      line(Utilities.formatDate(new Date(Date.UTC(p[0], p[1] - 1, p[2], 12)), 'UTC', 'EEE dd-MMM'), actualSum_(shopDays, d.date, d.date, d.raw.spend), {});
+      line(Utilities.formatDate(new Date(Date.UTC(p[0], p[1] - 1, p[2], 12)), 'UTC', 'EEE dd-MMM'),
+        actualSum_(shopDays, d.date, d.date, actualSpend_(spendDays, d.date, d.date, d.raw.spend, cover)), {});
     });
   };
   const ok = data.accounts.filter(a => !a.error), allMonths = {}, allDays = {};
   data.months.forEach(ym => { allMonths[ym] = { spend: ok.reduce((s, a) => s + num_((a.months[ym] || {}).spend), 0) }; });
   ok.forEach(a => a.days.forEach(d => { allDays[d.date] = { spend: num_((allDays[d.date] || {}).spend) + num_(d.raw.spend) }; }));
+  const allSpend = {};
+  Object.keys(shop.all).forEach(d => { allSpend[d] = shop.all[d].spend; });
   if (ok.length > 1) section('كل الحسابات (البيزنس كله)', allMonths,
-    Object.keys(allDays).sort().reverse().map(d => ({ date: d, raw: allDays[d] })), '', shop.all);
-  data.accounts.forEach(a => section(a.name, a.months, a.days, a.error, shop.acc[a.id] || {}));
+    Object.keys(allDays).sort().reverse().map(d => ({ date: d, raw: allDays[d] })), '', shop.all, allSpend);
+  data.accounts.forEach(a => section(a.name, a.months, a.days, a.error, shop.acc[a.id] || {}, shop.spend[a.id] || {}));
   if (!data.accounts.length) g.set(r, 1, 'مفيش حساب Meta صرف في الفترة دي', { fc: '#6b7280' });
   if (!writeGrid_(sh, g)) return;
   sh.setFrozenRows(3);
@@ -3831,8 +3858,10 @@ function todayStockCover_(g, r, today) {
  * Tab "Closing" = the month's closing, laid out like House of Beauty's "Weekly & Monthly": a band per week (1–7, 8–14,
  * 15–21, 22 to the month's end), a yellow header row, a row per day, a WEEK TOTAL row, and MONTH TOTAL at the bottom.
  * Always the current month: on the first update after the month ended (and after the daily run re-pulled its last days),
- * the month that ended is copied once, as fixed numbers, into its own tab "<Month yyyy> Archive" (CLOSING.ARCHIVE_SUFFIX),
- * and the Closing tab starts the new month. Any ended month can be (re)archived from the menu.
+ * the month that ended is copied into its own tab "<Month yyyy> Archive" (CLOSING.ARCHIVE_SUFFIX), and the Closing tab
+ * starts the new month. While the month is one of the 3 Actual ROAS shows, its archive is written again once a day (and
+ * after spend was pulled again), so both tabs always show the same numbers; after that it stays as it is. Any ended month
+ * can be (re)archived from the menu.
  *
  * Columns: TOTAL SPEND (Meta + TikTok, Daily Log), TOTAL ORDERS (every store order but the outside account's, as GRAND TOTAL
  * in Today), ROAS (the orders' totals as made, after discounts with shipping, ÷ spend = Shopify ROAS), ACTUAL ROAS (delivered sales ÷ spend), AOV (sales ÷ orders),
@@ -3845,6 +3874,9 @@ function todayStockCover_(g, r, today) {
  */
 const CLOSING = {
   ARCHIVE_SUFFIX: ' Archive', ARCHIVE_KEY: 'CLOSING_ARCHIVED', ARCHIVE_TAB: '#6b7280',
+  // Archives still in Actual ROAS (the FUNNEL.MONTHS months before this one): written again once a day, and right after
+  // spend was pulled again (DIRTY_KEY, from backfillStep), so they always show the same numbers as Actual ROAS.
+  REFRESH_KEY: 'CLOSING_ARCHIVE_REFRESHED', DIRTY_KEY: 'CLOSING_ARCHIVE_DIRTY',
   DARK: '#1f2937', WEEK: '#dbe8fb', HEAD: '#fff200', TOTAL: '#e0e0e0', ACTUAL: '#e2f0d9', TODAY: '#fff7d6', SOFT: '#4b5563',
   /* [header, value(t), number format, tinted (delivered / actual numbers)] */
   COLS: [
@@ -3877,16 +3909,21 @@ function closingMonthName_(month) {
   return Utilities.formatDate(new Date(Date.UTC(p[0], p[1] - 1, 15, 12)), 'UTC', 'MMMM yyyy');
 }
 function closingArchiveName_(month) { return closingMonthName_(month) + CLOSING.ARCHIVE_SUFFIX; }
-function closingZero_() { return { spend: 0, knownSpend: 0, orders: 0, sales: 0, gross: 0, grossN: 0, net: 0, netN: 0, units: 0, confirmed: 0, shipping: 0, delivered: 0, revenue: 0, cross: 0, known: false }; }
+function closingZero_() {
+  return { spend: 0, knownSpend: 0, orders: 0, sales: 0, gross: 0, grossN: 0, net: 0, netN: 0, units: 0, cancelled: 0, confirmed: 0, returned: 0,
+    shipping: 0, delivered: 0, revenue: 0, cross: 0, known: false };
+}
 function closingAdd_(into, x) { Object.keys(into).forEach(k => { if (k === 'known') into.known = into.known || x.known; else into[k] += x[k]; }); return into; }
 
 /*
- * Every day of the month: {day: totals}. Spend from Daily Log (every platform). Orders from Orders Raw: every store
- * order but the outside account's (META OUT), as GRAND TOTAL. Units: from Shopify (19_order_status.gs) when it has the
- * order, else the order's product lines. Status numbers only for days up to ORDER_STATUS_DAY.
+ * The business's numbers day by day, {day: totals}, from `from` to `to`: the one place Closing, its archives and the
+ * whole-business section of Actual ROAS take them from, so they can't differ. Spend from Daily Log (every platform).
+ * Orders from Orders Raw: every store order but the outside account's (META OUT), as GRAND TOTAL. Units: from Shopify
+ * (19_order_status.gs) when it has the order, else the order's product lines. Status numbers only for days up to ORDER_STATUS_DAY.
  */
-function closingData_(month) {
-  const from = month + '-01', to = closingKey_(month, closingDays_(month)), days = {};
+function closingData_(month) { return bizDays_(month + '-01', closingKey_(month, closingDays_(month))); }
+function bizDays_(from, to) {
+  const days = {};
   const day = k => days[k] || (days[k] = closingZero_());
   dailyRows_().forEach(r => { if (r[0] >= from && r[0] <= to && r[1] !== APP.META_OUT) day(r[0]).spend += num_(r[3]); });
   const known = metaIdsOf_(rawRows_(APP.T.ADS, ADS_HEADERS.length)), gross = grossSalesMap_(), net = grossSalesMap_(true);
@@ -3899,7 +3936,9 @@ function closingData_(month) {
     if (net.has(String(o[0]))) { t.net += net.get(String(o[0])); t.netN++; }
     t.units += st && st.units ? st.units : (lineItems_(o[6]).reduce((a, i) => a + i.qty, 0) || 1);
     if (!st) return;
+    if (st.code === 'C') t.cancelled++;
     if ('RDS'.indexOf(st.code) >= 0) t.confirmed++;
+    if (st.code === 'R') t.returned++;
     if (st.code === 'S') t.shipping++;
     if (st.code === 'D') { t.delivered++; t.revenue += st.revenue === null || st.revenue === undefined ? num_(o[7]) : st.revenue; t.cross += st.cross || 0; }
   });
@@ -3982,7 +4021,26 @@ function writeClosing_() {
   const res = closingGrid_(month, (cfgStr_('business.name') || 'ADS').toUpperCase() + ' — WEEKLY & MONTHLY CLOSING', note, today, nowText_());
   res.g.live = [[2, 5]];
   if (writeGrid_(sh, res.g) || sh.getLastColumn() > 1 + CLOSING.COLS.length) closingLook_(sh);
-  try { autoArchiveClosing_(today); } catch (e) { setStatus_('CLOSING_ARCHIVE', '✗ ' + errText_(e)); }
+  try { autoArchiveClosing_(today); refreshArchives_(today); } catch (e) { setStatus_('CLOSING_ARCHIVE', '✗ ' + errText_(e)); }
+}
+
+/*
+ * The archives of the months Actual ROAS still shows, written again with today's numbers: once a day, and right after
+ * spend was pulled again. Only a month the sheet has spend for from its first day (spendFrom_), so an archive never loses
+ * spend the sheet no longer has. Returns the months written.
+ */
+function refreshArchives_(today) {
+  const props = PropertiesService.getDocumentProperties();
+  if (!props.getProperty(CLOSING.DIRTY_KEY) && props.getProperty(CLOSING.REFRESH_KEY) === today) return [];
+  const from = spendFrom_(), done = [];
+  let m = today.slice(0, 7);
+  for (let i = 0; i < FUNNEL.MONTHS; i++) {
+    m = closingPrevMonth_(m);
+    if (from && m + '-01' >= from && ss_().getSheetByName(closingArchiveName_(m))) { archiveClosing_(m); done.push(m); }
+  }
+  props.setProperty(CLOSING.REFRESH_KEY, today);
+  props.deleteProperty(CLOSING.DIRTY_KEY);
+  return done;
 }
 
 /*
@@ -4009,8 +4067,8 @@ function archiveClosing_(month) {
     sh = at >= 0 ? ss.insertSheet(name, at + 1) : ss.insertSheet(name);
   }
   const res = closingGrid_(month, (cfgStr_('business.name') || 'ADS').toUpperCase() + ' — CLOSING ARCHIVE | ' + closingMonthName_(month) +
-    ' | اتقفل ' + nowText_(), 'أرشيف ثابت: التحديث مابيغيرهوش. عشان يتكتب تاني بالأرقام الحالية (مثلًا بعد ما أوردرات أكتر تتسلم): ' +
-    'المنيو ← 🗄 أرشيف Closing لشهر خلص.', '', '');
+    ' | آخر تحديث ' + nowText_(), 'بيتكتب تاني لوحده مرة في اليوم، وبعد أي صرف اتسحب تاني، طول ما الشهر ده في تاب Actual ROAS ' +
+    '(آخر 3 شهور)، فأرقامه هي هي أرقام Actual ROAS. بعد كده بيثبت. عشان يتكتب تاني بإيدك: المنيو ← 🗄 أرشيف Closing لشهر خلص.', '', '');
   writeGrid_(sh, res.g);
   closingLook_(sh);
   sh.setTabColor(CLOSING.ARCHIVE_TAB);
@@ -6276,6 +6334,68 @@ function writeMetaCamps_() {
   [[1, 140], [2, 300], [3, 120], [4, 60], [5, 80], [6, 140], [7, 80], [8, 70], [9, 70], [10, 80], [11, 80], [12, 70], [13, 120], [14, 420],
     [15, 65], [16, 65], [17, 60], [18, 70], [19, 65], [20, 75]].forEach(x => sh.setColumnWidth(x[0], x[1]));
   sh.hideColumns(MC.ID_COL);
+}
+
+/* ======== 35_spend_check.gs ======== */
+/*
+ * Spend check: every Meta account's spend in the sheet (Ads Raw: what Daily Log, Closing, its archives and Actual ROAS
+ * are built from) against Meta's own account totals (the funnel's read, every 3 hours): each ended month the sheet has
+ * spend for from its first day, and each of the last 30 days before yesterday. Where they differ (an account added after
+ * it had spent, a day an update missed), those days are pulled again for that account in the background
+ * (startBackfill_), at most SPEND_CHECK.TRIES times; what still differs after that is written in Health.
+ */
+const SPEND_CHECK = { KEY: 'SPEND_CHECK_TRIED', TRIES: 2, DAY_MIN: 200, DAY_PCT: 0.03, MONTH_MIN: 1000, MONTH_PCT: 0.01 };
+
+/* The first day the sheet has spend for (the oldest day in Ads Raw), or '' when it has none. */
+function spendFrom_() {
+  let first = '';
+  rawRows_(APP.T.ADS, ADS_HEADERS.length).forEach(a => { const d = asKey_(a[0]); if (d && (!first || d < first)) first = d; });
+  return first;
+}
+
+/* After the funnel's Meta read (fetchFunnel_). Returns the [account, from, to] pieces it asked to pull again. */
+function checkSpend_(data) {
+  const C = SPEND_CHECK, props = PropertiesService.getDocumentProperties();
+  if (props.getProperty('BACKFILL')) return []; // pulling now: checked on the next read
+  const from = spendFrom_(), today = todayKey_(), yest = shiftKey_(today, -1);
+  if (!from) return [];
+  const sheet = {};
+  rawRows_(APP.T.ADS, ADS_HEADERS.length).forEach(a => {
+    if (a[1] !== 'META') return;
+    const acc = String(a[2]), d = asKey_(a[0]), m = sheet[acc] = sheet[acc] || {};
+    m[d] = (m[d] || 0) + num_(a[10]);
+  });
+  let tried = {};
+  try { tried = JSON.parse(props.getProperty(C.KEY) || '{}'); } catch (e) { tried = {}; }
+  const off = (meta, have, min, pct) => Math.abs(meta - have) > Math.max(min, pct * Math.abs(meta));
+  const fmt = n => Math.round(n).toLocaleString('en-US'), pull = [], left = [], now = {};
+  data.accounts.filter(a => !a.error).forEach(a => {
+    const mine = sheet[a.id] || {}, sum = (x, y) => Object.keys(mine).reduce((s, d) => s + (d >= x && d <= y ? mine[d] : 0), 0), gaps = [];
+    data.months.forEach(ym => {
+      const s = ym + '-01', e = closingKey_(ym, closingDays_(ym));
+      if (s < from || e >= today) return;
+      const meta = num_((a.months[ym] || {}).spend), have = sum(s, e);
+      if (off(meta, have, C.MONTH_MIN, C.MONTH_PCT)) gaps.push([s, e, meta, have, closingMonthName_(ym)]);
+    });
+    a.days.forEach(d => {
+      if (d.date < from || d.date >= yest || gaps.some(g => d.date >= g[0] && d.date <= g[1])) return;
+      const meta = num_(d.raw.spend), have = mine[d.date] || 0;
+      if (off(meta, have, C.DAY_MIN, C.DAY_PCT)) gaps.push([d.date, d.date, meta, have, d.date]);
+    });
+    gaps.forEach(g => {
+      const k = a.id + '|' + g[0] + '|' + g[1], n = num_(tried[k]), text = a.name + ' ' + g[4] + ': Meta ' + fmt(g[2]) + ' والشيت ' + fmt(g[3]);
+      now[k] = true;
+      if (n < C.TRIES) { tried[k] = n + 1; pull.push([a.id, g[0], g[1]]); left.push('⏳ ' + text); } else left.push('⚠️ ' + text);
+    });
+  });
+  // A piece that matches now can be tried again if it ever differs later; old ones are forgotten.
+  Object.keys(tried).forEach(k => { if (!now[k] || k.split('|')[2] < shiftKey_(today, -120)) delete tried[k]; });
+  props.setProperty(C.KEY, JSON.stringify(tried));
+  pull.forEach(p => startBackfill_(p[1], p[2], [p[0]]));
+  setStatus_('SPEND_CHECK', left.length
+    ? (pull.length ? 'بيتسحب تاني في الخلفية: ' : '') + left.join(' | ')
+    : '✓ صرف كل حساب في الشيت = صرف Meta (من ' + from + ')');
+  return pull;
 }
 
 /* ======== 90_hooks.gs ======== */

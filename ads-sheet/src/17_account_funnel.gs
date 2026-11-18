@@ -292,6 +292,7 @@ function refreshFunnel_(force) {
   const data = time_('Account Funnel — Meta', () => fetchFunnel_());
   withLock_(() => { writeFunnel_(data); writeActual_(data); });
   props.setProperty(FUNNEL.AT_KEY, String(Date.now()));
+  try { checkSpend_(data); } catch (e) { setStatus_('SPEND_CHECK', '✗ ' + errText_(e)); }
   const failed = data.accounts.filter(a => a.error).map(a => a.name);
   setStatus_('FUNNEL', (failed.length ? '⚠️ ماقدرتش أقرا: ' + failed.join('، ') : '✓') + ' — ' + data.accounts.length + ' حساب');
   return true;

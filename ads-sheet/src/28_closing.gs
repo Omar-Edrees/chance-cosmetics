@@ -2,8 +2,10 @@
  * Tab "Closing" = the month's closing, laid out like House of Beauty's "Weekly & Monthly": a band per week (1–7, 8–14,
  * 15–21, 22 to the month's end), a yellow header row, a row per day, a WEEK TOTAL row, and MONTH TOTAL at the bottom.
  * Always the current month: on the first update after the month ended (and after the daily run re-pulled its last days),
- * the month that ended is copied once, as fixed numbers, into its own tab "<Month yyyy> Archive" (CLOSING.ARCHIVE_SUFFIX),
- * and the Closing tab starts the new month. Any ended month can be (re)archived from the menu.
+ * the month that ended is copied into its own tab "<Month yyyy> Archive" (CLOSING.ARCHIVE_SUFFIX), and the Closing tab
+ * starts the new month. While the month is one of the 3 Actual ROAS shows, its archive is written again once a day (and
+ * after spend was pulled again), so both tabs always show the same numbers; after that it stays as it is. Any ended month
+ * can be (re)archived from the menu.
  *
  * Columns: TOTAL SPEND (Meta + TikTok, Daily Log), TOTAL ORDERS (every store order but the outside account's, as GRAND TOTAL
  * in Today), ROAS (the orders' totals as made, after discounts with shipping, ÷ spend = Shopify ROAS), ACTUAL ROAS (delivered sales ÷ spend), AOV (sales ÷ orders),
@@ -16,6 +18,9 @@
  */
 const CLOSING = {
   ARCHIVE_SUFFIX: ' Archive', ARCHIVE_KEY: 'CLOSING_ARCHIVED', ARCHIVE_TAB: '#6b7280',
+  // Archives still in Actual ROAS (the FUNNEL.MONTHS months before this one): written again once a day, and right after
+  // spend was pulled again (DIRTY_KEY, from backfillStep), so they always show the same numbers as Actual ROAS.
+  REFRESH_KEY: 'CLOSING_ARCHIVE_REFRESHED', DIRTY_KEY: 'CLOSING_ARCHIVE_DIRTY',
   DARK: '#1f2937', WEEK: '#dbe8fb', HEAD: '#fff200', TOTAL: '#e0e0e0', ACTUAL: '#e2f0d9', TODAY: '#fff7d6', SOFT: '#4b5563',
   /* [header, value(t), number format, tinted (delivered / actual numbers)] */
   COLS: [
@@ -48,16 +53,21 @@ function closingMonthName_(month) {
   return Utilities.formatDate(new Date(Date.UTC(p[0], p[1] - 1, 15, 12)), 'UTC', 'MMMM yyyy');
 }
 function closingArchiveName_(month) { return closingMonthName_(month) + CLOSING.ARCHIVE_SUFFIX; }
-function closingZero_() { return { spend: 0, knownSpend: 0, orders: 0, sales: 0, gross: 0, grossN: 0, net: 0, netN: 0, units: 0, confirmed: 0, shipping: 0, delivered: 0, revenue: 0, cross: 0, known: false }; }
+function closingZero_() {
+  return { spend: 0, knownSpend: 0, orders: 0, sales: 0, gross: 0, grossN: 0, net: 0, netN: 0, units: 0, cancelled: 0, confirmed: 0, returned: 0,
+    shipping: 0, delivered: 0, revenue: 0, cross: 0, known: false };
+}
 function closingAdd_(into, x) { Object.keys(into).forEach(k => { if (k === 'known') into.known = into.known || x.known; else into[k] += x[k]; }); return into; }
 
 /*
- * Every day of the month: {day: totals}. Spend from Daily Log (every platform). Orders from Orders Raw: every store
- * order but the outside account's (META OUT), as GRAND TOTAL. Units: from Shopify (19_order_status.gs) when it has the
- * order, else the order's product lines. Status numbers only for days up to ORDER_STATUS_DAY.
+ * The business's numbers day by day, {day: totals}, from `from` to `to`: the one place Closing, its archives and the
+ * whole-business section of Actual ROAS take them from, so they can't differ. Spend from Daily Log (every platform).
+ * Orders from Orders Raw: every store order but the outside account's (META OUT), as GRAND TOTAL. Units: from Shopify
+ * (19_order_status.gs) when it has the order, else the order's product lines. Status numbers only for days up to ORDER_STATUS_DAY.
  */
-function closingData_(month) {
-  const from = month + '-01', to = closingKey_(month, closingDays_(month)), days = {};
+function closingData_(month) { return bizDays_(month + '-01', closingKey_(month, closingDays_(month))); }
+function bizDays_(from, to) {
+  const days = {};
   const day = k => days[k] || (days[k] = closingZero_());
   dailyRows_().forEach(r => { if (r[0] >= from && r[0] <= to && r[1] !== APP.META_OUT) day(r[0]).spend += num_(r[3]); });
   const known = metaIdsOf_(rawRows_(APP.T.ADS, ADS_HEADERS.length)), gross = grossSalesMap_(), net = grossSalesMap_(true);
@@ -70,7 +80,9 @@ function closingData_(month) {
     if (net.has(String(o[0]))) { t.net += net.get(String(o[0])); t.netN++; }
     t.units += st && st.units ? st.units : (lineItems_(o[6]).reduce((a, i) => a + i.qty, 0) || 1);
     if (!st) return;
+    if (st.code === 'C') t.cancelled++;
     if ('RDS'.indexOf(st.code) >= 0) t.confirmed++;
+    if (st.code === 'R') t.returned++;
     if (st.code === 'S') t.shipping++;
     if (st.code === 'D') { t.delivered++; t.revenue += st.revenue === null || st.revenue === undefined ? num_(o[7]) : st.revenue; t.cross += st.cross || 0; }
   });
@@ -153,7 +165,26 @@ function writeClosing_() {
   const res = closingGrid_(month, (cfgStr_('business.name') || 'ADS').toUpperCase() + ' — WEEKLY & MONTHLY CLOSING', note, today, nowText_());
   res.g.live = [[2, 5]];
   if (writeGrid_(sh, res.g) || sh.getLastColumn() > 1 + CLOSING.COLS.length) closingLook_(sh);
-  try { autoArchiveClosing_(today); } catch (e) { setStatus_('CLOSING_ARCHIVE', '✗ ' + errText_(e)); }
+  try { autoArchiveClosing_(today); refreshArchives_(today); } catch (e) { setStatus_('CLOSING_ARCHIVE', '✗ ' + errText_(e)); }
+}
+
+/*
+ * The archives of the months Actual ROAS still shows, written again with today's numbers: once a day, and right after
+ * spend was pulled again. Only a month the sheet has spend for from its first day (spendFrom_), so an archive never loses
+ * spend the sheet no longer has. Returns the months written.
+ */
+function refreshArchives_(today) {
+  const props = PropertiesService.getDocumentProperties();
+  if (!props.getProperty(CLOSING.DIRTY_KEY) && props.getProperty(CLOSING.REFRESH_KEY) === today) return [];
+  const from = spendFrom_(), done = [];
+  let m = today.slice(0, 7);
+  for (let i = 0; i < FUNNEL.MONTHS; i++) {
+    m = closingPrevMonth_(m);
+    if (from && m + '-01' >= from && ss_().getSheetByName(closingArchiveName_(m))) { archiveClosing_(m); done.push(m); }
+  }
+  props.setProperty(CLOSING.REFRESH_KEY, today);
+  props.deleteProperty(CLOSING.DIRTY_KEY);
+  return done;
 }
 
 /*
@@ -180,8 +211,8 @@ function archiveClosing_(month) {
     sh = at >= 0 ? ss.insertSheet(name, at + 1) : ss.insertSheet(name);
   }
   const res = closingGrid_(month, (cfgStr_('business.name') || 'ADS').toUpperCase() + ' — CLOSING ARCHIVE | ' + closingMonthName_(month) +
-    ' | اتقفل ' + nowText_(), 'أرشيف ثابت: التحديث مابيغيرهوش. عشان يتكتب تاني بالأرقام الحالية (مثلًا بعد ما أوردرات أكتر تتسلم): ' +
-    'المنيو ← 🗄 أرشيف Closing لشهر خلص.', '', '');
+    ' | آخر تحديث ' + nowText_(), 'بيتكتب تاني لوحده مرة في اليوم، وبعد أي صرف اتسحب تاني، طول ما الشهر ده في تاب Actual ROAS ' +
+    '(آخر 3 شهور)، فأرقامه هي هي أرقام Actual ROAS. بعد كده بيثبت. عشان يتكتب تاني بإيدك: المنيو ← 🗄 أرشيف Closing لشهر خلص.', '', '');
   writeGrid_(sh, res.g);
   closingLook_(sh);
   sh.setTabColor(CLOSING.ARCHIVE_TAB);

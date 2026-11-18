@@ -389,7 +389,48 @@ test('Closing: الشهر اللي خلص بيتنقل مرة واحدة لتا�
   assert.equal(closingRow(e.ss.getSheetByName('Closing'), 'MONTH TOTAL')['TOTAL SPEND'], 100, 'Closing فيه الشهر ده بس');
   arch.getRange(1, 1).setValue('اتلمس');
   e.c.liveTick();
-  assert.equal(arch.getRange(1, 1).getValue(), 'اتلمس', 'الأرشيف مابيتكتبش تاني لوحده');
+  assert.equal(arch.getRange(1, 1).getValue(), 'اتلمس', 'شهر الشيت مش عنده صرفه من أوله: الأرشيف مابيتكتبش تاني لوحده');
+});
+
+test('صرف حساب ناقص من الشيت (اتضاف بعد ما صرف): بيتلاقي بمقارنة Meta ويتسحب لوحده، والأرشيف و Actual ROAS بنفس الأرقام', () => {
+  const probe = env(), today = probe.c.todayKey_(), prev = probe.c.closingPrevMonth_(today.slice(0, 7)), last = prev + '-' + probe.c.closingDays_(prev);
+  const B = '(blank)', name = probe.c.closingArchiveName_(prev);
+  const flow = (id, day, total) => ['gid://shopify/Order/' + id, ' #' + id, ' N', B, total, ' ' + day + 'T10:00:00+03:00', B, B, B, B, B, '', '', '', '', 'Lip Oil x1', 'web'];
+  const e = env({ orderHead: FLOW_HEAD.slice(0, 17), strictRange: true,
+    ads: { [A1]: [adRow(prev + '-01', '111', 1000), adRow(prev + '-10', '111', 2000), adRow(today, '111', 100)], [A2]: [adRow(prev + '-05', '333', 5000)] },
+    orders: [flow(1, prev + '-05', 9000), flow(2, prev + '-06', 6000), flow(3, prev + '-07', 1000)] });
+  const st = { 1: { code: 'D', revenue: null }, 2: { code: 'D', revenue: 5000 }, 3: { code: 'S', revenue: null } };
+  e.c.orderStatus_ = id => st[String(id).split('/').pop()] || null;
+  e.c.setupAll();
+  const pullAll = () => { for (let i = 0; i < 20 && e.doc.BACKFILL; i++) e.c.backfillStep(); assert.equal(e.doc.BACKFILL, undefined, 'السحب خلص'); };
+  delete e.doc.BACKFILL;
+  e.c.startBackfill_(prev + '-01', e.c.shiftKey_(today, -1));
+  pullAll();
+  // زي chancestore.egy 2: الحساب اتضاف بعد ما الشهر خلص، فصرفه في الشهر اللي فات مش في الشيت، وأوردراته جوه
+  const ads = e.ss.getSheetByName('Ads Raw');
+  e.c.writeRows_(ads, ads.getDataRange().getValues().slice(1).filter(r => String(r[2]) !== A2), 15, [1]);
+  e.c.resetCaches_();
+  e.doc.SYNCED_THROUGH = last;
+  e.c.liveTick(); e.c.liveTick();
+  assert.equal(closingRow(e.ss.getSheetByName(name), 'MONTH TOTAL')['TOTAL SPEND'], 3000, 'الأرشيف من غير صرف الحساب الناقص');
+  pullAll(); // الأيام اللي بعد آخر يوم اتسحب (catchUpGap_): المقارنة بتستنى أي سحب شغال يخلص
+  e.c.refreshFunnelNow();
+  assert.match(e.c.getStatus_('SPEND_CHECK'), /بيتسحب تاني في الخلفية: ⏳ Chance Golden Era .*: Meta 5,000 والشيت 0/);
+  assert.ok(JSON.parse(e.doc.BACKFILL).units.every(u => u[0] === A2 && u[1] >= prev + '-01' && u[2] <= last), 'الحساب ده بس، الشهر ده بس');
+  pullAll();
+  e.c.liveTick();
+  const m = closingRow(e.ss.getSheetByName(name), 'MONTH TOTAL');
+  assert.deepEqual([m['TOTAL SPEND'], m['TOTAL ORDERS'], m['CONFIRMED ORDERS'], m['IN SHIPPING'], m['DELIVERED ORDERS'], m.REVENUE, m['ACTUAL ROAS'], m.CPO],
+    [8000, 3, 3, 1, 2, 14000, 1.75, 4000], 'الأرشيف اتكتب تاني لوحده بالصرف كله');
+  e.c.refreshFunnelNow();
+  const v = e.ss.getSheetByName('Actual ROAS').getDataRange().getValues(), k = v.findIndex(r => r[0] === 'كل الحسابات (البيزنس كله)');
+  const row = v.find((r, i) => i > k && r[0] === probe.c.funnelMonthName_(prev));
+  assert.deepEqual([row[1], row[2], row[4], row[6], row[7], row[9], row[10], row[11]],
+    [m['TOTAL SPEND'], m['TOTAL ORDERS'], m['CONFIRMED ORDERS'], m['IN SHIPPING'], m['DELIVERED ORDERS'], m.REVENUE, m['ACTUAL ROAS'], m.CPO],
+    'Actual ROAS للشهر ده = الأرشيف بالظبط');
+  assert.match(e.c.getStatus_('SPEND_CHECK'), /✓ صرف كل حساب في الشيت = صرف Meta/);
+  e.c.liveTick();
+  assert.match(e.ss.getSheetByName('Health').getDataRange().getValues().map(r => r.join(' ')).join('\n'), /مطابقة الصرف مع Meta .*✓ صرف كل حساب/);
 });
 
 test('تاب المنتجات: الستوك من شوبيفاي، والقطع المباعة، والإعلان الشغال', () => {
@@ -606,7 +647,7 @@ test('أوردرات من كامبين مش في أي حساب متسجل: ال�
   e.c.liveTick();
   const acc = e.ss.getSheetByName('Accounts').getDataRange().getValues().slice(1);
   assert.ok(acc.some(r => r[0] === 'META' && r[1] === A4 && r[2] === 'Chance New' && r[4] === true));
-  assert.ok(JSON.parse(e.doc.BACKFILL).units.every(u => u[0] === A4), 'صرف الحساب الجديد بيتسحب من أول الشهر');
+  assert.ok(JSON.parse(e.doc.BACKFILL).units.every(u => u[0] === A4), 'صرف الحساب الجديد بيتسحب من أول يوم الشيت عنده صرف');
   assert.match(e.c.getStatus_('ACC_DISCOVER'), /اتضاف 555000111222333/);
 });
 
