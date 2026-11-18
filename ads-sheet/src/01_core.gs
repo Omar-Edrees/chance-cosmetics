@@ -200,7 +200,9 @@ function setStatus_(key, msg) { PropertiesService.getDocumentProperties().setPro
 function getStatus_(key) { return PropertiesService.getDocumentProperties().getProperty('STATUS_' + key) || 'لسه ما اشتغلش'; }
 function alert_(msg) { try { SpreadsheetApp.getUi().alert(String(msg)); } catch (e) { console.log(String(msg)); } }
 function errText_(e) {
-  const t = String(e && e.message ? e.message : e), tok = PropertiesService.getUserProperties().getProperty('META_TOKEN');
-  return tok ? t.split(tok).join('[مخفي]') : t;
+  const props = PropertiesService.getUserProperties();
+  let t = String(e && e.message ? e.message : e);
+  ['META_TOKEN', 'TIKTOK_TOKEN', 'TIKTOK_APP_SECRET'].forEach(k => { const tok = props.getProperty(k); if (tok) t = t.split(tok).join('[مخفي]'); });
+  return t;
 }
 function resetCaches_() { CFG_ = null; PRODUCTS_ = null; KNOWN_PRODUCTS_ = null; RAW_ = {}; PAGE_NAMES_ = null; }

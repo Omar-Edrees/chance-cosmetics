@@ -1886,3 +1886,81 @@ test('Meta Campaigns: الكامبين وتحتها الأد سيتس وتحته
   e.c.liveTick();
   assert.deepEqual(sh.depth, before);
 });
+
+/* TikTok API وهمي: report/integrated/get (صفحتين) و ad/get، وتبادل الكود بالتوكن. */
+function fakeTikTok(e, opt) {
+  const o = opt || {}, calls = [], old = e.c.UrlFetchApp.fetch;
+  const ok = data => ({ getResponseCode: () => 200, getContentText: () => JSON.stringify({ code: 0, message: 'OK', data }) });
+  e.c.UrlFetchApp.fetch = (url, p) => {
+    if (!/business-api\.tiktok\.com/.test(url)) return old(url, p);
+    const q = {};
+    (url.split('?')[1] || '').split('&').filter(Boolean).forEach(kv => { const [k, v] = kv.split('='); q[k] = decodeURIComponent(v); });
+    calls.push({ url, q, p });
+    if (/oauth2\/access_token/.test(url)) {
+      const b = JSON.parse(p.payload);
+      if (b.auth_code !== 'CODE1') return { getResponseCode: () => 200, getContentText: () => JSON.stringify({ code: 40104, message: 'auth_code is invalid' }) };
+      return ok({ access_token: 'TTTOKEN', advertiser_ids: ['7433928103325794321'], scope: [4, 6] });
+    }
+    assert.equal(p.headers['Access-Token'], 'TTTOKEN');
+    if (o.fail) return { getResponseCode: () => 200, getContentText: () => JSON.stringify({ code: 40001, message: 'No permission to operate advertiser' }) };
+    if (/report\/integrated\/get/.test(url)) {
+      const rows = (o.rows || []).filter(r => r.day >= q.start_date && r.day <= q.end_date).map(r => ({
+        dimensions: { ad_id: r.ad, stat_time_day: r.day + ' 00:00:00' },
+        metrics: { spend: String(r.spend), impressions: r.spend ? '500' : '0', clicks: r.spend ? '12' : '0', complete_payment: String(r.buys || 0),
+          campaign_id: 'TC1', campaign_name: 'TT Camp', adgroup_id: 'TG1', adgroup_name: 'TT Group', ad_name: 'TT ' + r.ad } }));
+      const page = Number(q.page), half = Math.ceil(rows.length / 2) || 1;
+      return ok({ list: rows.slice((page - 1) * half, page * half), page_info: { page, total_page: rows.length > 1 ? 2 : 1 } });
+    }
+    if (/\/ad\/get\//.test(url)) {
+      const ids = JSON.parse(q.filtering).ad_ids;
+      return ok({ list: ids.map(id => ({ ad_id: id, landing_page_url: (o.links || {})[id] || '' })), page_info: { page: 1, total_page: 1 } });
+    }
+    throw new Error('TikTok mock: ' + url);
+  };
+  return calls;
+}
+
+test('TikTok API: بعد الربط من المنيو، الصرف بيتقري من TikTok لكل إعلان يوم بيوم، والإعلان بيتربط بمنتجه من لينكه', () => {
+  const e = scenario(), today = e.today, yest = e.yest;
+  const calls = fakeTikTok(e, { rows: [{ day: today, ad: '9001', spend: 150.5, buys: 2 }, { day: yest, ad: '9001', spend: 80 }, { day: today, ad: '9002', spend: 0 }],
+    links: { 9001: 'https://chance-cosmetics.com/products/blush?utm_source=tiktok' } });
+  // الربط: App ID، Secret، واللينك اللي تيك توك بيفتحه بعد الموافقة
+  const answers = ['7709597261936017429', 'SECRET1', 'https://www.profitlens.site/integrations/tiktok?auth_code=CODE1&code=CODE1&state=x'];
+  const ui = { prompt: () => ({ getSelectedButton: () => 'OK', getResponseText: () => answers.shift() }), alert: m => e.alerts.push(m),
+    ButtonSet: { OK_CANCEL: 'OK_CANCEL' }, Button: { OK: 'OK' } };
+  e.c.SpreadsheetApp.getUi = () => ui;
+  e.c.tiktokConnect();
+  assert.equal(e.user.TIKTOK_TOKEN, 'TTTOKEN');
+  assert.equal(e.user.TIKTOK_APP_SECRET, 'SECRET1');
+  assert.match(e.alerts[e.alerts.length - 1], /اتربط TikTok ✅[\s\S]*كل حسابات TikTok/);
+  const ex = calls.find(c => /oauth2/.test(c.url));
+  assert.deepEqual(JSON.parse(ex.p.payload), { app_id: '7709597261936017429', secret: 'SECRET1', auth_code: 'CODE1' });
+
+  e.c.syncAds_(yest, today);
+  const tk = e.ss.getSheetByName('Ads Raw').getDataRange().getValues().filter(r => r[1] === 'TIKTOK');
+  assert.deepEqual(tk.map(r => [r[0], r[2], r[4], r[5], r[6], r[7], r[8], r[9], r[10], r[13]]).sort(), [
+    [today, '7433928103325794321', 'TC1', 'TT Camp', 'TG1', 'TT Group', '9001', 'TT 9001', 150.5, 2],
+    [yest, '7433928103325794321', 'TC1', 'TT Camp', 'TG1', 'TT Group', '9001', 'TT 9001', 80, 0]].sort(), 'من غير صف الإعلان اللي مالوش أرقام');
+  const rep = calls.find(c => /report\/integrated/.test(c.url));
+  assert.equal(rep.q.data_level, 'AUCTION_AD');
+  assert.deepEqual(JSON.parse(rep.q.dimensions), ['ad_id', 'stat_time_day']);
+  const acc = e.ss.getSheetByName('Account Raw').getDataRange().getValues().filter(r => r[1] === 'TIKTOK');
+  assert.deepEqual(acc.map(r => [r[0], r[4], r[5]]).sort(), [[today, 150.5, 2], [yest, 80, 0]].sort());
+  const map = e.ss.getSheetByName('Ad Map').getDataRange().getValues().slice(1).find(r => r[0] === '9001');
+  assert.match(String(map[7]), /products\/blush/);
+  assert.equal(map[11], 'Blush');
+  assert.match(e.c.getStatus_('TIKTOK'), /✓ 2 صف/);
+});
+
+test('TikTok API: لو الحساب مالوش إذن، صفوفه القديمة بتفضل، و Meta بتتحدث عادي، والسبب في Health', () => {
+  const e = scenario(), today = e.today;
+  e.user.TIKTOK_TOKEN = 'TTTOKEN';
+  fakeTikTok(e, { rows: [{ day: today, ad: '9001', spend: 100 }] });
+  e.c.syncAds_(today, today);
+  fakeTikTok(e, { fail: true });
+  e.c.syncAds_(today, today);
+  const raw = e.ss.getSheetByName('Ads Raw').getDataRange().getValues();
+  assert.ok(raw.some(r => r[1] === 'TIKTOK' && r[8] === '9001' && r[10] === 100), 'الصف القديم فضل');
+  assert.ok(raw.some(r => r[1] === 'META' && r[0] === today), 'Meta اتحدثت');
+  assert.match(e.c.getStatus_('TIKTOK'), /✗ .*No permission[\s\S]*Advertiser authorization URL/);
+});

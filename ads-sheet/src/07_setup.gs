@@ -286,6 +286,7 @@ function onOpen() {
     .addSubMenu(ui.createMenu('الإعدادات')
       .addItem('إعداد الشيت (مرة واحدة)', 'setupAll')
       .addItem('ربط توكن Meta', 'metaConnect')
+      .addItem('ربط TikTok', 'tiktokConnect')
       .addItem('أول سحب (من أول الشهر)', 'backfill')
       .addItem('إيقاف أول سحب', 'stopBackfill')
       .addSeparator()

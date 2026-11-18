@@ -28,8 +28,12 @@ function fetchMetaAds_(since, until, onlyId) {
   return { ads: ads, acc: accRows, accounts: list.map(a => 'META|' + a.id) };
 }
 
-/* TikTok from a tab filled by a connector tool (Coupler, Windsor, Supermetrics) or a pasted CSV. */
+/*
+ * TikTok: from the TikTok API once it is connected from the menu (36_tiktok_api.gs), else from a tab filled by a
+ * connector tool (Coupler, Windsor, Supermetrics) or a pasted CSV.
+ */
 function fetchTikTokTab_(since, until) {
+  if (tiktokToken_()) return fetchTikTokApi_(since, until);
   const method = cfgStr_('tiktok.method');
   if (method !== 'connector_tab' && method !== 'csv_tab') return { ads: [], acc: [], accounts: [], links: {} };
   const sh = ss_().getSheetByName(cfgStr_('tiktok.tab'));
