@@ -201,8 +201,10 @@ class FakeSheet {
     const sheet = this, key = g.start + ':' + depth;
     sheet.collapsed = sheet.collapsed || new Set();
     return { start: g.start, end: g.end, isCollapsed: () => sheet.collapsed.has(key), expand: () => { sheet.collapsed.delete(key); },
-      collapse: () => { sheet.collapsed.add(key); } };
+      collapse: () => { sheet.collapsed.add(key); },
+      remove: () => { for (let r = g.start; r <= g.end; r++) sheet.depth[r] = Math.max(0, (sheet.depth[r] || 0) - 1); } };
   }
+  getRowGroupDepth(row) { return (this.depth || [])[row] || 0; }
   collapseAllRowGroups() { this.collapsed = new Set(this.rowGroups().map(g => g.start + ':' + g.depth)); return this; }
   setRowGroupControlPosition(p) { this.groupControl = p; return this; }
   getSheetId() { return this.sheetId || (this.sheetId = 1000 + this.name.length * 7 + this.name.charCodeAt(0)); }

@@ -6179,7 +6179,8 @@ function mcBySpend_(a, b) { return (b.w[3].spend - a.w[3].spend) || (b.w[14].spe
 
 /*
  * EXT.views: the tab. Drawn in place; when the rows change (a campaign / ad set / ad comes or goes, or moves), the old rows
- * are deleted (their groups with them) and the groups are made again, collapsed, with the ones that were open opened again.
+ * from the table down are deleted (every group with them) and the groups are made again from zero, collapsed, with the ones
+ * that were open opened again. The same happens when the + / − on the sheet are not what was drawn (they never pile up).
  */
 function writeMetaCamps_() {
   if (!ss_().getSheetByName(MC.RAW)) return;
@@ -6300,22 +6301,29 @@ function writeMetaCamps_() {
   };
   tree.camps.forEach(c => { line(c, 0); c.kids.forEach(s => { line(s, 1); s.kids.forEach(a => line(a, 2)); }); });
 
-  // Draw: when the rows changed, the old ones go first (with their groups).
+  // Draw: when the rows changed, or the + / − on the sheet aren't what was drawn last time, every row from the table down is
+  // deleted (and every group with it) and the groups are made again from zero, so they can never pile up on old ones.
   const sh = ensureTab_(MC.TAB), sig = sha_(JSON.stringify([first, ids.map(x => x[0] + '/' + x[1])]));
   let old = null;
   try { old = JSON.parse(props.getProperty(MC.GROUPS) || 'null'); } catch (e) { old = null; }
-  const same = old && old.sig === sig && sh.getLastRow() > 0;
+  const ok = mcGroupsOk_(sh, head, first, ids);
+  const same = old && old.sig === sig && sh.getLastRow() > 0 && ok;
   const open = new Set();
-  if (old && !same && sh.getLastRow() >= old.first) {
-    let campOpen = false;
-    old.ids.forEach((x, i) => {
-      if (x[1] === 0) campOpen = false;
-      if (x[2] > 0 && (x[1] === 0 || campOpen)) {
-        try { const grp = sh.getRowGroup(old.first + i + 1, x[1] + 1); if (grp && !grp.isCollapsed()) { open.add(x[0]); if (x[1] === 0) campOpen = true; } } catch (e) { /* مفيش جروب */ }
-      }
-    });
-    const n = Math.min(old.ids.length, sh.getMaxRows() - old.first);
-    if (n > 0) sh.deleteRows(old.first, n);
+  if (!same) {
+    if (old && sh.getLastRow() >= old.first && (ok || mcGroupsOk_(sh, old.first - 1, old.first, old.ids))) { // what was open, unless the groups were broken
+      let campOpen = false;
+      old.ids.forEach((x, i) => {
+        if (x[1] === 0) campOpen = false;
+        if (x[2] > 0 && (x[1] === 0 || campOpen)) {
+          try { const grp = sh.getRowGroup(old.first + i + 1, x[1] + 1); if (grp && !grp.isCollapsed()) { open.add(x[0]); if (x[1] === 0) campOpen = true; } } catch (e) { /* مفيش جروب */ }
+        }
+      });
+    }
+    mcUngroupAbove_(sh, first);
+    if (sh.getMaxRows() >= first) sh.deleteRows(first, sh.getMaxRows() - first + 1);
+    sh.insertRowsAfter(first - 1, ids.length + 50);
+    props.deleteProperty(MC.GROUPS);
+    props.deleteProperty('GH_' + MC.TAB);
   }
   const drew = writeGrid_(sh, g);
   if (!drew && same) return;
@@ -6339,6 +6347,30 @@ function writeMetaCamps_() {
   [[1, 140], [2, 300], [3, 120], [4, 60], [5, 80], [6, 140], [7, 80], [8, 70], [9, 70], [10, 80], [11, 80], [12, 70], [13, 120], [14, 420],
     [15, 65], [16, 65], [17, 60], [18, 70], [19, 65], [20, 75]].forEach(x => sh.setColumnWidth(x[0], x[1]));
   sh.hideColumns(MC.ID_COL);
+}
+
+/* A row's group depth (how many + / − it's inside), 0 when it can't be read. */
+function mcDepth_(sh, row) { try { return sh.getRowGroupDepth(row) || 0; } catch (e) { return 0; } }
+
+/*
+ * The + / − on the sheet are what the table needs: the header and every campaign at depth 0, an ad set at 1, an ad at 2,
+ * nothing under the table. Checked on a few rows (the header, the first row of each depth, the last row and the one after).
+ */
+function mcGroupsOk_(sh, head, first, ids) {
+  const want = [[head, 0]], seen = {};
+  ids.forEach((x, i) => { if (!seen[x[1]]) { seen[x[1]] = 1; want.push([first + i, x[1]]); } });
+  if (ids.length) want.push([first + ids.length - 1, ids[ids.length - 1][1]]);
+  if (first + ids.length <= sh.getMaxRows()) want.push([first + ids.length, 0]);
+  return want.every(x => mcDepth_(sh, x[0]) === x[1]);
+}
+
+/* Takes off every group that touches the rows above the table (the rows from the table down are deleted, groups and all). */
+function mcUngroupAbove_(sh, first) {
+  for (let r = 1; r < first && r <= sh.getMaxRows(); r++) {
+    for (let d = mcDepth_(sh, r), n = 0; d > 0 && n < 8; d = mcDepth_(sh, r), n++) {
+      try { sh.getRowGroup(r, d).remove(); } catch (e) { break; }
+    }
+  }
 }
 
 /* ======== 35_spend_check.gs ======== */

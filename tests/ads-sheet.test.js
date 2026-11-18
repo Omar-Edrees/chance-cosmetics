@@ -1868,4 +1868,21 @@ test('Meta Campaigns: الكامبين وتحتها الأد سيتس وتحته
   assert.equal(sh.getRowGroup(c2b + 1, 1).isCollapsed(), false, 'C2 لسه مفتوحة');
   assert.equal(sh.getRowGroup(c1 + 1, 1).isCollapsed(), true, 'C1 مقفولة');
   assert.equal(sh.getRowGroup(c2b + 2, 2).isCollapsed(), true, 'إعلانات الأد سيت مقفولة');
+  // الجروبات اتكومت فوق بعض (8 مستويات من أول الجدول لآخره، وجروب فوق الجدول كمان) والكامبينات زي ما هي: بتتعمل من الأول
+  const h = head() + 1, n = body().length;
+  for (let r = h - 1; r <= h + n + 30; r++) sh.depth[r] = 8;
+  e.c.liveTick();
+  const c2c = rowOf('Camp C2');
+  assert.equal(sh.getRowGroupDepth(h - 1), 0, 'مفيش جروب فوق الجدول');
+  assert.equal(sh.getRowGroupDepth(h), 0, 'الهيدر برا الجروبات');
+  assert.equal(sh.getRowGroupDepth(c2c), 0); assert.equal(sh.getRowGroupDepth(c2c + 1), 1); assert.equal(sh.getRowGroupDepth(c2c + 2), 2);
+  assert.equal(sh.getRowGroupDepth(h + body().length + 1), 0, 'مفيش جروب تحت الجدول');
+  assert.equal(Math.max(...Array.from(sh.depth, x => x || 0)), 2, 'أقصى عمق 2');
+  assert.equal(body().length, n, 'نفس الصفوف');
+  assert.ok(body().filter(r => /^Camp /.test(r[1])).every(r => sh.getRowGroupDepth(rowOf(r[1])) === 0), 'كل الكامبينات باينة من بره');
+  assert.equal(sh.getRowGroup(c2c + 1, 1).isCollapsed(), true, 'بعد التصليح كله مقفول');
+  // وتحديث تاني من غير تغيير مابيلمسش الجروبات
+  const before = sh.depth.slice();
+  e.c.liveTick();
+  assert.deepEqual(sh.depth, before);
 });
