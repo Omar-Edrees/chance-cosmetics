@@ -411,23 +411,26 @@ test('صرف حساب ناقص من الشيت (اتضاف بعد ما صرف): 
   e.c.writeRows_(ads, ads.getDataRange().getValues().slice(1).filter(r => String(r[2]) !== A2), 15, [1]);
   e.c.resetCaches_();
   e.doc.SYNCED_THROUGH = last;
+  // المقارنة اليومية والفانل اتعملوا قبل كده (زي الشيت لما الكود الجديد اتلصق): الزرار بس هو اللي يشغلها تاني دلوقتي
+  e.doc.SPEND_CHECK_DAY = today; e.doc.FUNNEL_AT = String(Date.now()); delete e.doc.FUNNEL_DUE;
   e.c.liveTick(); e.c.liveTick();
   assert.equal(closingRow(e.ss.getSheetByName(name), 'MONTH TOTAL')['TOTAL SPEND'], 3000, 'الأرشيف من غير صرف الحساب الناقص');
-  pullAll(); // الأيام اللي بعد آخر يوم اتسحب (catchUpGap_): المقارنة بتستنى أي سحب شغال يخلص
-  e.c.refreshFunnelNow();
+  pullAll(); // الأيام اللي بعد آخر يوم اتسحب (catchUpGap_)
+  e.c.refreshNow(); // 🔄 تحديث كامل: بيشغل المقارنة على طول، من غير ما يستنى الفانل
+  assert.match(e.alerts.join('\n'), /مطابقة الصرف مع Meta: .*بيتسحب تاني في الخلفية/);
   assert.match(e.c.getStatus_('SPEND_CHECK'), /بيتسحب تاني في الخلفية: ⏳ Chance Golden Era .*: Meta 5,000 والشيت 0/);
   assert.ok(JSON.parse(e.doc.BACKFILL).units.every(u => u[0] === A2 && u[1] >= prev + '-01' && u[2] <= last), 'الحساب ده بس، الشهر ده بس');
   pullAll();
-  e.c.liveTick();
+  e.c.liveTick(); // بعد السحب: الأرشيف و Actual ROAS بيتحدثوا لوحدهم في التحديث اللي بعده، حتى بالليل
   const m = closingRow(e.ss.getSheetByName(name), 'MONTH TOTAL');
   assert.deepEqual([m['TOTAL SPEND'], m['TOTAL ORDERS'], m['CONFIRMED ORDERS'], m['IN SHIPPING'], m['DELIVERED ORDERS'], m.REVENUE, m['ACTUAL ROAS'], m.CPO],
     [8000, 3, 3, 1, 2, 14000, 1.75, 4000], 'الأرشيف اتكتب تاني لوحده بالصرف كله');
-  e.c.refreshFunnelNow();
   const v = e.ss.getSheetByName('Actual ROAS').getDataRange().getValues(), k = v.findIndex(r => r[0] === 'كل الحسابات (البيزنس كله)');
   const row = v.find((r, i) => i > k && r[0] === probe.c.funnelMonthName_(prev));
   assert.deepEqual([row[1], row[2], row[4], row[6], row[7], row[9], row[10], row[11]],
     [m['TOTAL SPEND'], m['TOTAL ORDERS'], m['CONFIRMED ORDERS'], m['IN SHIPPING'], m['DELIVERED ORDERS'], m.REVENUE, m['ACTUAL ROAS'], m.CPO],
     'Actual ROAS للشهر ده = الأرشيف بالظبط');
+  e.c.refreshNow();
   assert.match(e.c.getStatus_('SPEND_CHECK'), /✓ صرف كل حساب في الشيت = صرف Meta/);
   e.c.liveTick();
   assert.match(e.ss.getSheetByName('Health').getDataRange().getValues().map(r => r.join(' ')).join('\n'), /مطابقة الصرف مع Meta .*✓ صرف كل حساب/);

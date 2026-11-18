@@ -175,6 +175,7 @@ function backfillStep() {
     withLock_(() => rebuildViews_({ full: true, slow: slowViewsDue_() }));
     props.deleteProperty('BACKFILL');
     props.setProperty(CLOSING.DIRTY_KEY, '1'); // archives of the months still in Actual ROAS get the spend pulled again
+    props.setProperty(FUNNEL.DUE_KEY, '1'); // and Actual ROAS on the next update, even at night
     const through = asKey_(props.getProperty('SYNCED_THROUGH') || ''), done = st.until < todayKey_() ? st.until : shiftKey_(todayKey_(), -1);
     if (!through || through < done) props.setProperty('SYNCED_THROUGH', done);
     stopTrigger();
@@ -199,6 +200,7 @@ function liveTick(manual) {
     const r = step_(run, 'تابات', () => tryLock_(() => rebuildViews_({ slow: slowViewsDue_() }), manual ? 120000 : 5000));
     setStatus_('LIVE', (r.skipped ? 'اتأجل (تحديث تاني شغال)' : '✓ OK') + ' — ' + run.took.join('، '));
     try { ensureTriggers_(); catchUpGap_(); } catch (e) { console.error('catch-up: ' + errText_(e)); }
+    if (timeLeft_()) try { runSpendCheck_(manual); } catch (e) { setStatus_('SPEND_CHECK', '✗ ' + errText_(e)); }
   } catch (e) { setStatus_('LIVE', '✗ ' + errText_(e) + ' — ' + run.took.join('، ')); console.error(errText_(e)); }
   finally { endRun_(run); }
 }
@@ -228,7 +230,8 @@ function refreshNow() {
       : /اتأجل/.test(live) ? 'الأرقام اتسحبت، بس في تحديث تلقائي شغال في نفس اللحظة وهو اللي بيكتب التابات. Today هيتحدث خلال دقيقة أو اتنين.\n'
       : 'اتحدث كل حاجة ✅\n';
     alert_(head + live +
-      (bf ? '\n\nسحب الشهر شغال في الخلفية (' + getStatus_('BACKFILL') + '). Today بيتحدث لوحده كل 15 دقيقة، مش لازم تدوس تاني.' : ''));
+      '\n\nمطابقة الصرف مع Meta: ' + getStatus_('SPEND_CHECK') +
+      (bf ? '\n\nسحب صرف شغال في الخلفية (' + getStatus_('BACKFILL') + '). لما يخلص، Closing والأرشيف و Actual ROAS بيتحدثوا لوحدهم في التحديث اللي بعده (كل 15 دقيقة)، مش لازم تدوس تاني.' : ''));
     ss_().setActiveSheet(tab_(APP.T.TODAY));
   } catch (e) { alert_('التحديث ماكملش:\n' + errText_(e)); }
 }

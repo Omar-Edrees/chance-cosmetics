@@ -17,7 +17,7 @@
  */
 const FUNNEL = {
   TITLE: 'DAILY ACCOUNT FUNNEL', DAYS: 30, MONTHS: 3, EVERY_MS: 3 * 3600000, QUIET_FROM: 3, QUIET_TO: 9, YELLOW: 0.2,
-  BENCH_ROW: 4, BENCH_KEY: 'FUNNEL_BENCH', AT_KEY: 'FUNNEL_AT',
+  BENCH_ROW: 4, BENCH_KEY: 'FUNNEL_BENCH', AT_KEY: 'FUNNEL_AT', DUE_KEY: 'FUNNEL_DUE', // DUE: spend was pulled again, refresh now
   GREEN: '#d9ead3', AMBER: '#fff2cc', RED: '#f4cccc', BAND: '#1f2937', BENCH_BG: '#eaf0ff', AVG_BG: '#f3f4f6', AVG3_BG: '#e8eefc',
   /* [column, numerator, denominator, times, number format, lower is better?, no color?, a funnel step (at most 100%)?] */
   METRICS: [
@@ -287,8 +287,10 @@ function writeFunnel_(data) {
 function refreshFunnel_(force) {
   const props = PropertiesService.getDocumentProperties(), at = Number(props.getProperty(FUNNEL.AT_KEY) || 0);
   const hour = Number(Utilities.formatDate(new Date(), tz_(), 'H'));
-  if (!force && (Date.now() - at < FUNNEL.EVERY_MS || (hour >= FUNNEL.QUIET_FROM && hour < FUNNEL.QUIET_TO))) return false;
+  const due = !!props.getProperty(FUNNEL.DUE_KEY) && !props.getProperty('BACKFILL');
+  if (!force && !due && (Date.now() - at < FUNNEL.EVERY_MS || (hour >= FUNNEL.QUIET_FROM && hour < FUNNEL.QUIET_TO))) return false;
   if (!accounts_('META').length) return false;
+  props.deleteProperty(FUNNEL.DUE_KEY);
   const data = time_('Account Funnel — Meta', () => fetchFunnel_());
   withLock_(() => { writeFunnel_(data); writeActual_(data); });
   props.setProperty(FUNNEL.AT_KEY, String(Date.now()));

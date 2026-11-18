@@ -11,7 +11,7 @@
  * Ad accounts and stores are read-only from here: no writes to Meta, TikTok or order sources.
  */
 const APP = {
-  VERSION: '1.59.0',
+  VERSION: '1.59.1',
   T: {
     SETTINGS: 'Settings', ACCOUNTS: 'Accounts', PRODUCTS: 'Products', ADMAP: 'Ad Map',
     ADS: 'Ads Raw', ACC_RAW: 'Account Raw', ORDERS: 'Orders Raw', DAILY: 'Daily Log',
@@ -1792,6 +1792,7 @@ function backfillStep() {
     withLock_(() => rebuildViews_({ full: true, slow: slowViewsDue_() }));
     props.deleteProperty('BACKFILL');
     props.setProperty(CLOSING.DIRTY_KEY, '1'); // archives of the months still in Actual ROAS get the spend pulled again
+    props.setProperty(FUNNEL.DUE_KEY, '1'); // and Actual ROAS on the next update, even at night
     const through = asKey_(props.getProperty('SYNCED_THROUGH') || ''), done = st.until < todayKey_() ? st.until : shiftKey_(todayKey_(), -1);
     if (!through || through < done) props.setProperty('SYNCED_THROUGH', done);
     stopTrigger();
@@ -1816,6 +1817,7 @@ function liveTick(manual) {
     const r = step_(run, 'تابات', () => tryLock_(() => rebuildViews_({ slow: slowViewsDue_() }), manual ? 120000 : 5000));
     setStatus_('LIVE', (r.skipped ? 'اتأجل (تحديث تاني شغال)' : '✓ OK') + ' — ' + run.took.join('، '));
     try { ensureTriggers_(); catchUpGap_(); } catch (e) { console.error('catch-up: ' + errText_(e)); }
+    if (timeLeft_()) try { runSpendCheck_(manual); } catch (e) { setStatus_('SPEND_CHECK', '✗ ' + errText_(e)); }
   } catch (e) { setStatus_('LIVE', '✗ ' + errText_(e) + ' — ' + run.took.join('، ')); console.error(errText_(e)); }
   finally { endRun_(run); }
 }
@@ -1845,7 +1847,8 @@ function refreshNow() {
       : /اتأجل/.test(live) ? 'الأرقام اتسحبت، بس في تحديث تلقائي شغال في نفس اللحظة وهو اللي بيكتب التابات. Today هيتحدث خلال دقيقة أو اتنين.\n'
       : 'اتحدث كل حاجة ✅\n';
     alert_(head + live +
-      (bf ? '\n\nسحب الشهر شغال في الخلفية (' + getStatus_('BACKFILL') + '). Today بيتحدث لوحده كل 15 دقيقة، مش لازم تدوس تاني.' : ''));
+      '\n\nمطابقة الصرف مع Meta: ' + getStatus_('SPEND_CHECK') +
+      (bf ? '\n\nسحب صرف شغال في الخلفية (' + getStatus_('BACKFILL') + '). لما يخلص، Closing والأرشيف و Actual ROAS بيتحدثوا لوحدهم في التحديث اللي بعده (كل 15 دقيقة)، مش لازم تدوس تاني.' : ''));
     ss_().setActiveSheet(tab_(APP.T.TODAY));
   } catch (e) { alert_('التحديث ماكملش:\n' + errText_(e)); }
 }
@@ -2605,7 +2608,7 @@ function orderPatch_(id) {
  */
 const FUNNEL = {
   TITLE: 'DAILY ACCOUNT FUNNEL', DAYS: 30, MONTHS: 3, EVERY_MS: 3 * 3600000, QUIET_FROM: 3, QUIET_TO: 9, YELLOW: 0.2,
-  BENCH_ROW: 4, BENCH_KEY: 'FUNNEL_BENCH', AT_KEY: 'FUNNEL_AT',
+  BENCH_ROW: 4, BENCH_KEY: 'FUNNEL_BENCH', AT_KEY: 'FUNNEL_AT', DUE_KEY: 'FUNNEL_DUE', // DUE: spend was pulled again, refresh now
   GREEN: '#d9ead3', AMBER: '#fff2cc', RED: '#f4cccc', BAND: '#1f2937', BENCH_BG: '#eaf0ff', AVG_BG: '#f3f4f6', AVG3_BG: '#e8eefc',
   /* [column, numerator, denominator, times, number format, lower is better?, no color?, a funnel step (at most 100%)?] */
   METRICS: [
@@ -2875,8 +2878,10 @@ function writeFunnel_(data) {
 function refreshFunnel_(force) {
   const props = PropertiesService.getDocumentProperties(), at = Number(props.getProperty(FUNNEL.AT_KEY) || 0);
   const hour = Number(Utilities.formatDate(new Date(), tz_(), 'H'));
-  if (!force && (Date.now() - at < FUNNEL.EVERY_MS || (hour >= FUNNEL.QUIET_FROM && hour < FUNNEL.QUIET_TO))) return false;
+  const due = !!props.getProperty(FUNNEL.DUE_KEY) && !props.getProperty('BACKFILL');
+  if (!force && !due && (Date.now() - at < FUNNEL.EVERY_MS || (hour >= FUNNEL.QUIET_FROM && hour < FUNNEL.QUIET_TO))) return false;
   if (!accounts_('META').length) return false;
+  props.deleteProperty(FUNNEL.DUE_KEY);
   const data = time_('Account Funnel — Meta', () => fetchFunnel_());
   withLock_(() => { writeFunnel_(data); writeActual_(data); });
   props.setProperty(FUNNEL.AT_KEY, String(Date.now()));
@@ -6339,12 +6344,40 @@ function writeMetaCamps_() {
 /* ======== 35_spend_check.gs ======== */
 /*
  * Spend check: every Meta account's spend in the sheet (Ads Raw: what Daily Log, Closing, its archives and Actual ROAS
- * are built from) against Meta's own account totals (the funnel's read, every 3 hours): each ended month the sheet has
+ * are built from) against Meta's own account totals (its own small read, spendCheckRead_: on 🔄 تحديث كامل and once a
+ * day from the 15-minute update; and the funnel's read, every 3 hours): each ended month the sheet has
  * spend for from its first day, and each of the last 30 days before yesterday. Where they differ (an account added after
  * it had spent, a day an update missed), those days are pulled again for that account in the background
  * (startBackfill_), at most SPEND_CHECK.TRIES times; what still differs after that is written in Health.
  */
-const SPEND_CHECK = { KEY: 'SPEND_CHECK_TRIED', TRIES: 2, DAY_MIN: 200, DAY_PCT: 0.03, MONTH_MIN: 1000, MONTH_PCT: 0.01 };
+const SPEND_CHECK = { KEY: 'SPEND_CHECK_TRIED', DAY_KEY: 'SPEND_CHECK_DAY', TRIES: 2, DAY_MIN: 200, DAY_PCT: 0.03, MONTH_MIN: 1000, MONTH_PCT: 0.01 };
+
+/*
+ * From liveTick: on 🔄 تحديث كامل (manual), and the first update of each day. Meta's spend per account, month by month
+ * from the first month the sheet has spend for, and day by day for the last 30 days (spend only), then checkSpend_.
+ */
+function runSpendCheck_(manual) {
+  const props = PropertiesService.getDocumentProperties(), today = todayKey_(), from = spendFrom_();
+  if ((!manual && props.getProperty(SPEND_CHECK.DAY_KEY) === today) || !from || !accounts_('META').length) return [];
+  props.setProperty(SPEND_CHECK.DAY_KEY, today);
+  return checkSpend_(spendCheckRead_(from, today));
+}
+function spendCheckRead_(from, today) {
+  const months = [], accs = accounts_('META'), reqs = [], base = { level: 'account', fields: 'spend,date_start', limit: 500 };
+  for (let m = today.slice(0, 7); m >= from.slice(0, 7); m = closingPrevMonth_(m)) months.push(m);
+  accs.forEach(a => {
+    reqs.push({ path: 'act_' + a.id + '/insights', params: Object.assign({ time_range: JSON.stringify({ since: shiftKey_(today, -29), until: today }), time_increment: 1 }, base) });
+    reqs.push({ path: 'act_' + a.id + '/insights', params: Object.assign({ time_range: JSON.stringify({ since: months[months.length - 1] + '-01', until: today }), time_increment: 'monthly' }, base) });
+  });
+  const res = metaMany_(reqs);
+  return { months: months, accounts: accs.map((a, i) => {
+    const d = res[2 * i], m = res[2 * i + 1], out = { id: a.id, name: a.name || a.id, days: [], months: {} };
+    if (d.error || m.error) { out.error = d.error || m.error; return out; }
+    out.days = (d.payload.data || []).map(r => ({ date: String(r.date_start), raw: { spend: num_(r.spend) } })).filter(x => x.raw.spend > 0);
+    (m.payload.data || []).forEach(r => { out.months[String(r.date_start).slice(0, 7)] = { spend: num_(r.spend) }; });
+    return out;
+  }) };
+}
 
 /* The first day the sheet has spend for (the oldest day in Ads Raw), or '' when it has none. */
 function spendFrom_() {
@@ -6353,10 +6386,13 @@ function spendFrom_() {
   return first;
 }
 
-/* After the funnel's Meta read (fetchFunnel_). Returns the [account, from, to] pieces it asked to pull again. */
+/* After a Meta read (spendCheckRead_ or the funnel's fetchFunnel_). Returns the [account, from, to] pieces it asked to pull again. */
 function checkSpend_(data) {
   const C = SPEND_CHECK, props = PropertiesService.getDocumentProperties();
-  if (props.getProperty('BACKFILL')) return []; // pulling now: checked on the next read
+  // Pieces a pull running now still has to do: a gap inside one is left to it (not counted as a try).
+  let running = null;
+  try { running = JSON.parse(props.getProperty('BACKFILL') || 'null'); } catch (e) { running = null; }
+  const pending = running ? running.units.slice(running.done || 0) : [];
   const from = spendFrom_(), today = todayKey_(), yest = shiftKey_(today, -1);
   if (!from) return [];
   const sheet = {};
@@ -6385,6 +6421,7 @@ function checkSpend_(data) {
     gaps.forEach(g => {
       const k = a.id + '|' + g[0] + '|' + g[1], n = num_(tried[k]), text = a.name + ' ' + g[4] + ': Meta ' + fmt(g[2]) + ' والشيت ' + fmt(g[3]);
       now[k] = true;
+      if (pending.some(u => u[0] === a.id && u[1] <= g[1] && u[2] >= g[0])) { left.push('⏳ ' + text + ' (بيتسحب دلوقتي)'); return; }
       if (n < C.TRIES) { tried[k] = n + 1; pull.push([a.id, g[0], g[1]]); left.push('⏳ ' + text); } else left.push('⚠️ ' + text);
     });
   });
@@ -6392,8 +6429,9 @@ function checkSpend_(data) {
   Object.keys(tried).forEach(k => { if (!now[k] || k.split('|')[2] < shiftKey_(today, -120)) delete tried[k]; });
   props.setProperty(C.KEY, JSON.stringify(tried));
   pull.forEach(p => startBackfill_(p[1], p[2], [p[0]]));
-  setStatus_('SPEND_CHECK', left.length
-    ? (pull.length ? 'بيتسحب تاني في الخلفية: ' : '') + left.join(' | ')
+  const failed = data.accounts.filter(a => a.error).map(a => '⚠️ ماقدرتش أقرا ' + a.name + ' من Meta');
+  setStatus_('SPEND_CHECK', left.length || failed.length
+    ? (pull.length || pending.length ? 'بيتسحب تاني في الخلفية: ' : '') + left.concat(failed).join(' | ')
     : '✓ صرف كل حساب في الشيت = صرف Meta (من ' + from + ')');
   return pull;
 }
