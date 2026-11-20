@@ -63,7 +63,7 @@ function stockByName_() {
   const st = useApp ? { byHandle: {}, rows: 0, error: '' } : readStock_(), props = PropertiesService.getDocumentProperties(), n = Number(props.getProperty('STOCK_SNAP_N') || 0);
   let saved = '', flow = {};
   for (let i = 0; i < n; i++) saved += props.getProperty('STOCK_SNAP_' + i) || '';
-  const prods = products_(), nameOf = (h, title) => { const pr = prods.find(p => p.slugs.indexOf(h) >= 0); return pr ? pr.name : productNameOf_(title); };
+  const nameOf = stockNameOf_;
   if (useApp) {
     // nothing from the Flow sheet
   } else if (st.error) {
@@ -95,6 +95,12 @@ function stockByName_() {
   const status = k ? '✓ ' + k + ' منتج من فلو الستوك' + (st.error ? ' (آخر قراية ' + props.getProperty('STOCK_SNAP_AT') + ')' : '') + '، والباقي ' + fixed
     : '⚠️ ' + fixed + ' — مابيتحدثش لوحده' + (st.error ? ' (' + st.error + ')' : ' (مفيش صفوف في تاب ' + cfgStr_('stock.sheet_tab') + ')');
   return { by: by, at: k && !st.error ? nowText_() : k ? props.getProperty('STOCK_SNAP_AT') : STOCK_SNAPSHOT_AT.slice(0, 16) + ' (ثابت)', status: status };
+}
+
+/* A stock row's product: the Products row with its handle in Slugs, else the product named like its title. */
+function stockNameOf_(handle, title) {
+  const pr = products_().find(p => p.slugs.indexOf(handle) >= 0);
+  return pr ? pr.name : productNameOf_(title);
 }
 
 /* New handles in the Flow stock tab → new rows in Products (never edits existing rows). Not used once the app has the stock. */

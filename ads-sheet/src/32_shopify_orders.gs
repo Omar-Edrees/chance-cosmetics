@@ -3,6 +3,7 @@
  * Every update (inside syncOrders_, before Orders Raw is read): the orders created since the last read, oldest first, 20 a page,
  * into the hidden tab "Shopify Orders": one row per order with the columns readOrderSource_ reads (the same names the Flow sheet
  * had), so the rest of the sheet works as before. No customer data: no names, phones, emails or addresses; the governorate only.
+ *  - Variants: "variant number x pieces | …" of the pieces in the order now ("-" = none), for the colors running out in Today.
  *  - The COD form's UTMs, campaign / ad set IDs and "Order Referrer" are the order's own attributes (Attr UTM …).
  *  - A website order's last visit (UTMs, referrer) isn't ready the moment the order is made: every read goes back
  *    SHOP_ORDERS.OVERLAP_H hours, and those orders are written again with what Shopify has now.
@@ -11,10 +12,11 @@
  * Shopify shows the last 60 days only (no read_all_orders): older orders stay in the tab as they were read.
  */
 const SHOP_ORDERS = {
-  TAB: 'Shopify Orders', FIRST_FROM: '2026-10-13T09:00:00Z', PAGES: 25, OVERLAP_H: 6, TAIL: 1500,
+  TAB: 'Shopify Orders', FIRST_FROM: '2026-10-13T09:00:00Z', PAGES: 25, OVERLAP_H: 6, TAIL: 1500, VARIANT_DAYS: 7,
   SINCE: 'SHOP_ORDERS_SINCE', READY: 'SHOP_ORDERS_READY', AT: 'SHOP_ORDERS_AT', NO_ADDR: 'SHOP_ORDERS_NO_ADDR',
   HEADERS: ['Order ID', 'Created At', 'Total Price', 'Products', 'UTM Source', 'UTM Campaign', 'UTM Content', 'UTM ID', 'UTM Term',
-    'Attr UTM Source', 'Attr UTM Campaign', 'Attr UTM Content', 'Attr UTM ID', 'Attr UTM Term', 'Order Referrer', 'Source Name', 'City', 'Gross Sales', 'Net Sales'],
+    'Attr UTM Source', 'Attr UTM Campaign', 'Attr UTM Content', 'Attr UTM ID', 'Attr UTM Term', 'Order Referrer', 'Source Name', 'City', 'Gross Sales', 'Net Sales',
+    'Variants'],
   // Gross sales of an order when it was made: its products at their price before any discount, no shipping, from the
   // order's first sales agreement (reason ORDER), so later edits and cancellations don't change it. Net sales: the same
   // products after their discounts (gross − discounts), still without shipping. 10 orders a call.
@@ -22,12 +24,12 @@ const SHOP_ORDERS = {
     'totalAmount{shopMoney{amount}} totalDiscountAmountBeforeTaxes{shopMoney{amount}}}}}}}}}',
   QUERY: 'query($q:String!,$after:String){orders(first:20,after:$after,sortKey:CREATED_AT,query:$q){pageInfo{hasNextPage endCursor} ' +
     'nodes{id createdAt cancelledAt sourceName originalTotalPriceSet{shopMoney{amount}} customAttributes{key value} ' +
-    'lineItems(first:30){pageInfo{hasNextPage endCursor} nodes{title quantity currentQuantity}} customerJourneySummary{lastVisit{referrerUrl utmParameters{source campaign content term}}}}}}',
+    'lineItems(first:30){pageInfo{hasNextPage endCursor} nodes{title quantity currentQuantity variant{id}}} customerJourneySummary{lastVisit{referrerUrl utmParameters{source campaign content term}}}}}}',
   // The shipping address's governorate only (the same field the fixed file 24_order_gov.gs was read from).
   // An order with more than 30 lines: the rest, 100 at a time.
-  ITEMS_QUERY: 'query($id:ID!,$after:String){order(id:$id){lineItems(first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{title quantity currentQuantity}}}}',
+  ITEMS_QUERY: 'query($id:ID!,$after:String){order(id:$id){lineItems(first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{title quantity currentQuantity variant{id}}}}}',
   // Orders edited after they were read (a piece removed, a color swapped): their lines now, 10 orders a call.
-  EDITED_QUERY: 'query($ids:[ID!]!){nodes(ids:$ids){... on Order{id cancelledAt lineItems(first:50){pageInfo{hasNextPage endCursor} nodes{title quantity currentQuantity}}}}}',
+  EDITED_QUERY: 'query($ids:[ID!]!){nodes(ids:$ids){... on Order{id cancelledAt lineItems(first:50){pageInfo{hasNextPage endCursor} nodes{title quantity currentQuantity variant{id}}}}}}',
   EDITED: 'SHOP_ORDERS_EDITED',
   ADDR_QUERY: 'query($ids:[ID!]!){nodes(ids:$ids){... on Order{id shippingAddress{province}}}}',
   COUNT_QUERY: 'query($a:String!,$b:String!){a:ordersCount(query:$a,limit:null){count} b:ordersCount(query:$b,limit:null){count}}'
@@ -46,11 +48,11 @@ function shopOrderRow_(o, province) {
   (o.customAttributes || []).forEach(a => { attr[String(a.key || '').trim().toLowerCase()] = String(a.value === null || a.value === undefined ? '' : a.value).trim(); });
   const visit = (o.customerJourneySummary || {}).lastVisit || {}, u = visit.utmParameters || {};
   const gov = Object.keys(attr).find(k => /محافظ|province|governorate/.test(k));
-  const items = shopOrderItemsText_(o, shopOrderItems_(o));
+  const lines = shopOrderItems_(o), items = shopOrderItemsText_(o, lines);
   return [o.id, o.createdAt, num_(((o.originalTotalPriceSet || {}).shopMoney || {}).amount), items,
     u.source || '', u.campaign || '', u.content || '', '', u.term || '',
     attr.utm_source || '', attr.utm_campaign || '', attr.utm_content || '', attr.utm_id || '', attr.utm_term || '',
-    attr['order referrer'] || visit.referrerUrl || '', o.sourceName || '', province || (gov ? attr[gov] : ''), '', ''];
+    attr['order referrer'] || visit.referrerUrl || '', o.sourceName || '', province || (gov ? attr[gov] : ''), '', '', shopOrderVariantsText_(o, lines)];
 }
 
 /*
@@ -59,9 +61,18 @@ function shopOrderRow_(o, province) {
  * still shows in the cancelled numbers), and so does an order whose lines would all be gone.
  */
 function shopOrderItemsText_(o, lines) {
+  return shopOrderLinesNow_(o, lines).map(li => String(li.title || '').trim() + ' x' + (li.quantity || 1)).join(' | ');
+}
+function shopOrderLinesNow_(o, lines) {
   const now = o.cancelledAt ? [] : lines.filter(li => li.currentQuantity === undefined || li.currentQuantity === null || Number(li.currentQuantity) > 0)
-    .map(li => ({ title: li.title, quantity: li.currentQuantity === undefined || li.currentQuantity === null ? li.quantity : li.currentQuantity }));
-  return (now.length ? now : lines).map(li => String(li.title || '').trim() + ' x' + (li.quantity || 1)).join(' | ');
+    .map(li => ({ title: li.title, variant: li.variant, quantity: li.currentQuantity === undefined || li.currentQuantity === null ? li.quantity : li.currentQuantity }));
+  return now.length ? now : lines;
+}
+/* "123 x2 | 456 x1": the same pieces by variant number. A line without a variant (deleted, custom item) is left out; none = "-". */
+function shopOrderVariantsText_(o, lines) {
+  const out = shopOrderLinesNow_(o, lines).filter(li => li.variant && li.variant.id)
+    .map(li => String(li.variant.id).split('/').pop() + ' x' + (li.quantity || 1)).join(' | ');
+  return out || '-';
 }
 
 /* Every line of an order: the first 30 come with the order; the rest are read on their own (rare). */
@@ -168,7 +179,7 @@ function shopifyMergeOrders_(rows) {
   const tail = n ? sh.getRange(start, 1, n, W).getValues() : [], fresh = new Map();
   rows.forEach(r => { if (!older.has(String(r[0]))) fresh.set(String(r[0]), r); });
   // City: a new read without a governorate keeps the one read before. Gross / Net Sales: read once, kept.
-  const keep = ['City', 'Gross Sales', 'Net Sales'].map(h => SHOP_ORDERS.HEADERS.indexOf(h));
+  const keep = ['City', 'Gross Sales', 'Net Sales', 'Variants'].map(h => SHOP_ORDERS.HEADERS.indexOf(h));
   const out = tail.map(r => { const f = fresh.get(String(r[0])); if (f) keep.forEach(C => { if (f[C] === '' && r[C] !== '') f[C] = r[C]; }); return f || r; }),
     had = new Set(tail.map(r => String(r[0])));
   fresh.forEach((r, id) => { if (!had.has(id)) out.push(r); });
@@ -270,14 +281,8 @@ function fixEditedOrders_() {
       const chunk = q.slice(i, i + 10);
       (shopifyGql_(SHOP_ORDERS.EDITED_QUERY, { ids: chunk }).nodes || []).forEach(o => {
         if (!o || !o.id || !o.lineItems) return;
-        const li = o.lineItems || {}, lines = (li.nodes || []).slice();
-        let page = li.pageInfo || {};
-        while (page.hasNextPage) {
-          const more = shopifyGql_(SHOP_ORDERS.ITEMS_QUERY, { id: o.id, after: page.endCursor }).order.lineItems;
-          (more.nodes || []).forEach(x => lines.push(x));
-          page = more.pageInfo || {};
-        }
-        items[o.id] = shopOrderItemsText_(o, lines);
+        const lines = shopOrderItems_(o);
+        items[o.id] = [shopOrderItemsText_(o, lines), shopOrderVariantsText_(o, lines)];
       });
       chunk.forEach(id => done.push(id)); // an order Shopify doesn't show any more (older than 60 days) stays as it is
     }
@@ -285,11 +290,13 @@ function fixEditedOrders_() {
   let changed = 0;
   if (Object.keys(items).length) withLock_(() => {
     const ids = sh.getRange(2, 1, sh.getLastRow() - 1, 1).getValues(), P = SHOP_ORDERS.HEADERS.indexOf('Products') + 1;
+    const V = SHOP_ORDERS.HEADERS.indexOf('Variants') + 1;
     ids.forEach((r, i) => {
       const t = items[String(r[0])];
       if (t === undefined) return;
       const cell = sh.getRange(i + 2, P);
-      if (String(cell.getValue()) !== t) { cell.setValue(t); changed++; }
+      if (String(cell.getValue()) !== t[0]) { cell.setValue(t[0]); changed++; }
+      if (sh.getMaxColumns() >= V) sh.getRange(i + 2, V).setValue(t[1]);
     });
   });
   const left = q.filter(id => done.indexOf(id) < 0);
@@ -297,4 +304,40 @@ function fixEditedOrders_() {
   if (done.length) setStatus_('SHOP_ORDERS_EDITED', '✓ ' + done.length + ' أوردر اتعدل في شوبيفاي، ' + changed + ' منهم اتغيرت منتجاته' +
     (left.length ? '، والباقي (' + left.length + ') في التحديث الجاي' : ''));
   return changed;
+}
+
+/*
+ * EXT.live: the Variants column of the orders made in the last SHOP_ORDERS.VARIANT_DAYS days that don't have it yet (orders
+ * read before the column existed), newest first, up to 300 a run, 10 a call. An order Shopify doesn't show gets "-".
+ */
+function fillOrderVariants_() {
+  const sh = ss_().getSheetByName(SHOP_ORDERS.TAB);
+  if (!shopifyProps_().getProperty('SHOPIFY_TOKEN') || !sh || sh.getLastRow() < 2) return 0;
+  const V = SHOP_ORDERS.HEADERS.indexOf('Variants') + 1, L = sh.getLastRow();
+  if (sh.getMaxColumns() < V) sh.insertColumnsAfter(sh.getMaxColumns(), V - sh.getMaxColumns());
+  if (String(sh.getRange(1, V).getValue()) !== 'Variants') sh.getRange(1, V).setValue('Variants');
+  const cut = new Date(Date.now() - SHOP_ORDERS.VARIANT_DAYS * 86400000).toISOString();
+  const ids = sh.getRange(2, 1, L - 1, 2).getValues(), col = sh.getRange(2, V, L - 1, 1).getValues(), need = [];
+  for (let i = ids.length - 1; i >= 0 && need.length < 300 && String(ids[i][1]) >= cut; i--) {
+    if (col[i][0] === '' && ids[i][0]) need.push(String(ids[i][0]));
+  }
+  if (!need.length) return 0;
+  const got = {};
+  try {
+    for (let i = 0; i < need.length && timeLeft_(); i += 10) {
+      const chunk = need.slice(i, i + 10), nodes = shopifyGql_(SHOP_ORDERS.EDITED_QUERY, { ids: chunk }).nodes || [];
+      chunk.forEach((id, n) => { const o = nodes[n]; got[id] = o && o.lineItems ? shopOrderVariantsText_(o, shopOrderItems_(o)) : '-'; });
+    }
+  } catch (e) { setStatus_('SHOP_VARIANTS', '✗ ' + errText_(e)); }
+  const n = Object.keys(got).length;
+  if (!n) return 0;
+  withLock_(() => {
+    // Rows may have moved if new orders came in meanwhile: write by order ID. A cell filled meanwhile keeps what it has.
+    const now = sh.getRange(2, 1, sh.getLastRow() - 1, 1).getValues(), out = sh.getRange(2, V, now.length, 1).getValues();
+    now.forEach((r, i) => { const t = got[String(r[0])]; if (t !== undefined && out[i][0] === '') out[i][0] = t; });
+    sh.getRange(2, V, out.length, 1).setNumberFormat('@').setValues(out);
+    dropRaw_(SHOP_ORDERS.TAB);
+  });
+  setStatus_('SHOP_VARIANTS', '✓ ' + n + ' أوردر' + (need.length > n ? '، والباقي في التحديث الجاي' : ''));
+  return n;
 }

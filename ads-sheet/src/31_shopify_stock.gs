@@ -1,15 +1,15 @@
 /*
  * Live stock from the Shopify app (read_products + read_inventory), every STOCK_APP.EVERY_MIN minutes in the update and from 📦.
- * Every variant → the hidden tab "Shopify Stock" (one row per variant). A read goes page by page (250 variants a page); if the
+ * Every variant → the hidden tab "Shopify Stock" (one row per variant, with its color / size name). A read goes page by page (250 variants a page); if the
  * update runs out of time, the next one goes on from the saved page. When a read ends, variants it didn't see (deleted) go.
  * stockByName_ (10_stock.gs) reads the tab, so onEdit (no permission to call Shopify) shows the last read too.
  * Products that don't track stock in Shopify, and archived ones, are left out.
  */
 const STOCK_APP = {
-  TAB: 'Shopify Stock', HEADERS: ['Variant ID', 'Handle', 'Product', 'Stock', 'Read', 'Price'], EVERY_MIN: 30, PAGES: 40,
+  TAB: 'Shopify Stock', HEADERS: ['Variant ID', 'Handle', 'Product', 'Stock', 'Read', 'Price', 'Variant'], EVERY_MIN: 30, PAGES: 40,
   CURSOR: 'STOCK_APP_CURSOR', READ: 'STOCK_APP_READ', DONE: 'STOCK_APP_DONE', AT: 'STOCK_APP_AT', SEEN: 'STOCK_APP_SEEN',
   QUERY: 'query($after:String){productVariants(first:250,after:$after){pageInfo{hasNextPage endCursor} ' +
-    'nodes{id inventoryQuantity price product{handle title tracksInventory status}}}}'
+    'nodes{id title inventoryQuantity price product{handle title tracksInventory status}}}}'
 };
 
 /* force = read now even if the last read is fresh (📦). Returns the variants read in this run. Errors go to Health. */
@@ -30,7 +30,8 @@ function syncShopifyStock_(force) {
       res.nodes.forEach(v => {
         const p = v.product || {};
         if (p.tracksInventory === false || p.status === 'ARCHIVED' || !p.handle) return; // archived: off the store, its leftovers aren't stock
-        rows.push([v.id, String(p.handle).toLowerCase(), p.title || '', num_(v.inventoryQuantity), read, v.price === null || v.price === undefined ? '' : num_(v.price)]);
+        rows.push([v.id, String(p.handle).toLowerCase(), p.title || '', num_(v.inventoryQuantity), read, v.price === null || v.price === undefined ? '' : num_(v.price),
+          String(v.title || '')]);
       });
       more = res.pageInfo.hasNextPage; after = res.pageInfo.endCursor; pages++;
     }
@@ -76,7 +77,7 @@ function appStock_() {
   if (STOCK_APP_) return STOCK_APP_;
   const out = { byHandle: {}, at: PropertiesService.getDocumentProperties().getProperty(STOCK_APP.AT) || '' };
   const sh = ss_().getSheetByName(STOCK_APP.TAB);
-  if (sh && out.at) readRows_(sh, STOCK_APP.HEADERS.length).forEach(r => {
+  if (sh && out.at) stockAppRows_(sh).forEach(r => {
     const h = String(r[1]).trim().toLowerCase();
     if (!h) return;
     const p = out.byHandle[h] = out.byHandle[h] || { handle: h, title: '', stock: 0, price: null };
@@ -85,5 +86,24 @@ function appStock_() {
     if (p.price === null && r[5] !== '' && r[5] !== null && r[5] !== undefined && num_(r[5])) p.price = num_(r[5]);
   });
   STOCK_APP_ = out;
+  return out;
+}
+
+/* The tab's rows. A tab from before the Variant column may be narrower: its rows then have no variant name. */
+function stockAppRows_(sh) { return readRows_(sh, Math.min(STOCK_APP.HEADERS.length, sh.getMaxColumns())); }
+
+/*
+ * Variants per product name, from the tab: {name: [{id, title, stock}]}. id = the number at the end of the variant ID
+ * (the same number the Variants column of "Shopify Orders" has). Below zero = 0.
+ */
+function variantStock_() {
+  const out = {}, sh = ss_().getSheetByName(STOCK_APP.TAB);
+  if (!sh || !appStock_().at) return out;
+  stockAppRows_(sh).forEach(r => {
+    const h = String(r[1]).trim().toLowerCase(), id = String(r[0]).split('/').pop();
+    if (!h || !id) return;
+    const name = stockNameOf_(h, String(r[2] || '').trim());
+    (out[name] = out[name] || []).push({ id: id, title: String(r[6] || '').trim(), stock: Math.max(num_(r[3]), 0) });
+  });
   return out;
 }

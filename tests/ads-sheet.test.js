@@ -1067,12 +1067,13 @@ test('رصيد الأكاونتات في Today: المشحون ويكفي كام
     } });
   e.c.setupAll();
   e.c.liveTick();
-  const v = e.ss.getSheetByName('Today').getDataRange().getValues(), i = v.findIndex(r => /^رصيد الأكاونتات من Meta — آخر قراية /.test(String(r[0])));
+  const v = e.ss.getSheetByName('Today').getDataRange().getValues(), i = v.findIndex(r => /^رصيد الأكاونتات من Meta و TikTok — آخر قراية /.test(String(r[0])));
   assert.ok(i > 0, 'الجدول تحت GRAND TOTAL');
   const rows = v.slice(i + 2, i + 5).map(r => r.slice(0, 6));
   assert.deepEqual(rows[0], ['Chance 26', 1250.5, 4.1, '', 'مفيش حد', 'شغال'], 'مشحون: 1250.5 ÷ 300 في اليوم');
   assert.deepEqual(rows[1], ['Chance Golden Era', 'كارت (بيتخصم لوحده)', 2, 350, 400, '⚠️ عليه فلوس ماتدفعتش'], 'كارت: فاضل 400 على حد الصرف ÷ 200 في اليوم');
   assert.deepEqual(rows[2].slice(1, 6), ['Meta مابتدّيش رصيد الشحن للتوكن ده', '', '', 'مفيش حد', 'شغال']);
+  assert.deepEqual(v[i + 5].slice(0, 2), ['TikTok', 'TikTok مش متربط — من المنيو: الإعدادات ← ربط TikTok'], 'TikTok تحت Meta، ولسه مش متربط');
   e.requests.filter(u => /fields=account_status/.test(u)).forEach(u => assert.match(u, /^https:\/\/graph\.facebook\.com\/v[\d.]+\/act_\d+\?fields=/));
 });
 
@@ -1096,7 +1097,7 @@ test('Today: الستوك يكفي كام يوم، جزء للمنتجات ال�
   e.c.liveTick(); e.c.liveTick();
   const sh = e.ss.getSheetByName('Today'), v = sh.getDataRange().getValues(), i = v.findIndex(r => /^الستوك يكفي كام يوم/.test(String(r[0])));
   assert.ok(i > v.findIndex(r => /^رصيد الأكاونتات من Meta/.test(String(r[0]))), 'تحت رصيد الأكاونتات');
-  assert.deepEqual(v[i + 1].slice(0, 6), ['المنتج', '', 'الستوك', 'بيتباع في اليوم', 'يكفي كام يوم', 'اطلب كام (لـ 30 يوم)']);
+  assert.deepEqual(v[i + 1].slice(0, 6), ['المنتج', 'ألوان بتخلص 🔴', 'الستوك', 'بيتباع في اليوم', 'يكفي كام يوم', 'اطلب كام (لـ 30 يوم)']);
   // اطلب كام = اللي يكفي 30 يوم ناقص الستوك. Blush من غير إعلانات بس بيتباع قطعة في اليوم وفاضله 5 أيام. Mask كتير، و Serum أوردره اتلغى،
   // و Dress خلص ومالوش إعلانات، و Brush بيتباع أقل من قطعة في اليوم، فمش ظاهرين. أوردرات النهارده والأقدم من 5 أيام مش محسوبة.
   assert.deepEqual(v.slice(i + 2, i + 8).map(r => r.slice(0, 6)), [
@@ -1105,6 +1106,47 @@ test('Today: الستوك يكفي كام يوم، جزء للمنتجات ال�
     ['منتجات من غير إعلانات — بتتباع 1 قطعة في اليوم أو أكتر وفاضلها 10 أيام أو أقل', '', '', '', '', ''],
     ['Blush', '', 5, 1, 5, 25], ['', '', '', '', '', '']]);
   assert.deepEqual([sh.attr(i + 4, 5).bg, sh.attr(i + 5, 5).bg, sh.attr(i + 7, 5).bg], ['#fff2cc', null, '#f4cccc']);
+});
+
+test('Today: نقطة حمرا جنب المنتج لكل لون بيتباع وقرّب يخلص (أو خلص)، وأساميهم في سطر تحته، والأوردرات القديمة بتاخد ألوانها من شوبيفاي', () => {
+  const probe = env(), today = probe.c.todayKey_(), d = n => probe.c.shiftKey_(today, -n);
+  const variant = (id, handle, product, title, qty) => ({ id: 'gid://shopify/ProductVariant/' + id, title, inventoryQuantity: qty, product: { handle, title: product } });
+  const variants = [variant(11, 'lip-oil', 'Lip Oil', 'Red', 2), variant(12, 'lip-oil', 'Lip Oil', 'Pink', 15), variant(13, 'lip-oil', 'Lip Oil', 'Nude', 0),
+    variant(14, 'lip-oil', 'Lip Oil', 'Coral', 3), variant(21, 'blush', 'Blush', 'Default Title', 1)];
+  const line = (title, qty, v) => ({ title, quantity: qty, currentQuantity: qty, variant: { id: 'gid://shopify/ProductVariant/' + v } });
+  const order = (id, day, lines, x) => Object.assign({ id: 'gid://shopify/Order/' + id, createdAt: day + 'T10:00:00Z', sourceName: 'web',
+    originalTotalPriceSet: { shopMoney: { amount: '500.0' } }, customAttributes: [], lineItems: { nodes: lines }, customerJourneySummary: { lastVisit: null } }, x || {});
+  // Red: 5 قطع في 5 أيام وفاضل 2 = يومين. Nude خلص. Pink يكفي 15 يوم. Coral أوردره اتلغى. Blush نوع واحد: مالوش نقط.
+  const created = [order(1, d(1), [line('Lip Oil', 3, 11), line('Lip Oil', 5, 12)]), order(2, d(2), [line('Lip Oil', 2, 11), line('Lip Oil', 1, 13)]),
+    order(3, d(3), [line('Lip Oil', 4, 14)], { cancelledAt: d(3) + 'T11:00:00Z' }), order(4, d(2), [line('Blush', 5, 21)]), order(5, today, [line('Lip Oil', 9, 12)])];
+  const e = env({ orderHead: FLOW_HEAD.slice(0, 17), orders: [] });
+  const opt = { created, variants };
+  fakeShopify(e, [], opt);
+  e.c.orderStatus_ = id => (String(id).split('/').pop() === '3' ? { code: 'C', revenue: null } : null);
+  Object.assign(e.user, { SHOPIFY_TOKEN: 'TOKEN1', SHOPIFY_TOKEN_EXP: String(Date.now() + 3600000) });
+  e.c.setupAll(); e.c.liveTick(); e.c.liveTick();
+  const tab = e.ss.getSheetByName('Shopify Orders'), V = tab.getDataRange().getValues()[0].indexOf('Variants');
+  assert.ok(V > 0);
+  assert.equal(tab.getDataRange().getValues().find(r => r[0] === 'gid://shopify/Order/1')[V], '11 x3 | 12 x5');
+  assert.deepEqual(e.ss.getSheetByName('Shopify Stock').getDataRange().getValues().slice(1).map(r => r[6]).sort(), ['Coral', 'Default Title', 'Nude', 'Pink', 'Red']);
+  const look = () => {
+    const v = e.ss.getSheetByName('Today').getDataRange().getValues(), i = v.findIndex(r => /^الستوك يكفي كام يوم/.test(String(r[0])));
+    const at = v.findIndex((r, k) => k > i && r[0] === 'Lip Oil');
+    return { lip: v[at], next: v[at + 1], blush: v.find((r, k) => k > i && r[0] === 'Blush') };
+  };
+  let t = look();
+  assert.deepEqual(t.lip.slice(0, 5), ['Lip Oil', '🔴🔴', 20, 2.2, 9]);
+  assert.match(String(t.next[0]), /↳ Nude: نفد {3}• {3}Red: 2 قطعة، يكفي 2 يوم$/);
+  assert.equal(t.blush[1], '', 'منتج بنوع واحد مالوش نقط');
+  // أوردر اتقرا قبل عمود الألوان: بيتقري تاني من شوبيفاي بألوانه
+  const rowAt = tab.getDataRange().getValues().findIndex(r => r[0] === 'gid://shopify/Order/1') + 1;
+  tab.getRange(rowAt, V + 1).setValue('');
+  opt.editedNow = { 'gid://shopify/Order/1': [line('Lip Oil', 3, 11), line('Lip Oil', 4, 14)] };
+  e.c.liveTick();
+  assert.equal(tab.getRange(rowAt, V + 1).getValue(), '11 x3 | 14 x4');
+  assert.match(e.doc.STATUS_SHOP_VARIANTS, /✓ 1 أوردر$/);
+  t = look();
+  assert.equal(t.lip[1], '🔴🔴🔴', 'Coral بقى بيتباع (4 قطع) وفاضل 3');
 });
 
 /* ---------- الربط بأبليكيشن شوبيفاي (29_shopify_api.gs) ---------- */
@@ -1911,6 +1953,11 @@ function fakeTikTok(e, opt) {
       const page = Number(q.page), half = Math.ceil(rows.length / 2) || 1;
       return ok({ list: rows.slice((page - 1) * half, page * half), page_info: { page, total_page: rows.length > 1 ? 2 : 1 } });
     }
+    if (/advertiser\/info\//.test(url)) {
+      assert.deepEqual(JSON.parse(q.fields), ['advertiser_id', 'name', 'balance', 'currency', 'status']);
+      return ok({ list: JSON.parse(q.advertiser_ids).map(id => ({ advertiser_id: id, name: 'TT', balance: o.balance === undefined ? 450.75 : o.balance,
+        currency: 'EGP', status: o.status || 'STATUS_ENABLE' })) });
+    }
     if (/\/ad\/get\//.test(url)) {
       const ids = JSON.parse(q.filtering).ad_ids;
       return ok({ list: ids.map(id => ({ ad_id: id, landing_page_url: (o.links || {})[id] || '' })), page_info: { page: 1, total_page: 1 } });
@@ -1963,4 +2010,27 @@ test('TikTok API: لو الحساب مالوش إذن، صفوفه القديم�
   assert.ok(raw.some(r => r[1] === 'TIKTOK' && r[8] === '9001' && r[10] === 100), 'الصف القديم فضل');
   assert.ok(raw.some(r => r[1] === 'META' && r[0] === today), 'Meta اتحدثت');
   assert.match(e.c.getStatus_('TIKTOK'), /✗ .*No permission[\s\S]*Advertiser authorization URL/);
+});
+
+test('رصيد TikTok في Today تحت Meta: الرصيد المتاح ويكفي كام يوم بصرف آخر 3 أيام، والحالة، والغلط لو الإذن اتشال', () => {
+  const e = scenario(), d = n => e.c.shiftKey_(e.today, -n);
+  e.user.TIKTOK_TOKEN = 'TTTOKEN';
+  const opt = { rows: [{ day: d(1), ad: '9001', spend: 100 }, { day: d(2), ad: '9001', spend: 200 }, { day: d(3), ad: '9001', spend: 150 }, { day: d(4), ad: '9001', spend: 900 }] };
+  const calls = fakeTikTok(e, opt);
+  e.c.syncAds_(d(4), e.today);
+  // Meta الوهمية بترجع كل الأيام مهما كانت الفترة، فـ liveTick كان هيمسح أيام TikTok اللي فاتت: الرصيد والعرض بس.
+  const tick = () => { e.c.refreshBalances_(); e.c.withLock_(() => e.c.rebuildViews_({ full: true })); };
+  tick();
+  const row = () => {
+    const v = e.ss.getSheetByName('Today').getDataRange().getValues(), i = v.findIndex(r => /^رصيد الأكاونتات من Meta و TikTok/.test(String(r[0])));
+    return v.find((r, k) => k > i && r[0] === 'TikTok').slice(0, 6);
+  };
+  assert.deepEqual(row(), ['TikTok', 450.75, 3, '', '', 'شغال'], '450.75 ÷ 150 في اليوم (آخر 3 أيام كاملة)');
+  assert.ok(calls.some(c => /advertiser\/info\//.test(c.url) && JSON.parse(c.q.advertiser_ids)[0] === '7433928103325794321'));
+  opt.balance = 90; opt.status = 'STATUS_LIMIT';
+  tick();
+  assert.deepEqual(row(), ['TikTok', 90, 0.6, '', '', '⚠️ مقيّد']);
+  opt.fail = true;
+  tick();
+  assert.match(String(row()[1]), /^✗ TikTok code 40001: No permission/);
 });

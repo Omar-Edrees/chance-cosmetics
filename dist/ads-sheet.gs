@@ -11,7 +11,7 @@
  * Ad accounts and stores are read-only from here: no writes to Meta, TikTok or order sources.
  */
 const APP = {
-  VERSION: '1.60.0',
+  VERSION: '1.61.0',
   T: {
     SETTINGS: 'Settings', ACCOUNTS: 'Accounts', PRODUCTS: 'Products', ADMAP: 'Ad Map',
     ADS: 'Ads Raw', ACC_RAW: 'Account Raw', ORDERS: 'Orders Raw', DAILY: 'Daily Log',
@@ -1530,7 +1530,7 @@ function writeHealth_() {
     ['إعلانات ❌ / ⚠️ / ✅', st['❌'] + ' / ' + st['⚠️'] + ' / ' + st['✅']],
     ['أوردرات الشهر مش معروف منصتها', unk.p], ['أوردرات الشهر مش معروف منتجها', unk.pr],
     ['صفحات منتجات مش متسجلة', PropertiesService.getDocumentProperties().getProperty('UNASSIGNED_SLUGS') || 'مفيش ✅'],
-    ['حسابات إعلانية لقيتها من الأوردرات', getStatus_('ACC_DISCOVER')], ['مطابقة الصرف مع Meta', getStatus_('SPEND_CHECK')], ['TikTok', tiktokToken_() ? getStatus_('TIKTOK') : 'من تاب ' + (cfgStr_('tiktok.tab') || 'TikTok Data') + ' (مش متربط بالـ API)'], ['Daily Account Funnel', getStatus_('FUNNEL')], ['Meta Campaigns', getStatus_('MCAMP')], ['صرف الكتالوج', getStatus_('CATALOG')], ['الأوردرات من شوبيفاي (الأبليكيشن)', getStatus_('SHOP_ORDERS')], ['مطابقة الأوردرات مع شوبيفاي', getStatus_('SHOP_ORDERS_CHECK')], ['محافظة الأوردرات', getStatus_('SHOP_ORDERS_ADDR')], ['حالة الأوردرات من شوبيفاي (الأبليكيشن)', getStatus_('SHOPIFY')], ['الأوردرات اللي اتعدلت في شوبيفاي', getStatus_('SHOP_ORDERS_EDITED')], ['الجروس سيلز من شوبيفاي', getStatus_('SHOP_GROSS')], ['الإعلانات الشغالة', getStatus_('ACTIVE')], ['الستوك من شوبيفاي (الأبليكيشن)', getStatus_('STOCK_APP')], ['تاب Shopify', getStatus_('SHOPTAB')], ['كروت Today', typeof Sheets === 'undefined' ? '⚠️ فعّل Google Sheets API من Services في Apps Script' : getStatus_('TODAY_CARDS')]];
+    ['حسابات إعلانية لقيتها من الأوردرات', getStatus_('ACC_DISCOVER')], ['مطابقة الصرف مع Meta', getStatus_('SPEND_CHECK')], ['TikTok', tiktokToken_() ? getStatus_('TIKTOK') : 'من تاب ' + (cfgStr_('tiktok.tab') || 'TikTok Data') + ' (مش متربط بالـ API)'], ['Daily Account Funnel', getStatus_('FUNNEL')], ['Meta Campaigns', getStatus_('MCAMP')], ['صرف الكتالوج', getStatus_('CATALOG')], ['الأوردرات من شوبيفاي (الأبليكيشن)', getStatus_('SHOP_ORDERS')], ['مطابقة الأوردرات مع شوبيفاي', getStatus_('SHOP_ORDERS_CHECK')], ['محافظة الأوردرات', getStatus_('SHOP_ORDERS_ADDR')], ['حالة الأوردرات من شوبيفاي (الأبليكيشن)', getStatus_('SHOPIFY')], ['الأوردرات اللي اتعدلت في شوبيفاي', getStatus_('SHOP_ORDERS_EDITED')], ['الجروس سيلز من شوبيفاي', getStatus_('SHOP_GROSS')], ['ألوان الأوردرات من شوبيفاي', getStatus_('SHOP_VARIANTS')], ['الإعلانات الشغالة', getStatus_('ACTIVE')], ['الستوك من شوبيفاي (الأبليكيشن)', getStatus_('STOCK_APP')], ['تاب Shopify', getStatus_('SHOPTAB')], ['كروت Today', typeof Sheets === 'undefined' ? '⚠️ فعّل Google Sheets API من Services في Apps Script' : getStatus_('TODAY_CARDS')]];
   writeRows_(ensureTab_(APP.T.HEALTH, ['البند', 'الحالة']), rows, 2, []);
 }
 
@@ -1991,7 +1991,7 @@ function stockByName_() {
   const st = useApp ? { byHandle: {}, rows: 0, error: '' } : readStock_(), props = PropertiesService.getDocumentProperties(), n = Number(props.getProperty('STOCK_SNAP_N') || 0);
   let saved = '', flow = {};
   for (let i = 0; i < n; i++) saved += props.getProperty('STOCK_SNAP_' + i) || '';
-  const prods = products_(), nameOf = (h, title) => { const pr = prods.find(p => p.slugs.indexOf(h) >= 0); return pr ? pr.name : productNameOf_(title); };
+  const nameOf = stockNameOf_;
   if (useApp) {
     // nothing from the Flow sheet
   } else if (st.error) {
@@ -2023,6 +2023,12 @@ function stockByName_() {
   const status = k ? '✓ ' + k + ' منتج من فلو الستوك' + (st.error ? ' (آخر قراية ' + props.getProperty('STOCK_SNAP_AT') + ')' : '') + '، والباقي ' + fixed
     : '⚠️ ' + fixed + ' — مابيتحدثش لوحده' + (st.error ? ' (' + st.error + ')' : ' (مفيش صفوف في تاب ' + cfgStr_('stock.sheet_tab') + ')');
   return { by: by, at: k && !st.error ? nowText_() : k ? props.getProperty('STOCK_SNAP_AT') : STOCK_SNAPSHOT_AT.slice(0, 16) + ' (ثابت)', status: status };
+}
+
+/* A stock row's product: the Products row with its handle in Slugs, else the product named like its title. */
+function stockNameOf_(handle, title) {
+  const pr = products_().find(p => p.slugs.indexOf(handle) >= 0);
+  return pr ? pr.name : productNameOf_(title);
 }
 
 /* New handles in the Flow stock tab → new rows in Products (never edits existing rows). Not used once the app has the stock. */
@@ -3728,12 +3734,17 @@ function writeGovTab_() {
  * the closing table: the available balance of a prepaid account (as Billing shows it), how many days it lasts at the last
  * 3 days' spend, what a card account spent and wasn't charged yet, what's left under the account spending limit, and
  * the account status. Read-only: the same token, no writes to Meta.
+ * TikTok accounts (once TikTok is connected, 36_tiktok_api.gs) the same way: the available balance from advertiser/info/,
+ * how many days it lasts at the last 3 days' spend, and the account status.
  */
 const BAL = {
   KEY: 'ACC_BALANCE', FUNDING: 'funding_source_details',
   FIELDS: 'account_status,currency,balance,amount_spent,spend_cap,is_prepay_account',
   STATUS: { 1: 'شغال', 2: 'متوقف', 3: '⚠️ عليه فلوس ماتدفعتش', 7: 'تحت المراجعة', 8: 'مستني تسوية', 9: 'فترة سماح',
-    100: 'هيتقفل', 101: 'مقفول', 201: 'شغال', 202: 'مقفول' }
+    100: 'هيتقفل', 101: 'مقفول', 201: 'شغال', 202: 'مقفول' },
+  TT_STATUS: { STATUS_ENABLE: 'شغال', STATUS_DISABLE: 'متوقف', STATUS_PENDING_CONFIRM: 'تحت المراجعة', STATUS_PENDING_VERIFIED: 'تحت المراجعة',
+    STATUS_WAIT_FOR_BPM_AUDIT: 'تحت المراجعة', STATUS_SELF_SERVICE_UNAUDITED: 'تحت المراجعة', STATUS_CONFIRM_FAIL: 'مرفوض',
+    STATUS_CONFIRM_FAIL_END: 'مرفوض', STATUS_LIMIT: '⚠️ مقيّد', STATUS_CONTRACT_PENDING: 'مستني العقد', STATUS_WAIT_FOR_PUBLIC_AUTH: 'مستني التفويض' }
 };
 
 /* Reads every Meta account in Accounts and keeps the result in the document properties for Today. */
@@ -3747,8 +3758,23 @@ function refreshBalances_() {
     }
     acc[a.id] = balanceOf_(p, note);
   });
-  PropertiesService.getDocumentProperties().setProperty(BAL.KEY, JSON.stringify({ at: nowText_(), acc: acc }));
+  PropertiesService.getDocumentProperties().setProperty(BAL.KEY, JSON.stringify({ at: nowText_(), acc: acc, tt: tiktokBalances_() }));
   return acc;
+}
+
+/* {advertiser id: {avail, status} or {error}} for the TikTok accounts in Accounts; nothing while TikTok isn't connected. */
+function tiktokBalances_() {
+  const accs = accounts_('TIKTOK'), out = {};
+  if (!accs.length || !tiktokToken_()) return out;
+  try {
+    const list = tiktokCall_('advertiser/info/', { advertiser_ids: accs.map(a => String(a.id)), fields: ['advertiser_id', 'name', 'balance', 'currency', 'status'] }).list || [];
+    list.forEach(x => {
+      const b = x.balance === null || x.balance === undefined || x.balance === '' ? null : Number(x.balance);
+      out[String(x.advertiser_id)] = { avail: isFinite(b) ? b : null, status: String(x.status || '') };
+    });
+    accs.forEach(a => { if (!out[a.id]) out[a.id] = { error: 'TikTok مارجّعش الحساب ده — ادّيله الإذن واربط تاني' }; });
+  } catch (e) { accs.forEach(a => { out[a.id] = { error: errText_(e).split('\n')[0] }; }); }
+  return out;
 }
 
 /* One account's reply → {status, prepay, avail, owed, capLeft, note}. Money in Meta's minor unit (1/100). */
@@ -3764,11 +3790,12 @@ function balanceOf_(p, note) {
 
 /* Today, left side under the closing table, from row r. Returns the row after it. */
 function todayBalances_(g, r, today) {
-  const S = TODAY, accs = accounts_('META');
-  if (!accs.length) return r;
+  const S = TODAY, accs = accounts_('META'), tts = accounts_('TIKTOK');
+  if (!accs.length && !tts.length) return r;
   let saved = {};
   try { saved = JSON.parse(PropertiesService.getDocumentProperties().getProperty(BAL.KEY) || '{}'); } catch (e) { saved = {}; }
-  g.set(r, 1, 'رصيد الأكاونتات من Meta' + (saved.at ? ' — آخر قراية ' + saved.at : ''), { bg: S.DARK, fc: '#ffffff', b: 'bold', al: 'center' });
+  g.set(r, 1, 'رصيد الأكاونتات من ' + (accs.length && tts.length ? 'Meta و TikTok' : accs.length ? 'Meta' : 'TikTok') + (saved.at ? ' — آخر قراية ' + saved.at : ''),
+    { bg: S.DARK, fc: '#ffffff', b: 'bold', al: 'center' });
   g.fill(r, 2, 5, { bg: S.DARK });
   g.merge(r, 1, 1, 6);
   r++;
@@ -3776,10 +3803,10 @@ function todayBalances_(g, r, today) {
     .forEach((h, i) => g.set(r, 1 + i, h, { bg: S.YELLOW, b: 'bold', al: 'center' }));
   r++;
   // Average spend of the last 3 full days per account (Account Raw).
-  const from = shiftKey_(today, -3), to = shiftKey_(today, -1), spend = {};
+  const from = shiftKey_(today, -3), to = shiftKey_(today, -1), spend = {}, ttSpend = {};
   rawRows_(APP.T.ACC_RAW, ACC_HEADERS.length).forEach(a => {
-    const d = asKey_(a[0]);
-    if (a[1] === 'META' && d >= from && d <= to) spend[String(a[2])] = (spend[String(a[2])] || 0) + num_(a[4]);
+    const d = asKey_(a[0]), m = a[1] === 'META' ? spend : a[1] === 'TIKTOK' ? ttSpend : null;
+    if (m && d >= from && d <= to) m[String(a[2])] = (m[String(a[2])] || 0) + num_(a[4]);
   });
   accs.forEach(a => {
     const x = (saved.acc || {})[a.id], perDay = (spend[a.id] || 0) / 3, money = { nf: S.MONEY, al: 'right' };
@@ -3796,6 +3823,20 @@ function todayBalances_(g, r, today) {
     }
     r++;
   });
+  tts.forEach(a => {
+    const x = (saved.tt || {})[a.id], perDay = (ttSpend[a.id] || 0) / 3;
+    g.set(r, 1, a.name || a.id, { b: 'bold' });
+    if (!tiktokToken_()) g.set(r, 2, 'TikTok مش متربط — من المنيو: الإعدادات ← ربط TikTok', { fc: '#6b7280' });
+    else if (!x) g.set(r, 2, 'لسه ماتقراش — هيظهر مع التحديث الجاي', { fc: '#6b7280' });
+    else if (x.error) g.set(r, 2, '✗ ' + x.error, { fc: '#b91c1c' });
+    else {
+      const days = x.avail === null || !(perDay > 0) ? '' : x.avail / perDay;
+      g.set(r, 2, x.avail === null ? 'TikTok مابيّنش الرصيد' : x.avail, x.avail === null ? { fc: '#6b7280' } : { nf: S.MONEY, al: 'right' });
+      g.set(r, 3, days === '' ? '' : Math.floor(days * 10) / 10, { nf: '0.0', al: 'right', bg: days === '' ? null : days < 1 ? S.RED : days < 3 ? '#fff2cc' : S.GREEN });
+      g.set(r, 6, BAL.TT_STATUS[x.status] || x.status, x.status === 'STATUS_ENABLE' ? {} : { bg: S.RED, b: 'bold' });
+    }
+    r++;
+  });
   return r;
 }
 
@@ -3807,18 +3848,22 @@ function todayBalances_(g, r, today) {
  * Per day = pieces sold in the last COVER.DAYS full days (every store order but cancelled or returned ones) ÷ COVER.DAYS.
  * Red = COVER.RED days or less (order more stock), yellow = up to COVER.YELLOW, green above.
  * To order = pieces for COVER.ORDER_DAYS days at that speed, minus the stock.
+ * 🔴 next to a product = one of its colors / sizes that sold in the same days and has COVER.RED days or less at its own speed
+ * (or already ran out), one dot each, with their names in a grey line under the product. Products with one variant get none.
  */
 const COVER = { DAYS: 5, RED: 10, YELLOW: 15, MIN_PER_DAY: 1, ORDER_DAYS: 30 };
 
 function todayStockCover_(g, r, today) {
-  const S = TODAY, active = activeMap_(), st = stockByName_(), stock = st.by, sold = {};
+  const S = TODAY, active = activeMap_(), st = stockByName_(), stock = st.by, sold = {}, counted = new Set();
   const special = [APP.CATALOG, APP.MULTI, APP.UNMAPPED, APP.UNKNOWN_PRODUCT, APP.META_NO_AD, ''];
   const from = shiftKey_(today, -COVER.DAYS), to = shiftKey_(today, -1);
   if (ss_().getSheetByName(APP.T.ORDERS)) recentRows_(APP.T.ORDERS, ORDERS_HEADERS.length, 2, sortKey_, from).forEach(o => {
     const d = asKey_(o[2]), s = orderStatus_(o[0]);
     if (!d || d < from || d > to || (s && (s.code === 'C' || s.code === 'R')) || o[15] === true || String(o[15]).toUpperCase() === 'TRUE') return;
+    counted.add(String(o[0]));
     lineItems_(o[6]).forEach(li => { const n = productNameOf_(li.title); sold[n] = (sold[n] || 0) + li.qty; });
   });
+  const low = lowVariants_(counted);
   // Days left: 0 = out of stock, Infinity = nothing sold, null = no stock found.
   const perDay = n => (sold[n] || 0) / COVER.DAYS;
   const days = n => (stock[n] === undefined ? null : stock[n] <= 0 ? 0 : perDay(n) > 0 ? stock[n] / perDay(n) : Infinity);
@@ -3836,9 +3881,8 @@ function todayStockCover_(g, r, today) {
   g.fill(r, 2, 5, { bg: S.DARK });
   g.merge(r, 1, 1, 6);
   r++;
-  ['المنتج', '', 'الستوك', 'بيتباع في اليوم', 'يكفي كام يوم', 'اطلب كام (لـ ' + COVER.ORDER_DAYS + ' يوم)']
+  ['المنتج', 'ألوان بتخلص 🔴', 'الستوك', 'بيتباع في اليوم', 'يكفي كام يوم', 'اطلب كام (لـ ' + COVER.ORDER_DAYS + ' يوم)']
     .forEach((h, i) => g.set(r, 1 + i, h, { bg: S.YELLOW, b: 'bold', al: 'center' }));
-  g.merge(r, 1, 1, 2);
   r++;
   const part = (title, list, empty) => {
     g.set(r, 1, title, { bg: S.LABEL, b: 'bold' });
@@ -3849,7 +3893,7 @@ function todayStockCover_(g, r, today) {
     list.forEach(n => {
       const d = days(n), need = stock[n] === undefined || !(perDay(n) > 0) ? '' : Math.max(0, Math.ceil(perDay(n) * COVER.ORDER_DAYS - Math.max(stock[n], 0)));
       g.set(r, 1, n, { b: 'bold' });
-      g.merge(r, 1, 1, 2);
+      g.set(r, 2, low[n] ? '🔴'.repeat(low[n].length) : '', { al: 'center' });
       g.set(r, 3, stock[n] === undefined ? 'مش لاقي ستوك' : stock[n], stock[n] === undefined ? { fc: '#6b7280', al: 'right' } : { nf: S.COUNT, al: 'right' });
       g.set(r, 4, Math.round(perDay(n) * 10) / 10, { nf: '0.0', al: 'right' });
       g.set(r, 5, d === null ? '' : d === 0 ? 'نفد' : d === Infinity ? '— مااتباعش' : Math.floor(d), {
@@ -3857,12 +3901,43 @@ function todayStockCover_(g, r, today) {
         bg: d === null || d === Infinity ? null : d <= COVER.RED ? S.RED : d <= COVER.YELLOW ? '#fff2cc' : S.GREEN });
       g.set(r, 6, need, { nf: S.COUNT, al: 'center', b: need > 0 ? 'bold' : 'normal' });
       r++;
+      if (low[n]) {
+        g.set(r, 1, '   ↳ ' + low[n].map(v => (v.title || 'من غير اسم') + ': ' + (v.days === 0 ? 'نفد' : v.stock + ' قطعة، يكفي ' + Math.floor(v.days) + ' يوم'))
+          .join('   •   '), { fc: '#6b7280' });
+        g.merge(r, 1, 1, 6);
+        r++;
+      }
     });
   };
   part('منتجات عليها إعلانات شغالة', withAds, 'مفيش منتجات عليها إعلانات شغالة');
   part('منتجات من غير إعلانات — بتتباع ' + COVER.MIN_PER_DAY + ' قطعة في اليوم أو أكتر وفاضلها ' + COVER.RED + ' أيام أو أقل', noAds,
     'مفيش منتجات من غير إعلانات قرّبت تخلص');
   return r;
+}
+
+/*
+ * {product name: [{title, stock, days}]}: the colors / sizes of a product with two or more of them that sold in the orders
+ * counted (their pieces from the Variants column of "Shopify Orders") and have COVER.RED days or less at their own speed,
+ * 0 = ran out. Fewest days first. Needs the stock from the Shopify app (it has every variant); else nothing.
+ */
+function lowVariants_(orderIds) {
+  const out = {}, sold = {}, V = SHOP_ORDERS.HEADERS.indexOf('Variants'), sh = ss_().getSheetByName(SHOP_ORDERS.TAB);
+  if (!orderIds.size || !sh || sh.getMaxColumns() <= V) return out;
+  const stock = variantStock_();
+  if (!Object.keys(stock).length) return out;
+  rawRows_(SHOP_ORDERS.TAB, SHOP_ORDERS.HEADERS.length).forEach(r => {
+    if (!orderIds.has(String(r[0]))) return;
+    String(r[V] || '').split(' | ').forEach(x => { const m = x.trim().match(/^(\d+) x(\d+)$/); if (m) sold[m[1]] = (sold[m[1]] || 0) + Number(m[2]); });
+  });
+  Object.keys(stock).forEach(name => {
+    if (stock[name].length < 2) return;
+    const list = stock[name].map(v => {
+      const per = (sold[v.id] || 0) / COVER.DAYS;
+      return per > 0 ? { title: v.title, stock: v.stock, days: v.stock <= 0 ? 0 : v.stock / per } : null;
+    }).filter(v => v && v.days <= COVER.RED).sort((a, b) => a.days - b.days);
+    if (list.length) out[name] = list;
+  });
+  return out;
 }
 
 /* ======== 28_closing.gs ======== */
@@ -5181,16 +5256,16 @@ function writeShopTab_() {
 /* ======== 31_shopify_stock.gs ======== */
 /*
  * Live stock from the Shopify app (read_products + read_inventory), every STOCK_APP.EVERY_MIN minutes in the update and from 📦.
- * Every variant → the hidden tab "Shopify Stock" (one row per variant). A read goes page by page (250 variants a page); if the
+ * Every variant → the hidden tab "Shopify Stock" (one row per variant, with its color / size name). A read goes page by page (250 variants a page); if the
  * update runs out of time, the next one goes on from the saved page. When a read ends, variants it didn't see (deleted) go.
  * stockByName_ (10_stock.gs) reads the tab, so onEdit (no permission to call Shopify) shows the last read too.
  * Products that don't track stock in Shopify, and archived ones, are left out.
  */
 const STOCK_APP = {
-  TAB: 'Shopify Stock', HEADERS: ['Variant ID', 'Handle', 'Product', 'Stock', 'Read', 'Price'], EVERY_MIN: 30, PAGES: 40,
+  TAB: 'Shopify Stock', HEADERS: ['Variant ID', 'Handle', 'Product', 'Stock', 'Read', 'Price', 'Variant'], EVERY_MIN: 30, PAGES: 40,
   CURSOR: 'STOCK_APP_CURSOR', READ: 'STOCK_APP_READ', DONE: 'STOCK_APP_DONE', AT: 'STOCK_APP_AT', SEEN: 'STOCK_APP_SEEN',
   QUERY: 'query($after:String){productVariants(first:250,after:$after){pageInfo{hasNextPage endCursor} ' +
-    'nodes{id inventoryQuantity price product{handle title tracksInventory status}}}}'
+    'nodes{id title inventoryQuantity price product{handle title tracksInventory status}}}}'
 };
 
 /* force = read now even if the last read is fresh (📦). Returns the variants read in this run. Errors go to Health. */
@@ -5211,7 +5286,8 @@ function syncShopifyStock_(force) {
       res.nodes.forEach(v => {
         const p = v.product || {};
         if (p.tracksInventory === false || p.status === 'ARCHIVED' || !p.handle) return; // archived: off the store, its leftovers aren't stock
-        rows.push([v.id, String(p.handle).toLowerCase(), p.title || '', num_(v.inventoryQuantity), read, v.price === null || v.price === undefined ? '' : num_(v.price)]);
+        rows.push([v.id, String(p.handle).toLowerCase(), p.title || '', num_(v.inventoryQuantity), read, v.price === null || v.price === undefined ? '' : num_(v.price),
+          String(v.title || '')]);
       });
       more = res.pageInfo.hasNextPage; after = res.pageInfo.endCursor; pages++;
     }
@@ -5257,7 +5333,7 @@ function appStock_() {
   if (STOCK_APP_) return STOCK_APP_;
   const out = { byHandle: {}, at: PropertiesService.getDocumentProperties().getProperty(STOCK_APP.AT) || '' };
   const sh = ss_().getSheetByName(STOCK_APP.TAB);
-  if (sh && out.at) readRows_(sh, STOCK_APP.HEADERS.length).forEach(r => {
+  if (sh && out.at) stockAppRows_(sh).forEach(r => {
     const h = String(r[1]).trim().toLowerCase();
     if (!h) return;
     const p = out.byHandle[h] = out.byHandle[h] || { handle: h, title: '', stock: 0, price: null };
@@ -5269,12 +5345,32 @@ function appStock_() {
   return out;
 }
 
+/* The tab's rows. A tab from before the Variant column may be narrower: its rows then have no variant name. */
+function stockAppRows_(sh) { return readRows_(sh, Math.min(STOCK_APP.HEADERS.length, sh.getMaxColumns())); }
+
+/*
+ * Variants per product name, from the tab: {name: [{id, title, stock}]}. id = the number at the end of the variant ID
+ * (the same number the Variants column of "Shopify Orders" has). Below zero = 0.
+ */
+function variantStock_() {
+  const out = {}, sh = ss_().getSheetByName(STOCK_APP.TAB);
+  if (!sh || !appStock_().at) return out;
+  stockAppRows_(sh).forEach(r => {
+    const h = String(r[1]).trim().toLowerCase(), id = String(r[0]).split('/').pop();
+    if (!h || !id) return;
+    const name = stockNameOf_(h, String(r[2] || '').trim());
+    (out[name] = out[name] || []).push({ id: id, title: String(r[6] || '').trim(), stock: Math.max(num_(r[3]), 0) });
+  });
+  return out;
+}
+
 /* ======== 32_shopify_orders.gs ======== */
 /*
  * Store orders from the Shopify app (read_orders), instead of the Shopify Flow sheet.
  * Every update (inside syncOrders_, before Orders Raw is read): the orders created since the last read, oldest first, 20 a page,
  * into the hidden tab "Shopify Orders": one row per order with the columns readOrderSource_ reads (the same names the Flow sheet
  * had), so the rest of the sheet works as before. No customer data: no names, phones, emails or addresses; the governorate only.
+ *  - Variants: "variant number x pieces | …" of the pieces in the order now ("-" = none), for the colors running out in Today.
  *  - The COD form's UTMs, campaign / ad set IDs and "Order Referrer" are the order's own attributes (Attr UTM …).
  *  - A website order's last visit (UTMs, referrer) isn't ready the moment the order is made: every read goes back
  *    SHOP_ORDERS.OVERLAP_H hours, and those orders are written again with what Shopify has now.
@@ -5283,10 +5379,11 @@ function appStock_() {
  * Shopify shows the last 60 days only (no read_all_orders): older orders stay in the tab as they were read.
  */
 const SHOP_ORDERS = {
-  TAB: 'Shopify Orders', FIRST_FROM: '2026-10-13T09:00:00Z', PAGES: 25, OVERLAP_H: 6, TAIL: 1500,
+  TAB: 'Shopify Orders', FIRST_FROM: '2026-10-13T09:00:00Z', PAGES: 25, OVERLAP_H: 6, TAIL: 1500, VARIANT_DAYS: 7,
   SINCE: 'SHOP_ORDERS_SINCE', READY: 'SHOP_ORDERS_READY', AT: 'SHOP_ORDERS_AT', NO_ADDR: 'SHOP_ORDERS_NO_ADDR',
   HEADERS: ['Order ID', 'Created At', 'Total Price', 'Products', 'UTM Source', 'UTM Campaign', 'UTM Content', 'UTM ID', 'UTM Term',
-    'Attr UTM Source', 'Attr UTM Campaign', 'Attr UTM Content', 'Attr UTM ID', 'Attr UTM Term', 'Order Referrer', 'Source Name', 'City', 'Gross Sales', 'Net Sales'],
+    'Attr UTM Source', 'Attr UTM Campaign', 'Attr UTM Content', 'Attr UTM ID', 'Attr UTM Term', 'Order Referrer', 'Source Name', 'City', 'Gross Sales', 'Net Sales',
+    'Variants'],
   // Gross sales of an order when it was made: its products at their price before any discount, no shipping, from the
   // order's first sales agreement (reason ORDER), so later edits and cancellations don't change it. Net sales: the same
   // products after their discounts (gross − discounts), still without shipping. 10 orders a call.
@@ -5294,12 +5391,12 @@ const SHOP_ORDERS = {
     'totalAmount{shopMoney{amount}} totalDiscountAmountBeforeTaxes{shopMoney{amount}}}}}}}}}',
   QUERY: 'query($q:String!,$after:String){orders(first:20,after:$after,sortKey:CREATED_AT,query:$q){pageInfo{hasNextPage endCursor} ' +
     'nodes{id createdAt cancelledAt sourceName originalTotalPriceSet{shopMoney{amount}} customAttributes{key value} ' +
-    'lineItems(first:30){pageInfo{hasNextPage endCursor} nodes{title quantity currentQuantity}} customerJourneySummary{lastVisit{referrerUrl utmParameters{source campaign content term}}}}}}',
+    'lineItems(first:30){pageInfo{hasNextPage endCursor} nodes{title quantity currentQuantity variant{id}}} customerJourneySummary{lastVisit{referrerUrl utmParameters{source campaign content term}}}}}}',
   // The shipping address's governorate only (the same field the fixed file 24_order_gov.gs was read from).
   // An order with more than 30 lines: the rest, 100 at a time.
-  ITEMS_QUERY: 'query($id:ID!,$after:String){order(id:$id){lineItems(first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{title quantity currentQuantity}}}}',
+  ITEMS_QUERY: 'query($id:ID!,$after:String){order(id:$id){lineItems(first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{title quantity currentQuantity variant{id}}}}}',
   // Orders edited after they were read (a piece removed, a color swapped): their lines now, 10 orders a call.
-  EDITED_QUERY: 'query($ids:[ID!]!){nodes(ids:$ids){... on Order{id cancelledAt lineItems(first:50){pageInfo{hasNextPage endCursor} nodes{title quantity currentQuantity}}}}}',
+  EDITED_QUERY: 'query($ids:[ID!]!){nodes(ids:$ids){... on Order{id cancelledAt lineItems(first:50){pageInfo{hasNextPage endCursor} nodes{title quantity currentQuantity variant{id}}}}}}',
   EDITED: 'SHOP_ORDERS_EDITED',
   ADDR_QUERY: 'query($ids:[ID!]!){nodes(ids:$ids){... on Order{id shippingAddress{province}}}}',
   COUNT_QUERY: 'query($a:String!,$b:String!){a:ordersCount(query:$a,limit:null){count} b:ordersCount(query:$b,limit:null){count}}'
@@ -5318,11 +5415,11 @@ function shopOrderRow_(o, province) {
   (o.customAttributes || []).forEach(a => { attr[String(a.key || '').trim().toLowerCase()] = String(a.value === null || a.value === undefined ? '' : a.value).trim(); });
   const visit = (o.customerJourneySummary || {}).lastVisit || {}, u = visit.utmParameters || {};
   const gov = Object.keys(attr).find(k => /محافظ|province|governorate/.test(k));
-  const items = shopOrderItemsText_(o, shopOrderItems_(o));
+  const lines = shopOrderItems_(o), items = shopOrderItemsText_(o, lines);
   return [o.id, o.createdAt, num_(((o.originalTotalPriceSet || {}).shopMoney || {}).amount), items,
     u.source || '', u.campaign || '', u.content || '', '', u.term || '',
     attr.utm_source || '', attr.utm_campaign || '', attr.utm_content || '', attr.utm_id || '', attr.utm_term || '',
-    attr['order referrer'] || visit.referrerUrl || '', o.sourceName || '', province || (gov ? attr[gov] : ''), '', ''];
+    attr['order referrer'] || visit.referrerUrl || '', o.sourceName || '', province || (gov ? attr[gov] : ''), '', '', shopOrderVariantsText_(o, lines)];
 }
 
 /*
@@ -5331,9 +5428,18 @@ function shopOrderRow_(o, province) {
  * still shows in the cancelled numbers), and so does an order whose lines would all be gone.
  */
 function shopOrderItemsText_(o, lines) {
+  return shopOrderLinesNow_(o, lines).map(li => String(li.title || '').trim() + ' x' + (li.quantity || 1)).join(' | ');
+}
+function shopOrderLinesNow_(o, lines) {
   const now = o.cancelledAt ? [] : lines.filter(li => li.currentQuantity === undefined || li.currentQuantity === null || Number(li.currentQuantity) > 0)
-    .map(li => ({ title: li.title, quantity: li.currentQuantity === undefined || li.currentQuantity === null ? li.quantity : li.currentQuantity }));
-  return (now.length ? now : lines).map(li => String(li.title || '').trim() + ' x' + (li.quantity || 1)).join(' | ');
+    .map(li => ({ title: li.title, variant: li.variant, quantity: li.currentQuantity === undefined || li.currentQuantity === null ? li.quantity : li.currentQuantity }));
+  return now.length ? now : lines;
+}
+/* "123 x2 | 456 x1": the same pieces by variant number. A line without a variant (deleted, custom item) is left out; none = "-". */
+function shopOrderVariantsText_(o, lines) {
+  const out = shopOrderLinesNow_(o, lines).filter(li => li.variant && li.variant.id)
+    .map(li => String(li.variant.id).split('/').pop() + ' x' + (li.quantity || 1)).join(' | ');
+  return out || '-';
 }
 
 /* Every line of an order: the first 30 come with the order; the rest are read on their own (rare). */
@@ -5440,7 +5546,7 @@ function shopifyMergeOrders_(rows) {
   const tail = n ? sh.getRange(start, 1, n, W).getValues() : [], fresh = new Map();
   rows.forEach(r => { if (!older.has(String(r[0]))) fresh.set(String(r[0]), r); });
   // City: a new read without a governorate keeps the one read before. Gross / Net Sales: read once, kept.
-  const keep = ['City', 'Gross Sales', 'Net Sales'].map(h => SHOP_ORDERS.HEADERS.indexOf(h));
+  const keep = ['City', 'Gross Sales', 'Net Sales', 'Variants'].map(h => SHOP_ORDERS.HEADERS.indexOf(h));
   const out = tail.map(r => { const f = fresh.get(String(r[0])); if (f) keep.forEach(C => { if (f[C] === '' && r[C] !== '') f[C] = r[C]; }); return f || r; }),
     had = new Set(tail.map(r => String(r[0])));
   fresh.forEach((r, id) => { if (!had.has(id)) out.push(r); });
@@ -5542,14 +5648,8 @@ function fixEditedOrders_() {
       const chunk = q.slice(i, i + 10);
       (shopifyGql_(SHOP_ORDERS.EDITED_QUERY, { ids: chunk }).nodes || []).forEach(o => {
         if (!o || !o.id || !o.lineItems) return;
-        const li = o.lineItems || {}, lines = (li.nodes || []).slice();
-        let page = li.pageInfo || {};
-        while (page.hasNextPage) {
-          const more = shopifyGql_(SHOP_ORDERS.ITEMS_QUERY, { id: o.id, after: page.endCursor }).order.lineItems;
-          (more.nodes || []).forEach(x => lines.push(x));
-          page = more.pageInfo || {};
-        }
-        items[o.id] = shopOrderItemsText_(o, lines);
+        const lines = shopOrderItems_(o);
+        items[o.id] = [shopOrderItemsText_(o, lines), shopOrderVariantsText_(o, lines)];
       });
       chunk.forEach(id => done.push(id)); // an order Shopify doesn't show any more (older than 60 days) stays as it is
     }
@@ -5557,11 +5657,13 @@ function fixEditedOrders_() {
   let changed = 0;
   if (Object.keys(items).length) withLock_(() => {
     const ids = sh.getRange(2, 1, sh.getLastRow() - 1, 1).getValues(), P = SHOP_ORDERS.HEADERS.indexOf('Products') + 1;
+    const V = SHOP_ORDERS.HEADERS.indexOf('Variants') + 1;
     ids.forEach((r, i) => {
       const t = items[String(r[0])];
       if (t === undefined) return;
       const cell = sh.getRange(i + 2, P);
-      if (String(cell.getValue()) !== t) { cell.setValue(t); changed++; }
+      if (String(cell.getValue()) !== t[0]) { cell.setValue(t[0]); changed++; }
+      if (sh.getMaxColumns() >= V) sh.getRange(i + 2, V).setValue(t[1]);
     });
   });
   const left = q.filter(id => done.indexOf(id) < 0);
@@ -5569,6 +5671,42 @@ function fixEditedOrders_() {
   if (done.length) setStatus_('SHOP_ORDERS_EDITED', '✓ ' + done.length + ' أوردر اتعدل في شوبيفاي، ' + changed + ' منهم اتغيرت منتجاته' +
     (left.length ? '، والباقي (' + left.length + ') في التحديث الجاي' : ''));
   return changed;
+}
+
+/*
+ * EXT.live: the Variants column of the orders made in the last SHOP_ORDERS.VARIANT_DAYS days that don't have it yet (orders
+ * read before the column existed), newest first, up to 300 a run, 10 a call. An order Shopify doesn't show gets "-".
+ */
+function fillOrderVariants_() {
+  const sh = ss_().getSheetByName(SHOP_ORDERS.TAB);
+  if (!shopifyProps_().getProperty('SHOPIFY_TOKEN') || !sh || sh.getLastRow() < 2) return 0;
+  const V = SHOP_ORDERS.HEADERS.indexOf('Variants') + 1, L = sh.getLastRow();
+  if (sh.getMaxColumns() < V) sh.insertColumnsAfter(sh.getMaxColumns(), V - sh.getMaxColumns());
+  if (String(sh.getRange(1, V).getValue()) !== 'Variants') sh.getRange(1, V).setValue('Variants');
+  const cut = new Date(Date.now() - SHOP_ORDERS.VARIANT_DAYS * 86400000).toISOString();
+  const ids = sh.getRange(2, 1, L - 1, 2).getValues(), col = sh.getRange(2, V, L - 1, 1).getValues(), need = [];
+  for (let i = ids.length - 1; i >= 0 && need.length < 300 && String(ids[i][1]) >= cut; i--) {
+    if (col[i][0] === '' && ids[i][0]) need.push(String(ids[i][0]));
+  }
+  if (!need.length) return 0;
+  const got = {};
+  try {
+    for (let i = 0; i < need.length && timeLeft_(); i += 10) {
+      const chunk = need.slice(i, i + 10), nodes = shopifyGql_(SHOP_ORDERS.EDITED_QUERY, { ids: chunk }).nodes || [];
+      chunk.forEach((id, n) => { const o = nodes[n]; got[id] = o && o.lineItems ? shopOrderVariantsText_(o, shopOrderItems_(o)) : '-'; });
+    }
+  } catch (e) { setStatus_('SHOP_VARIANTS', '✗ ' + errText_(e)); }
+  const n = Object.keys(got).length;
+  if (!n) return 0;
+  withLock_(() => {
+    // Rows may have moved if new orders came in meanwhile: write by order ID. A cell filled meanwhile keeps what it has.
+    const now = sh.getRange(2, 1, sh.getLastRow() - 1, 1).getValues(), out = sh.getRange(2, V, now.length, 1).getValues();
+    now.forEach((r, i) => { const t = got[String(r[0])]; if (t !== undefined && out[i][0] === '') out[i][0] = t; });
+    sh.getRange(2, V, out.length, 1).setNumberFormat('@').setValues(out);
+    dropRaw_(SHOP_ORDERS.TAB);
+  });
+  setStatus_('SHOP_VARIANTS', '✓ ' + n + ' أوردر' + (need.length > n ? '، والباقي في التحديث الجاي' : ''));
+  return n;
 }
 
 /* ======== 33_campaign_map.gs ======== */
@@ -6683,7 +6821,7 @@ const EXT = {
   views: [slow => chanceViews_(slow), () => writeShopTab_(), () => writeMetaCamps_()],
   edit: [(name, a1) => chanceEdit_(name, a1), (name, a1) => campaignMapEdit_(name, a1)],
   setup: [() => chanceSetup_()],
-  live: [() => syncShopifyStatus_(), () => fillGrossSales_(), () => checkShopifyOrders_(), () => syncShopifyStock_(false), () => syncShopifyCollections_(), () => refreshAccountNames_(), () => discoverAccounts_(), () => chanceLive_(), () => refreshTodayFunnel_(), () => refreshFunnel_(false),
+  live: [() => syncShopifyStatus_(), () => fillGrossSales_(), () => fillOrderVariants_(), () => checkShopifyOrders_(), () => syncShopifyStock_(false), () => syncShopifyCollections_(), () => refreshAccountNames_(), () => discoverAccounts_(), () => chanceLive_(), () => refreshTodayFunnel_(), () => refreshFunnel_(false),
     () => refreshShopTab_(false), () => refreshMetaCamps_(false)],
   today: [() => refreshTodayFunnel_(), () => refreshBalances_(), () => refreshShopCards_()],
   menu: [['📦 تحديث المنتجات والستوك وتوب 100', 'refreshProductsNow'], ['📈 تحديث Daily Account Funnel و Actual ROAS', 'refreshFunnelNow'], ['📊 تحديث Meta Campaigns', 'refreshMetaCampsNow'],
