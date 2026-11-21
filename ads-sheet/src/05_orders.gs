@@ -5,7 +5,8 @@
  * shopify_app (the app only), csv_tab (a tab in this file), none.
  * An API source (e.g. TakeTheme) is a separate adapter written per business: it must
  * return the same row shape as readOrderSource_().
- * Platform: BIO (link in bio, sure organic) > UTM evidence > referrer > DIRECT (referrer "Direct", or a store order with neither)
+ * Platform: BIO (link in bio, sure organic) > UTM evidence > referrer (Facebook / Instagram / TikTok) > GOOGLE (Google referrer,
+ * sure organic) > DIRECT (referrer "Direct", or a store order with neither)
  * > MANUAL (draft order typed in the admin) > UNKNOWN (no source data at all). Never guessed.
  */
 const ORDERS_HEADERS = ['Order ID', 'Created at', 'Date', 'Platform', 'Signal', 'Product', 'Products raw', 'Total',
@@ -113,6 +114,7 @@ function parseOrderDate_(v, fmt, tz) {
 /*
  * utms = [source, campaign, content]. A link-in-bio visit ("link_in_bio") is not an ad: BIO (sure organic). A UTM with no campaign
  * and no Meta / TikTok word (utm_source=chatgpt.com) says nothing about an ad, so the referrer and source decide.
+ * A Google referrer (www.google.com, the form's word "Google") with no ad UTM is a search visit: GOOGLE, sure organic.
  */
 function platformOf_(utms, referrer, sourceName) {
   if (utms.some(u => /link.?in.?bio/i.test(String(u || '')))) return { p: APP.BIO, s: 'link_in_bio' };
@@ -127,6 +129,7 @@ function platformOf_(utms, referrer, sourceName) {
   if (isMe) return { p: 'META', s: 'utm' };
   if (text && String(utms[1] || '').trim()) return { p: cfgStr_('attribution.other_utm_platform') === 'UNKNOWN' ? APP.UNKNOWN_PLATFORM : 'META', s: 'utm_convention' };
   if (refP) return { p: refP, s: 'referrer' };
+  if (/\bgoogle\b/.test(ref) || /^google$/i.test(String(utms[0] || '').trim())) return { p: APP.GOOGLE, s: 'google' };
   const source = String(sourceName || '').toLowerCase();
   if (/^direct/.test(ref)) return { p: APP.DIRECT, s: 'referrer' };
   if (/draft/.test(source)) return { p: APP.MANUAL, s: 'draft_order' };
@@ -163,8 +166,9 @@ function readOrderSource_(full) {
   if (c.order_id < 0 || c.date < 0) throw new Error('شيت الأوردرات ناقص فيه عمود رقم الأوردر أو التاريخ. راجع orders.col.* في Settings.');
   let st = null;
   try { st = JSON.parse(PropertiesService.getDocumentProperties().getProperty('ORDERS_SRC') || 'null'); } catch (e) { st = null; }
-  // A new ORDER_PATCH / archive, or new platform rules (bio1: link in bio became BIO) = read everything once, so old rows get it.
-  const patch = ORDER_PATCH_DATA.length + ':' + ORDER_ARCHIVE_DATA.length + ':bio1';
+  // A new ORDER_PATCH / archive, or new platform rules (bio1: link in bio became BIO, google1: Google referrer became GOOGLE)
+  // = read everything once, so old rows get it.
+  const patch = ORDER_PATCH_DATA.length + ':' + ORDER_ARCHIVE_DATA.length + ':bio1:google1';
   if (!st || st.id !== src.id || st.head !== head.join('|') || !st.fmt || L < st.rows || st.patch !== patch) full = true;
   const from = full ? 2 : Math.max(2, Math.min(st.rows + 1, L - ORDERS.OVERLAP + 1));
   const rows = src.sheet.getRange(from, 1, L - from + 1, W).getValues(), fmt = full ? detectDateFormat_(rows, c.date) : st.fmt;

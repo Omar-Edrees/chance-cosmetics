@@ -529,7 +529,7 @@ test('أوردرات Flow: "(blank)" فاضي، والمصدر من بيانات
   assert.deepEqual(['MANUAL (DRAFT)', 'NO SOURCE'].map(l => todayRow(e, l)[3]), [1, 1]);
   const labels = e.ss.getSheetByName('Today').getDataRange().getValues().map(r => r[0]);
   assert.deepEqual(labels.slice(labels.indexOf('TIKTOK TOTAL'), labels.indexOf('GRAND TOTAL') + 1),
-    ['TIKTOK TOTAL', 'MANUAL (DRAFT)', 'ORGANIC (BIO)', 'NO SOURCE', 'GRAND TOTAL'], 'مفيش صف DIRECT لوحده، والبايو تحت المانيول');
+    ['TIKTOK TOTAL', 'MANUAL (DRAFT)', 'ORGANIC (BIO)', 'ORGANIC (GOOGLE)', 'NO SOURCE', 'GRAND TOTAL'], 'مفيش صف DIRECT لوحده، والبايو تحت المانيول، وجوجل تحت البايو');
   assert.equal(todayRow(e, 'ORGANIC (BIO)')[3], 0);
   assert.equal(grand[3], 5);
 });
@@ -818,6 +818,37 @@ test('لينك البايو أورجانيك أكيد (BIO) تحت الماني�
   assert.equal(todayRow(e, 'GRAND TOTAL')[3], 4, 'البايو داخل في GRAND TOTAL');
   const labels = e.ss.getSheetByName('Today').getDataRange().getValues().map(r => r[0]);
   assert.equal(labels.indexOf('ORGANIC (BIO)'), labels.indexOf('MANUAL (DRAFT)') + 1, 'صف البايو تحت المانيول على طول');
+});
+
+test('جوجل أورجانيك أكيد (GOOGLE) تحت البايو ومش في META TOTAL، والإعلان اللي في الـ UTM يكسب', () => {
+  const probe = env(), today = probe.c.todayKey_(), at = ' ' + today + 'T10:00:00+03:00', B = '(blank)';
+  const row = (id, a, src) => ['gid://shopify/Order/' + id, ' #' + id, ' N', B, 500, at, B, B, B, B, B].concat(a, ['Lip Oil x1', src || '4655075']);
+  const e = env({ orderHead: FLOW_HEAD, orders: [
+    row(1, [B, B, B, 'Google']),
+    row(2, [B, B, B, 'https://www.google.com/'], 'web'),
+    row(3, ['Camp', 'Ad 1', 'fb', 'Google']),
+    row(4, [B, B, B, 'Google'], 'shopify_draft_order'),
+    row(5, ['ig', B, 'link_in_bio', 'Instagram']),
+    row(6, [B, B, B, 'Direct(Chancestoreegy)']),
+    row(7, [B, B, B, 'https://googleads.g.doubleclick.net/']),
+  ] });
+  e.c.setupAll();
+  e.c.liveTick();
+  const raw = e.ss.getSheetByName('Orders Raw').getDataRange().getValues().slice(1), p = id => raw.find(r => r[0] === 'gid://shopify/Order/' + id).slice(3, 5);
+  assert.deepEqual(p(1), ['GOOGLE', 'google']);
+  assert.deepEqual(p(2), ['GOOGLE', 'google'], 'لينك جوجل كامل');
+  assert.deepEqual(p(3), ['META', 'utm'], 'الـ UTM بتاع الإعلان قبل ريفرر جوجل');
+  assert.deepEqual(p(4), ['GOOGLE', 'google'], 'جوجل قبل الـ Draft');
+  assert.deepEqual(p(5), ['BIO', 'link_in_bio']);
+  assert.deepEqual(p(6), ['DIRECT', 'referrer']);
+  assert.deepEqual(p(7), ['DIRECT', 'no_utm'], 'doubleclick مش جوجل سيرش');
+  const meta = todayRow(e, 'META TOTAL'), google = todayRow(e, 'ORGANIC (GOOGLE)');
+  assert.equal(meta[3], 3, 'META TOTAL = أوردر Meta + 2 DIRECT، من غير جوجل والبايو');
+  assert.equal(google[3], 3);
+  assert.equal(google[1], 'جوجل: أورجانيك أكيد');
+  assert.equal(todayRow(e, 'GRAND TOTAL')[3], 7, 'جوجل داخل في GRAND TOTAL');
+  const labels = e.ss.getSheetByName('Today').getDataRange().getValues().map(r => r[0]);
+  assert.equal(labels.indexOf('ORGANIC (GOOGLE)'), labels.indexOf('ORGANIC (BIO)') + 1, 'صف جوجل تحت البايو على طول');
 });
 
 test('كامبين اسمها اتغير: الأوردر بيتربط بالإعلان من رقم الـ Ad set (utm_term)', () => {

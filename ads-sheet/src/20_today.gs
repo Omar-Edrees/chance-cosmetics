@@ -217,7 +217,7 @@ function todayClosing_(g, today, sum, rows, gap) {
   platform('META', S.META, accs.META, 'META TOTAL', { bg: S.META_TOTAL, b: 'bold', fc: '#1d4ed8' }, 'META', APP.DIRECT);
   platform('TIKTOK', S.TIKTOK, accs.TIKTOK, 'TIKTOK TOTAL', { bg: S.TT_TOTAL, b: 'bold' }, 'TIKTOK');
   // Store orders with no ad source but DIRECT: no spend, so orders only. NO SOURCE shows only when some orders carry no data at all.
-  // BIO (link in bio) is sure organic: its own row under MANUAL, not in META TOTAL.
+  // BIO (link in bio) is sure organic: its own row under MANUAL, not in META TOTAL. GOOGLE (Google search) the same, under BIO.
   // META OUT: orders from a Meta ad account that isn't in the sheet (no spend here), named by what they bought.
   const out = {};
   rows.forEach(x => { if (x[0] === today && x[1] === APP.META_OUT) out[x[2]] = (out[x[2]] || 0) + num_(x[8]); });
@@ -225,6 +225,7 @@ function todayClosing_(g, today, sum, rows, gap) {
   // DIRECT has no row of its own: it is in META TOTAL.
   [[APP.META_OUT, 'META (حساب مش معانا)', 'مش داخل في التوتال: ' + outNames],
     [APP.MANUAL, 'MANUAL (DRAFT)', 'أوردرات يدوي'], [APP.BIO, 'ORGANIC (BIO)', 'لينك البايو: أورجانيك أكيد'],
+    [APP.GOOGLE, 'ORGANIC (GOOGLE)', 'جوجل: أورجانيك أكيد'],
     [APP.UNKNOWN_PLATFORM, 'NO SOURCE', 'من غير بيانات مصدر']].forEach(x => {
     const t = sum.byPlatform[x[0]] || { orders: 0, revenue: 0 };
     if ((x[0] === APP.UNKNOWN_PLATFORM || x[0] === APP.META_OUT) && !t.orders) return;

@@ -11,7 +11,7 @@
  * Ad accounts and stores are read-only from here: no writes to Meta, TikTok or order sources.
  */
 const APP = {
-  VERSION: '1.66.0',
+  VERSION: '1.67.0',
   T: {
     SETTINGS: 'Settings', ACCOUNTS: 'Accounts', PRODUCTS: 'Products', ADMAP: 'Ad Map',
     ADS: 'Ads Raw', ACC_RAW: 'Account Raw', ORDERS: 'Orders Raw', DAILY: 'Daily Log',
@@ -24,6 +24,7 @@ const APP = {
   UNKNOWN_PLATFORM: 'UNKNOWN',
   DIRECT: 'DIRECT', MANUAL: 'MANUAL',
   BIO: 'BIO', // Instagram link in bio (utm_content=link_in_bio): sure organic, not an ad, so outside META TOTAL
+  GOOGLE: 'GOOGLE', // Google referrer with no ad UTM (search): sure organic too, outside META TOTAL like BIO
   CATALOG: 'CATALOG (كل إعلانات الكتالوج)',
   META_NO_AD: 'أوردرات Meta من غير إعلان معروف (مفيش UTM)',
   META_OUT: 'META OUT' // Meta orders from an ad account that isn't in the sheet: orders only, outside META TOTAL
@@ -1019,7 +1020,8 @@ function refreshAdMapNow() {
  * shopify_app (the app only), csv_tab (a tab in this file), none.
  * An API source (e.g. TakeTheme) is a separate adapter written per business: it must
  * return the same row shape as readOrderSource_().
- * Platform: BIO (link in bio, sure organic) > UTM evidence > referrer > DIRECT (referrer "Direct", or a store order with neither)
+ * Platform: BIO (link in bio, sure organic) > UTM evidence > referrer (Facebook / Instagram / TikTok) > GOOGLE (Google referrer,
+ * sure organic) > DIRECT (referrer "Direct", or a store order with neither)
  * > MANUAL (draft order typed in the admin) > UNKNOWN (no source data at all). Never guessed.
  */
 const ORDERS_HEADERS = ['Order ID', 'Created at', 'Date', 'Platform', 'Signal', 'Product', 'Products raw', 'Total',
@@ -1127,6 +1129,7 @@ function parseOrderDate_(v, fmt, tz) {
 /*
  * utms = [source, campaign, content]. A link-in-bio visit ("link_in_bio") is not an ad: BIO (sure organic). A UTM with no campaign
  * and no Meta / TikTok word (utm_source=chatgpt.com) says nothing about an ad, so the referrer and source decide.
+ * A Google referrer (www.google.com, the form's word "Google") with no ad UTM is a search visit: GOOGLE, sure organic.
  */
 function platformOf_(utms, referrer, sourceName) {
   if (utms.some(u => /link.?in.?bio/i.test(String(u || '')))) return { p: APP.BIO, s: 'link_in_bio' };
@@ -1141,6 +1144,7 @@ function platformOf_(utms, referrer, sourceName) {
   if (isMe) return { p: 'META', s: 'utm' };
   if (text && String(utms[1] || '').trim()) return { p: cfgStr_('attribution.other_utm_platform') === 'UNKNOWN' ? APP.UNKNOWN_PLATFORM : 'META', s: 'utm_convention' };
   if (refP) return { p: refP, s: 'referrer' };
+  if (/\bgoogle\b/.test(ref) || /^google$/i.test(String(utms[0] || '').trim())) return { p: APP.GOOGLE, s: 'google' };
   const source = String(sourceName || '').toLowerCase();
   if (/^direct/.test(ref)) return { p: APP.DIRECT, s: 'referrer' };
   if (/draft/.test(source)) return { p: APP.MANUAL, s: 'draft_order' };
@@ -1177,8 +1181,9 @@ function readOrderSource_(full) {
   if (c.order_id < 0 || c.date < 0) throw new Error('شيت الأوردرات ناقص فيه عمود رقم الأوردر أو التاريخ. راجع orders.col.* في Settings.');
   let st = null;
   try { st = JSON.parse(PropertiesService.getDocumentProperties().getProperty('ORDERS_SRC') || 'null'); } catch (e) { st = null; }
-  // A new ORDER_PATCH / archive, or new platform rules (bio1: link in bio became BIO) = read everything once, so old rows get it.
-  const patch = ORDER_PATCH_DATA.length + ':' + ORDER_ARCHIVE_DATA.length + ':bio1';
+  // A new ORDER_PATCH / archive, or new platform rules (bio1: link in bio became BIO, google1: Google referrer became GOOGLE)
+  // = read everything once, so old rows get it.
+  const patch = ORDER_PATCH_DATA.length + ':' + ORDER_ARCHIVE_DATA.length + ':bio1:google1';
   if (!st || st.id !== src.id || st.head !== head.join('|') || !st.fmt || L < st.rows || st.patch !== patch) full = true;
   const from = full ? 2 : Math.max(2, Math.min(st.rows + 1, L - ORDERS.OVERLAP + 1));
   const rows = src.sheet.getRange(from, 1, L - from + 1, W).getValues(), fmt = full ? detectDateFormat_(rows, c.date) : st.fmt;
@@ -3213,7 +3218,7 @@ function todayClosing_(g, today, sum, rows, gap) {
   platform('META', S.META, accs.META, 'META TOTAL', { bg: S.META_TOTAL, b: 'bold', fc: '#1d4ed8' }, 'META', APP.DIRECT);
   platform('TIKTOK', S.TIKTOK, accs.TIKTOK, 'TIKTOK TOTAL', { bg: S.TT_TOTAL, b: 'bold' }, 'TIKTOK');
   // Store orders with no ad source but DIRECT: no spend, so orders only. NO SOURCE shows only when some orders carry no data at all.
-  // BIO (link in bio) is sure organic: its own row under MANUAL, not in META TOTAL.
+  // BIO (link in bio) is sure organic: its own row under MANUAL, not in META TOTAL. GOOGLE (Google search) the same, under BIO.
   // META OUT: orders from a Meta ad account that isn't in the sheet (no spend here), named by what they bought.
   const out = {};
   rows.forEach(x => { if (x[0] === today && x[1] === APP.META_OUT) out[x[2]] = (out[x[2]] || 0) + num_(x[8]); });
@@ -3221,6 +3226,7 @@ function todayClosing_(g, today, sum, rows, gap) {
   // DIRECT has no row of its own: it is in META TOTAL.
   [[APP.META_OUT, 'META (حساب مش معانا)', 'مش داخل في التوتال: ' + outNames],
     [APP.MANUAL, 'MANUAL (DRAFT)', 'أوردرات يدوي'], [APP.BIO, 'ORGANIC (BIO)', 'لينك البايو: أورجانيك أكيد'],
+    [APP.GOOGLE, 'ORGANIC (GOOGLE)', 'جوجل: أورجانيك أكيد'],
     [APP.UNKNOWN_PLATFORM, 'NO SOURCE', 'من غير بيانات مصدر']].forEach(x => {
     const t = sum.byPlatform[x[0]] || { orders: 0, revenue: 0 };
     if ((x[0] === APP.UNKNOWN_PLATFORM || x[0] === APP.META_OUT) && !t.orders) return;
@@ -6859,7 +6865,7 @@ function tiktokConnect() {
  * Tab "Duplication": the orders each platform says it brought (Meta pixel purchases, TikTok complete payments: Ads Raw)
  * against the store orders Shopify has for it, in a period chosen in B2 (today by default).
  *  - Shopify for Meta = META TOTAL in Today: our Meta ads' orders by UTM + DIRECT (orders with no source, most likely ads).
- *    MANUAL (draft), BIO (link in bio, sure organic) and the outside account's orders aren't in it. TikTok = TIKTOK TOTAL.
+ *    MANUAL (draft), BIO (link in bio) and GOOGLE (Google search), both sure organic, and the outside account's orders aren't in it. TikTok = TIKTOK TOTAL.
  *  - One table per platform: a summary line, then the campaigns running now (Meta: an ACTIVE ad now; TikTok: spent today
  *    or yesterday) with a + to open their ad sets and a + on each ad set to open its ads (like Meta Campaigns), then the
  *    stopped campaigns that had spend or orders in the period under one + of their own.

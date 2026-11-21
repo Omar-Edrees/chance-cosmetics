@@ -2,7 +2,7 @@
  * Tab "Duplication": the orders each platform says it brought (Meta pixel purchases, TikTok complete payments: Ads Raw)
  * against the store orders Shopify has for it, in a period chosen in B2 (today by default).
  *  - Shopify for Meta = META TOTAL in Today: our Meta ads' orders by UTM + DIRECT (orders with no source, most likely ads).
- *    MANUAL (draft), BIO (link in bio, sure organic) and the outside account's orders aren't in it. TikTok = TIKTOK TOTAL.
+ *    MANUAL (draft), BIO (link in bio) and GOOGLE (Google search), both sure organic, and the outside account's orders aren't in it. TikTok = TIKTOK TOTAL.
  *  - One table per platform: a summary line, then the campaigns running now (Meta: an ACTIVE ad now; TikTok: spent today
  *    or yesterday) with a + to open their ad sets and a + on each ad set to open its ads (like Meta Campaigns), then the
  *    stopped campaigns that had spend or orders in the period under one + of their own.
