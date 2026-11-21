@@ -11,7 +11,7 @@
  * Ad accounts and stores are read-only from here: no writes to Meta, TikTok or order sources.
  */
 const APP = {
-  VERSION: '1.61.0',
+  VERSION: '1.62.0',
   T: {
     SETTINGS: 'Settings', ACCOUNTS: 'Accounts', PRODUCTS: 'Products', ADMAP: 'Ad Map',
     ADS: 'Ads Raw', ACC_RAW: 'Account Raw', ORDERS: 'Orders Raw', DAILY: 'Daily Log',
@@ -3375,7 +3375,10 @@ function writeToday_() {
   const orders = todayOrders_(today.slice(0, 8) + '01', true);
   r = todayProducts_(g, r, 'PRODUCT PERFORMANCE — TODAY | ' + shown, today, today, rows, orders) + 1;
   todayProducts_(g, r, 'PRODUCT PERFORMANCE — THIS MONTH | ' + month, today.slice(0, 8) + '01', today, rows, orders);
-  if (!writeGrid_(sh, g)) return;
+  todayMakeRoom_(g);
+  const drew = writeGrid_(sh, g);
+  try { todayStockGroups_(sh, g); } catch (e) { console.error('today groups: ' + errText_(e)); }
+  if (!drew) return;
   sh.setFrozenRows(0);
   [[1, 150], [2, 210], [3, 120], [4, 130], [5, 130], [6, 130], [7, 24], [8, 300], [9, 260]].forEach(w => sh.setColumnWidth(w[0], w[1]));
   for (let col = 10; col <= TODAY.WIDTH; col++) sh.setColumnWidth(col, 125);
@@ -3849,7 +3852,8 @@ function todayBalances_(g, r, today) {
  * Red = COVER.RED days or less (order more stock), yellow = up to COVER.YELLOW, green above.
  * To order = pieces for COVER.ORDER_DAYS days at that speed, minus the stock.
  * 🔴 next to a product = one of its colors / sizes that sold in the same days and has COVER.RED days or less at its own speed
- * (or already ran out), one dot each, with their names in a grey line under the product. Products with one variant get none.
+ * (or already ran out), one dot each. Under the product, one row per such color (its stock, speed, days or "نفد", to order),
+ * grouped under a + / − on the product's row (todayStockGroups_), closed unless it was open. Products with one variant get none.
  */
 const COVER = { DAYS: 5, RED: 10, YELLOW: 15, MIN_PER_DAY: 1, ORDER_DAYS: 30 };
 
@@ -3902,10 +3906,16 @@ function todayStockCover_(g, r, today) {
       g.set(r, 6, need, { nf: S.COUNT, al: 'center', b: need > 0 ? 'bold' : 'normal' });
       r++;
       if (low[n]) {
-        g.set(r, 1, '   ↳ ' + low[n].map(v => (v.title || 'من غير اسم') + ': ' + (v.days === 0 ? 'نفد' : v.stock + ' قطعة، يكفي ' + Math.floor(v.days) + ' يوم'))
-          .join('   •   '), { fc: '#6b7280' });
-        g.merge(r, 1, 1, 6);
-        r++;
+        (g.groups = g.groups || []).push({ name: n, row: r, n: low[n].length });
+        low[n].forEach(v => {
+          g.set(r, 1, '   ↳ ' + (v.title || 'من غير اسم'), { b: 'bold' });
+          g.set(r, 2, '🔴', { al: 'center' });
+          g.set(r, 3, v.stock, { nf: S.COUNT, al: 'right' });
+          g.set(r, 4, Math.round(v.per * 10) / 10, { nf: '0.0', al: 'right' });
+          g.set(r, 5, v.days === 0 ? 'نفد' : Math.floor(v.days), { nf: S.COUNT, al: 'center', b: 'bold', bg: S.RED });
+          g.set(r, 6, Math.max(0, Math.ceil(v.per * COVER.ORDER_DAYS - v.stock)), { nf: S.COUNT, al: 'center', b: 'bold' });
+          r++;
+        });
       }
     });
   };
@@ -3916,7 +3926,7 @@ function todayStockCover_(g, r, today) {
 }
 
 /*
- * {product name: [{title, stock, days}]}: the colors / sizes of a product with two or more of them that sold in the orders
+ * {product name: [{title, stock, per, days}]}: the colors / sizes of a product with two or more of them that sold in the orders
  * counted (their pieces from the Variants column of "Shopify Orders") and have COVER.RED days or less at their own speed,
  * 0 = ran out. Fewest days first. Needs the stock from the Shopify app (it has every variant); else nothing.
  */
@@ -3933,11 +3943,67 @@ function lowVariants_(orderIds) {
     if (stock[name].length < 2) return;
     const list = stock[name].map(v => {
       const per = (sold[v.id] || 0) / COVER.DAYS;
-      return per > 0 ? { title: v.title, stock: v.stock, days: v.stock <= 0 ? 0 : v.stock / per } : null;
+      return per > 0 ? { title: v.title, stock: v.stock, per: per, days: v.stock <= 0 ? 0 : v.stock / per } : null;
     }).filter(v => v && v.days <= COVER.RED).sort((a, b) => a.days - b.days);
     if (list.length) out[name] = list;
   });
   return out;
+}
+
+/*
+ * Today: the colors under each product in the stock table are a row group, with its + / − on the product's row. Groups cover
+ * whole rows, so the tables on the right (columns G on) leave those rows empty (todayMakeRoom_) and nothing else hides.
+ * Today is drawn in place, so when the colors' rows moved the old groups are taken off and made again, closed, and the ones
+ * that were open (by product) opened again. The same when the groups on the sheet aren't what was drawn last time.
+ */
+const TODAY_GROUPS = 'TODAY_STOCK_GROUPS';
+function todayStockGroups_(sh, g) {
+  const props = PropertiesService.getDocumentProperties(), want = (g.groups || []).map(x => [x.name, x.row, x.n]);
+  let old = [];
+  try { old = JSON.parse(props.getProperty(TODAY_GROUPS) || '[]'); } catch (e) { old = []; }
+  const depth = row => { try { return sh.getRowGroupDepth(row) || 0; } catch (e) { return 0; } };
+  // The groups on the sheet are the ones wanted: each starts and ends where it should, and the product row above has none.
+  const fits = x => depth(x[1] - 1) === 0 && depth(x[1]) === 1 && depth(x[1] + x[2] - 1) === 1 && depth(x[1] + x[2]) === 0;
+  if (JSON.stringify(old.map(x => [x[1], x[2]])) === JSON.stringify(want.map(x => [x[1], x[2]])) && want.every(fits)) {
+    if (JSON.stringify(old) !== JSON.stringify(want)) props.setProperty(TODAY_GROUPS, JSON.stringify(want));
+    return;
+  }
+  const open = new Set();
+  old.forEach(x => {
+    try { const grp = sh.getRowGroup(x[1], 1); if (grp && !grp.isCollapsed()) open.add(x[0]); } catch (e) { /* مفيش جروب */ }
+  });
+  // Off: the old groups, and anything on the rows the new ones need (never piled on).
+  old.concat(want).forEach(x => {
+    for (let r = x[1]; r < x[1] + x[2] && r <= sh.getMaxRows(); r++) {
+      for (let d = depth(r), k = 0; d > 0 && k < 8; d = depth(r), k++) {
+        try { sh.getRowGroup(r, d).remove(); } catch (e) { break; }
+      }
+    }
+  });
+  if (want.length) {
+    try { sh.setRowGroupControlPosition(SpreadsheetApp.GroupControlTogglePosition.BEFORE); } catch (e) { /* قديم */ }
+    want.forEach(x => { sh.getRange(x[1], 1, x[2], 1).shiftRowGroupDepth(1); });
+    want.forEach(x => { try { const grp = sh.getRowGroup(x[1], 1); if (open.has(x[0])) grp.expand(); else grp.collapse(); } catch (e) { /* اتغير */ } });
+  }
+  props.setProperty(TODAY_GROUPS, JSON.stringify(want));
+}
+
+/*
+ * The rows of the color groups hide whole rows: the cells on the right of the page (column G on) that land on those rows
+ * go down past them, with their merges and live cells. The left side (A:F) stays as drawn.
+ */
+function todayMakeRoom_(g) {
+  const skip = new Set();
+  (g.groups || []).forEach(x => { for (let i = 0; i < x.n; i++) skip.add(x.row + i); });
+  if (!skip.size) return;
+  const map = [], R = g.rows.length;
+  for (let r = 1, p = 1; r <= R; r++, p++) { while (skip.has(p)) p++; map[r] = p; }
+  const at = r => map[r] || r;
+  const right = g.rows.map(line => line.slice(6));
+  g.rows.forEach(line => { if (line.length > 6) line.length = 6; });
+  right.forEach((cells, i) => cells.forEach((cell, k) => { if (cell) { const c = g.cell(at(i + 1), 7 + k); Object.assign(c, cell); } }));
+  g.merges.forEach(m => { if (m[1] >= 7) m[0] = at(m[0]); });
+  (g.live || []).forEach(x => { if (x[1] >= 7) x[0] = at(x[0]); });
 }
 
 /* ======== 28_closing.gs ======== */

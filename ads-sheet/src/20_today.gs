@@ -379,7 +379,10 @@ function writeToday_() {
   const orders = todayOrders_(today.slice(0, 8) + '01', true);
   r = todayProducts_(g, r, 'PRODUCT PERFORMANCE — TODAY | ' + shown, today, today, rows, orders) + 1;
   todayProducts_(g, r, 'PRODUCT PERFORMANCE — THIS MONTH | ' + month, today.slice(0, 8) + '01', today, rows, orders);
-  if (!writeGrid_(sh, g)) return;
+  todayMakeRoom_(g);
+  const drew = writeGrid_(sh, g);
+  try { todayStockGroups_(sh, g); } catch (e) { console.error('today groups: ' + errText_(e)); }
+  if (!drew) return;
   sh.setFrozenRows(0);
   [[1, 150], [2, 210], [3, 120], [4, 130], [5, 130], [6, 130], [7, 24], [8, 300], [9, 260]].forEach(w => sh.setColumnWidth(w[0], w[1]));
   for (let col = 10; col <= TODAY.WIDTH; col++) sh.setColumnWidth(col, 125);

@@ -1108,7 +1108,7 @@ test('Today: الستوك يكفي كام يوم، جزء للمنتجات ال�
   assert.deepEqual([sh.attr(i + 4, 5).bg, sh.attr(i + 5, 5).bg, sh.attr(i + 7, 5).bg], ['#fff2cc', null, '#f4cccc']);
 });
 
-test('Today: نقطة حمرا جنب المنتج لكل لون بيتباع وقرّب يخلص (أو خلص)، وأساميهم في سطر تحته، والأوردرات القديمة بتاخد ألوانها من شوبيفاي', () => {
+test('Today: نقطة حمرا جنب المنتج لكل لون بيتباع وقرّب يخلص (أو خلص)، وتحت + جنب المنتج صف لكل لون، والأوردرات القديمة بتاخد ألوانها من شوبيفاي', () => {
   const probe = env(), today = probe.c.todayKey_(), d = n => probe.c.shiftKey_(today, -n);
   const variant = (id, handle, product, title, qty) => ({ id: 'gid://shopify/ProductVariant/' + id, title, inventoryQuantity: qty, product: { handle, title: product } });
   const variants = [variant(11, 'lip-oil', 'Lip Oil', 'Red', 2), variant(12, 'lip-oil', 'Lip Oil', 'Pink', 15), variant(13, 'lip-oil', 'Lip Oil', 'Nude', 0),
@@ -1132,12 +1132,22 @@ test('Today: نقطة حمرا جنب المنتج لكل لون بيتباع و
   const look = () => {
     const v = e.ss.getSheetByName('Today').getDataRange().getValues(), i = v.findIndex(r => /^الستوك يكفي كام يوم/.test(String(r[0])));
     const at = v.findIndex((r, k) => k > i && r[0] === 'Lip Oil');
-    return { lip: v[at], next: v[at + 1], blush: v.find((r, k) => k > i && r[0] === 'Blush') };
+    return { lip: v[at], row: at + 1, kids: n => v.slice(at + 1, at + 1 + n), blush: v.find((r, k) => k > i && r[0] === 'Blush') };
   };
+  const todaySh = () => e.ss.getSheetByName('Today');
   let t = look();
   assert.deepEqual(t.lip.slice(0, 5), ['Lip Oil', '🔴🔴', 20, 2.2, 9]);
-  assert.match(String(t.next[0]), /↳ Nude: نفد {3}• {3}Red: 2 قطعة، يكفي 2 يوم$/);
+  // صف لكل لون تحت المنتج: الستوك، وبيتباع في اليوم، ويكفي كام يوم أو نفد، واطلب كام
+  assert.deepEqual(t.kids(2).map(r => r.slice(0, 6)), [['   ↳ Nude', '🔴', 0, 0.2, 'نفد', 6], ['   ↳ Red', '🔴', 2, 1, 2, 28]]);
+  assert.ok(t.kids(2).every(r => r.slice(6).every(x => x === '')), 'الجداول اللي على اليمين مش في صفوف الألوان');
+  // جروب مقفول، والـ + على صف المنتج
+  const sh = todaySh(), grp = sh.getRowGroup(t.row + 1, 1);
+  assert.deepEqual([sh.getRowGroupDepth(t.row), grp.start, grp.end, grp.isCollapsed(), sh.groupControl], [0, t.row + 1, t.row + 2, true, 'BEFORE']);
   assert.equal(t.blush[1], '', 'منتج بنوع واحد مالوش نقط');
+  assert.equal(sh.getRowGroupDepth(t.row + 4), 0, 'Blush مالوش جروب');
+  grp.expand(); // فتحته
+  e.c.liveTick();
+  assert.equal(todaySh().getRowGroup(t.row + 1, 1).isCollapsed(), false, 'التحديث مابيقفلش اللي مفتوح');
   // أوردر اتقرا قبل عمود الألوان: بيتقري تاني من شوبيفاي بألوانه
   const rowAt = tab.getDataRange().getValues().findIndex(r => r[0] === 'gid://shopify/Order/1') + 1;
   tab.getRange(rowAt, V + 1).setValue('');
@@ -1147,6 +1157,21 @@ test('Today: نقطة حمرا جنب المنتج لكل لون بيتباع و
   assert.match(e.doc.STATUS_SHOP_VARIANTS, /✓ 1 أوردر$/);
   t = look();
   assert.equal(t.lip[1], '🔴🔴🔴', 'Coral بقى بيتباع (4 قطع) وفاضل 3');
+  assert.deepEqual(t.kids(3).map(r => r[0]), ['   ↳ Nude', '   ↳ Red', '   ↳ Coral']);
+  const g2 = todaySh().getRowGroup(t.row + 1, 1);
+  assert.deepEqual([g2.start, g2.end, g2.isCollapsed(), todaySh().getRowGroupDepth(t.row + 4)], [t.row + 1, t.row + 3, false, 0],
+    'الجروب اتعمل تاني على 3 صفوف وفضل مفتوح، من غير جروبات فوق بعض');
+});
+
+test('Today: الجداول اللي على اليمين بتنزل تحت صفوف الألوان (الجروب بيخبي الصف كله)', () => {
+  const c = env().c, g = c.todayGrid_();
+  g.set(1, 1, 'L1'); g.set(2, 1, 'L2'); g.set(1, 8, 'R1'); g.set(2, 8, 'R2'); g.set(3, 8, 'R3'); g.merge(3, 8, 1, 7);
+  g.live = [[2, 9]];
+  g.groups = [{ name: 'Lip Oil', row: 2, n: 2 }];
+  c.todayMakeRoom_(g);
+  const at = (r, col) => (g.rows[r - 1] && g.rows[r - 1][col - 1] ? g.rows[r - 1][col - 1].v : '');
+  assert.deepEqual([at(1, 8), at(2, 8), at(3, 8), at(4, 8), at(5, 8), at(2, 1)], ['R1', '', '', 'R2', 'R3', 'L2']);
+  assert.equal(JSON.stringify([g.merges[0], g.live[0]]), '[[5,8,1,7],[4,9]]');
 });
 
 /* ---------- الربط بأبليكيشن شوبيفاي (29_shopify_api.gs) ---------- */
