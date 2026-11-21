@@ -332,6 +332,7 @@ function writeMetaCamps_() {
     if (!c.budget) { const sum = c.kids.filter(s => s.active && s.budget > 0).reduce((x, s) => x + s.budget, 0); c.budget = sum; c.budgetSum = sum > 0; }
   });
   tree.camps.sort((a, b) => (MC.ORDER[a.verdict.code] - MC.ORDER[b.verdict.code]) || mcBySpend_(a, b));
+  MC_LAST_ = { camps: tree.camps }; // for the Analysis & Actions tab
 
   const g = todayGrid_(), wins = tree.wins, day = k => {
     const p = String(k || '').split('-').map(Number);

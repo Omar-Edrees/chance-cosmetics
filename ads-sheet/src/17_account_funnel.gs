@@ -292,6 +292,7 @@ function refreshFunnel_(force) {
   if (!accounts_('META').length) return false;
   props.deleteProperty(FUNNEL.DUE_KEY);
   const data = time_('Account Funnel — Meta', () => fetchFunnel_());
+  try { anaKeepFunnel_(data); } catch (e) { console.error('analysis funnel: ' + errText_(e)); }
   withLock_(() => { writeFunnel_(data); writeActual_(data); });
   props.setProperty(FUNNEL.AT_KEY, String(Date.now()));
   try { checkSpend_(data); } catch (e) { setStatus_('SPEND_CHECK', '✗ ' + errText_(e)); }

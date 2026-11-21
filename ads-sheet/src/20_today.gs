@@ -393,7 +393,7 @@ function todayProducts_(g, r, title, from, to, rows, orders) {
 }
 
 function writeToday_() {
-  takeIntraday_();
+  if (takeIntraday_()) { try { takeIntraAds_(); } catch (e) { console.error('intraday ads: ' + errText_(e)); } }
   const sh = ensureTab_(APP.T.TODAY), today = todayKey_(), rows = dailyRows_(), sum = summarize_(rows, today, today), g = todayGrid_();
   const p = today.split('-').map(Number), noon = new Date(Date.UTC(p[0], p[1] - 1, p[2], 12));
   const shown = Utilities.formatDate(noon, 'UTC', 'dd-MMM-yyyy'), month = Utilities.formatDate(noon, 'UTC', 'MMM-yyyy');

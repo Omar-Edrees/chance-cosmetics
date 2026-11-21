@@ -1971,6 +1971,13 @@ test('Meta Campaigns: الكامبين وتحتها الأد سيتس وتحته
   assert.ok(card('كل الحسابات') && card('Chance 26'));
   assert.match(String(card('Chance 26')[12]), /^Camp C4 \(/);
   assert.match(String(card('Chance 26')[14]), /Camp C1 \(4\).*🔁 Camp C3/);
+  // تاب Analysis & Actions بياخد قرارات الكامبينات: وقّف (عاجل)، ووقعت (مهم)، وزوّد ورجّع (فرصة)
+  const an = e.ss.getSheetByName('Analysis & Actions').getDataRange().getValues(), act = re => an.find(r => re.test(String(r[1])));
+  assert.doesNotMatch(String(an[1][0]), /⚠️/, 'كل الأجزاء اتحسبت');
+  assert.equal(act(/^وقّف كامبين Camp C4$/)[0], '🔴 عاجل');
+  assert.equal(act(/^كامبين Camp C2 \(Chance 26\): كانت كويسة ونزلت تحت التعادل \(CTR ↓60%\)$/)[0], '🟠 مهم');
+  assert.equal(act(/^زوّد ميزانية Camp C1 20%/)[0], '🟢 فرصة');
+  assert.equal(act(/^رجّع Camp C3 بميزانية صغيرة/)[0], '🟢 فرصة');
   // تفتح الكامبين، وكامبين جديدة تيجي: اللي فتحته يفضل مفتوح
   sh.getRowGroup(c2 + 1, 1).expand();
   ads[A1].push(ad(1, 'C6', 'S6', '1200000000611', 40));
@@ -2136,6 +2143,8 @@ test('Duplication: أوردرات المنصة قدام أوردرات شوبي�
   assert.deepEqual(v()[mi + 2].slice(0, 6), [6, 5, 3, 2, 1, 0.2]);
   assert.equal(e.ss.getSheetByName('Today').getDataRange().getValues().find(r => r[0] === 'META TOTAL')[3], 5, 'نفس رقم Today');
   assert.equal(sh.attr(mi + 3, 6).bg, '#f4cccc', 'المنصة بتعد أكتر بـ 20%');
+  const an = e.ss.getSheetByName('Analysis & Actions').getDataRange().getValues();
+  assert.doesNotMatch(String(an[1][0]), /⚠️/, 'كل الأجزاء في Analysis & Actions اتحسبت');
   // الكامبين الشغالة: DIRECT بتاع Lip Oil على 111 و 222 بالصرف (0.6 و 0.4)، و Mask مفيش إعلان عليه فعلى كل اللي صرفوا النهارده (1000 من 1100)
   const c1 = at(mi, 'Camp');
   assert.deepEqual(v()[c1].slice(0, 10), ['Camp', 'Chance 26', '🟢 شغال', 1000, 4, 2, 1.9, 3.9, 0.1, 0.023]);
@@ -2162,4 +2171,113 @@ test('Duplication: أوردرات المنصة قدام أوردرات شوبي�
   sh.getRange('B2').setValue('آخر 7 أيام');
   e.c.writeDupTab_();
   assert.deepEqual(v()[mi + 2].slice(0, 3), [8, 6, 4], 'إمبارح داخل: إعلان 111 (2) وأوردر 8');
+});
+
+test('Analysis & Actions: الأكشنز بالأولوية، والمشاكل والحاجات الكويسة، والمهام اليدوية وقبل وبعد، والرؤاس لكل حساب يوم بيوم، والستوك والإلغاء', () => {
+  const probe = env(), today = probe.c.todayKey_(), d = n => probe.c.shiftKey_(today, -n);
+  const variant = (id, handle, product, title, qty) => ({ id: 'gid://shopify/ProductVariant/' + id, title, inventoryQuantity: qty, product: { handle, title: product } });
+  const variants = [variant(11, 'lip-oil', 'Lip Oil', 'Red', 2), variant(12, 'lip-oil', 'Lip Oil', 'Pink', 40), variant(13, 'lip-oil', 'Lip Oil', 'Nude', 0),
+    variant(21, 'blush', 'Blush', 'Default Title', 50)];
+  const line = (title, qty, v) => ({ title, quantity: qty, currentQuantity: qty, variant: { id: 'gid://shopify/ProductVariant/' + v } });
+  const order = (id, day, lines, x) => Object.assign({ id: 'gid://shopify/Order/' + id, createdAt: day + 'T10:00:00Z', sourceName: 'web',
+    originalTotalPriceSet: { shopMoney: { amount: '500.0' } }, customAttributes: [], lineItems: { nodes: lines }, customerJourneySummary: { lastVisit: null } }, x || {});
+  const created = [];
+  let id = 1;
+  for (let n = 1; n <= 12; n++) created.push(order(id++, d(n), [line('Lip Oil', 1, 11), line('Lip Oil', 1, 13)]), order(id++, d(n), [line('Blush', 1, 21)]));
+  const e = env({ orderHead: FLOW_HEAD.slice(0, 17), orders: [], activeAds: { [A1]: ['111'] },
+    ads: { [A1]: [adRow(today, '111', 600), adRow(d(1), '111', 900), adRow(d(2), '111', 900), adRow(d(3), '111', 900), adRow(d(5), '111', 300)] },
+    creatives: { 111: 'https://chance-cosmetics.com/products/lip-oil' } });
+  fakeShopify(e, [], { created, variants });
+  e.c.orderStatus_ = x => (Number(String(x).split('/').pop()) % 4 === 0 ? { code: 'C', revenue: null } : { code: 'D', revenue: null });
+  Object.assign(e.user, { SHOPIFY_TOKEN: 'TOKEN1', SHOPIFY_TOKEN_EXP: String(Date.now() + 3600000) });
+  e.c.setupAll(); e.c.liveTick(); e.c.liveTick();
+  const sh = e.ss.getSheetByName('Analysis & Actions');
+  assert.ok(sh, 'التاب اتعمل');
+  assert.doesNotMatch(String(sh.getRange('A2').getValue()), /⚠️/, 'كل الأجزاء اتحسبت');
+  const v = () => sh.getDataRange().getValues(), find = (col, re) => v().findIndex(r => re.test(String(r[col])));
+  // التلات جداول اللي فوق جنب بعض: الأكشنز (A)، ومهامي (G)، وقبل وبعد (L)
+  assert.deepEqual([v()[3][0], v()[3][6], v()[3][11]].map(x => x.split(' — ')[0]), ['الأكشنز', 'مهامي', 'قبل وبعد']);
+  // الستوك: Nude خلص و Red يكفي يومين، وكانوا بيتباعوا 12 قطعة في الشهر: أكشن اطلب ستوك بالترتيب
+  const stock = find(1, /^اطلب ستوك/);
+  assert.ok(stock > 0);
+  assert.equal(v()[stock][1], 'اطلب ستوك بالترتيب ده: Nude (30 قطعة)، Red (28 قطعة)');
+  assert.equal(v()[stock][4], false, 'خانة ✅');
+  assert.ok(find(1, /^Lip Oil: 1 لون خلص و 1 لون قرّب يخلص$/) > stock, 'في جدول المشاكل كمان');
+  const sv = find(6, /↳ Nude/);
+  assert.deepEqual(v()[sv].slice(6, 13), ['   ↳ Nude', 0, 7, 12, 'نفد', 'خلص وكان بيتباع 1 في اليوم', 30]);
+  // الرؤاس لكل حساب يوم بيوم: صف الشهر، وبعده النهارده لحد أول الشهر
+  const roas = find(6, /^الشهر لحد النهارده$/);
+  assert.equal(v()[roas - 1][8], 'Chance 26');
+  assert.equal(v()[roas + 1][6], e.c.anaDay_(today) + ' (لحد دلوقتي)');
+  assert.equal(v()[roas + 2][6], e.c.anaDay_(d(1)));
+  // الإلغاء: آخر 7 أيام 3 من 14، والـ 7 اللي قبلها 3 من 10 (اليوم 12 اتلغى)
+  const cn = find(6, /^البيزنس كله$/);
+  assert.deepEqual(v()[cn].slice(7, 13).map(x => (typeof x === 'number' ? Math.round(x * 1000) / 1000 : x)), [14, 14, 3, 0.214, 0.3, '-8.6 نقطة']);
+
+  // مهمة مكتوبة بإيدي بأولوية عاجل: بتدخل في الأكشنز الأول، وتاريخ إضافتها بيتكتب لوحده
+  sh.getRange('G6').setValue('اعمل كرييتيف جديد لـ Lip Oil');
+  sh.getRange('H6').setValue('🔴 عاجل');
+  // قبل وبعد: أكشن اتعمل من 3 أيام على البيزنس كله
+  sh.getRange('L6:O6').setValues([['وقفت الكامبين الخسرانة', d(3), 'الصرف في اليوم', '']]);
+  e.c.withLock_(() => e.c.writeAnalysisTab_());
+  assert.deepEqual(v()[5].slice(0, 4), ['🔴 عاجل', 'اعمل كرييتيف جديد لـ Lip Oil', 'مكتوبة بإيدك يوم ' + today, 'مهمة يدوية']);
+  assert.deepEqual(v()[5].slice(6, 10), ['اعمل كرييتيف جديد لـ Lip Oil', '🔴 عاجل', 'لسه', today]);
+  // الصرف في اليوم: قبل = الـ 7 أيام اللي قبلها (300 ÷ 7)، بعد = من يومها لحد إمبارح (2700 ÷ 3)
+  assert.deepEqual(v()[5].slice(11, 18).map(x => (typeof x === 'number' ? Math.round(x * 100) / 100 : x)),
+    ['وقفت الكامبين الخسرانة', d(3), 'الصرف في اليوم', 'البيزنس كله', 42.86, 900, '+2000%']);
+  // ✅ على أكشن الستوك: بيتنقل لقبل وبعد بتاريخ النهارده، ويستخبى من الأكشنز
+  const at = find(1, /^اطلب ستوك/);
+  sh.getRange(at + 1, 5).setValue(true);
+  e.c.onEdit({ range: { getSheet: () => sh, getA1Notation: () => 'E' + (at + 1) } });
+  assert.deepEqual(v()[6].slice(11, 15), ['اطلب ستوك بالترتيب ده: Nude (30 قطعة)، Red (28 قطعة)', today, 'الأوردرات في اليوم', 'Lip Oil']);
+  e.c.withLock_(() => e.c.writeAnalysisTab_());
+  assert.equal(find(1, /^اطلب ستوك/), -1, 'استخبى من الأكشنز');
+  assert.equal(v()[6][11], 'اطلب ستوك بالترتيب ده: Nude (30 قطعة)، Red (28 قطعة)', 'وفضل في قبل وبعد');
+  assert.equal(v()[6][16], 'من بكره');
+  // ✅ على المهمة: حالتها بتبقى خلصت وبتخرج من الأكشنز
+  sh.getRange(6, 5).setValue(true);
+  e.c.onEdit({ range: { getSheet: () => sh, getA1Notation: () => 'E6' } });
+  e.c.withLock_(() => e.c.writeAnalysisTab_());
+  assert.equal(v()[5][8], 'خلصت');
+  assert.equal(find(1, /^اعمل كرييتيف جديد/), -1);
+  assert.equal(v().filter(r => r[11] === 'اعمل كرييتيف جديد لـ Lip Oil').length, 1, 'المهمة اتنقلت لقبل وبعد');
+});
+
+test('Analysis & Actions: كل 3 ساعات لوحدها قدام نفس الوقت في الأسبوع اللي فات، والكامبين اللي صرفت فيها من غير أوردرات، ولقطات الكامبينات بتتاخد مع لقطة Today', () => {
+  const probe = env(), today = probe.c.todayKey_(), d = n => probe.c.shiftKey_(today, -n);
+  const attrs = m => Object.keys(m).map(k => ({ key: k, value: m[k] }));
+  const fb = { customAttributes: attrs({ utm_source: 'facebook', utm_campaign: 'Camp', utm_content: '111', 'Order Referrer': 'Facebook' }) };
+  const order = (id, day, hm) => Object.assign({ id: 'gid://shopify/Order/' + id, createdAt: day + 'T' + hm + ':00Z', sourceName: 'web',
+    originalTotalPriceSet: { shopMoney: { amount: '500.0' } }, lineItems: { nodes: [{ title: 'Lip Oil', quantity: 1 }] }, customerJourneySummary: { lastVisit: null } }, fb);
+  // كل يوم من الأسبوع اللي فات: 4 أوردرات بين 9 و 12 الضهر (8 الصبح UTC = 10 بتوقيت القاهرة) على صرف 1000 = رؤاس 2. النهارده: أوردر واحد.
+  const created = [order(1, today, '08:00')];
+  let id = 2;
+  for (let n = 2; n <= 8; n++) for (let k = 0; k < 4; k++) created.push(order(id++, d(n), '08:0' + k));
+  const e = env({ orderHead: FLOW_HEAD.slice(0, 17), orders: [], ads: { [A1]: [adRow(today, '111', 1000)] } });
+  fakeShopify(e, [], { created });
+  Object.assign(e.user, { SHOPIFY_TOKEN: 'TOKEN1', SHOPIFY_TOKEN_EXP: String(Date.now() + 3600000) });
+  e.c.setupAll(); e.c.liveTick(); e.c.liveTick();
+  const intra = e.ss.getSheetByName('Intraday') || e.ss.insertSheet('Intraday');
+  const rows = [['Date', 'Slot', 'Platform', 'Spend', 'Orders', 'CPP', 'Revenue']];
+  for (let n = 0; n <= 8; n++) rows.push([d(n), '9:00', 'META', 0, 0, '', 0], [d(n), '12:00', 'META', 1000, 0, '', 0]);
+  intra.getRange(1, 1, rows.length, 7).setValues(rows);
+  const snaps = e.ss.getSheetByName('Intraday Ads') || e.ss.insertSheet('Intraday Ads');
+  snaps.getRange(1, 1, Math.max(snaps.getLastRow(), 3), 7).clearContent();
+  snaps.getRange(1, 1, 3, 7).setValues([['Date', 'Slot', 'Platform', 'Account ID', 'Campaign ID', 'Campaign', 'Spend'],
+    [today, '9:00', 'META', A1, 'C1', 'Camp', 100], [today, '12:00', 'META', A1, 'C1', 'Camp', 900]]);
+  e.c.resetCaches_();
+  e.c.withLock_(() => e.c.writeAnalysisTab_());
+  const v = e.ss.getSheetByName('Analysis & Actions').getDataRange().getValues();
+  const at = v.findIndex(r => r[6] === '9:00 AM → 12:00 PM');
+  assert.ok(at > 0, 'صف الوقت ده');
+  assert.deepEqual(v[at].slice(6, 12), ['9:00 AM → 12:00 PM', 1000, 1, 0.5, 2, 'Camp (صرف 800 و 1 أوردر)']);
+  const act = v.find(r => /^النهارده من 9:00 AM لـ 12:00 PM: رؤاس Meta 0.5 والمعتاد 2$/.test(String(r[1])));
+  assert.ok(act, 'في جدول المشاكل');
+  assert.equal(act[0], '🟠 مهم');
+  assert.match(v.find(r => /^راجع Camp في الوقت ده/.test(String(r[1])))[2], /صرف 1,000 وجاب 1 أوردر. أكتر صرف: Camp/);
+  // لقطة الكامبينات بتتاخد مع لقطة Today: صرف كل كامبين لحد الساعة دي
+  e.c.takeIntraAds_();
+  const got = snaps.getDataRange().getValues().slice(1).filter(r => r[0] === today && r[1] !== '9:00' && r[1] !== '12:00');
+  assert.equal(got.length, 1);
+  assert.deepEqual(got[0].slice(2, 7), ['META', A1, 'C1', 'Camp', 1000]);
 });
