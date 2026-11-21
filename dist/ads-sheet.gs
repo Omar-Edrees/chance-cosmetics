@@ -11,7 +11,7 @@
  * Ad accounts and stores are read-only from here: no writes to Meta, TikTok or order sources.
  */
 const APP = {
-  VERSION: '1.63.0',
+  VERSION: '1.64.0',
   T: {
     SETTINGS: 'Settings', ACCOUNTS: 'Accounts', PRODUCTS: 'Products', ADMAP: 'Ad Map',
     ADS: 'Ads Raw', ACC_RAW: 'Account Raw', ORDERS: 'Orders Raw', DAILY: 'Daily Log',
@@ -2996,13 +2996,13 @@ function orderStatusAt_() {
 /* ======== 20_today.gs ======== */
 /*
  * Today tab = Daily Ad Closing, same shape as House of Beauty's Daily Closing, without the 14% add-on.
- * Left (A:F): one row per ad account, platform totals, grand total. Account rows = platform numbers
- * (Meta / TikTok purchases), total rows = store orders by UTM. ROAS = sales ÷ spend.
- * Right (H:P): 3-hour snapshots, Meta benchmark vs today, product performance today and this month.
+ * Left (A:G): one row per ad account, platform totals, grand total. Account rows = platform numbers
+ * (Meta / TikTok purchases), total rows = store orders by UTM. ROAS = sales ÷ spend, AOV = sales ÷ orders.
+ * Right (I:Q): 3-hour snapshots, Meta benchmark vs today, product performance today and this month.
  * The tab is redrawn from scratch on every update; nothing is typed in it by hand.
  */
 const TODAY = {
-  GAP_COL: 7, RIGHT_COL: 8, WIDTH: 16,
+  GAP_COL: 8, RIGHT_COL: 9, WIDTH: 17,
   DARK: '#1f2937', YELLOW: '#fff200', META: '#1d4ed8', TIKTOK: '#111111', META_TOTAL: '#dbe8fb', TT_TOTAL: '#e0e0e0',
   GRAND: '#00ff00', LABEL: '#f3f4f6', METRIC: '#e8f0fe', AVG: '#e8eefc', SPECIAL: '#fde8e8', TOTAL: '#e8eefc',
   GREEN: '#d9ead3', RED: '#f4cccc', OTHER: '#f3f4f6', CATALOG: '#fff2cc',
@@ -3167,8 +3167,8 @@ function todayAccounts_(today) {
 function todayClosing_(g, today, sum, rows, gap) {
   const S = TODAY, pixel = cfgStr_('orders.method') === 'pixel';
   g.set(1, 1, (cfgStr_('business.name') || 'ADS').toUpperCase() + ' — DAILY AD CLOSING', { bg: S.DARK, fc: '#ffffff', b: 'bold', al: 'center' });
-  g.fill(1, 2, 5, { bg: S.DARK });
-  g.merge(1, 1, 1, 6);
+  g.fill(1, 2, 6, { bg: S.DARK });
+  g.merge(1, 1, 1, 7);
   const p = today.split('-').map(Number), shown = Utilities.formatDate(new Date(Date.UTC(p[0], p[1] - 1, p[2], 12)), 'UTC', 'dd-MMM-yyyy');
   [['Closing Date', shown], ['Status', 'LIVE — بيتحدث لوحده (نسخة الكود ' + APP.VERSION + ')'], ['Last Update', nowText_()],
     ['Orders Source', pixel ? '⚠️ مشتريات البيكسل (مش أوردرات حقيقية)' : 'Shopify (UTM)']].forEach((x, i) => {
@@ -3178,7 +3178,8 @@ function todayClosing_(g, today, sum, rows, gap) {
   g.live = [[5, 2]]; // Last Update: written every time, even when nothing else changed
   const totalNote = '(ACCOUNT: PLATFORM / TOTAL: SHOPIFY)';
   let r = 8 + (gap || 0); // gap: rows kept for the cards under the heading (30_shopify_tab.gs)
-  ['PLATFORM', 'AD ACCOUNT NAME', 'AMOUNT SPENT', 'ORDERS ' + totalNote, 'CPP ' + totalNote, 'ROAS (ACCOUNT: META ROAS / TOTAL: SHOPIFY ROAS)']
+  ['PLATFORM', 'AD ACCOUNT NAME', 'AMOUNT SPENT', 'ORDERS ' + totalNote, 'CPP ' + totalNote, 'ROAS (ACCOUNT: META ROAS / TOTAL: SHOPIFY ROAS)',
+    'AOV (ACCOUNT: META / TOTAL: SHOPIFY)']
     .forEach((h, i) => g.set(r, 1 + i, h, { bg: S.YELLOW, b: 'bold', al: 'center' }));
   r++;
   const accs = todayAccounts_(today);
@@ -3188,6 +3189,7 @@ function todayClosing_(g, today, sum, rows, gap) {
     g.set(row, 4, orders, Object.assign({ nf: S.COUNT, al: 'right' }, style));
     g.set(row, 5, ratioOrBlank_(spend, orders, 2), Object.assign({ nf: S.MONEY, al: 'right' }, style, style.bg ? {} : { bg: S.METRIC }));
     g.set(row, 6, hasValue ? ratioOrBlank_(value, spend, 2) : '', Object.assign({ nf: S.RATIO, al: 'right' }, style, style.bg ? {} : { bg: S.METRIC }));
+    g.set(row, 7, hasValue ? ratioOrBlank_(value, orders, 2) : '', Object.assign({ nf: S.MONEY, al: 'right' }, style, style.bg ? {} : { bg: S.METRIC }));
   };
   const platform = (label, color, list, totalLabel, totalStyle, key, plus) => {
     const first = r, items = list.length ? list : [{ name: '', spend: 0, orders: 0, value: 0 }];
@@ -3213,7 +3215,7 @@ function todayClosing_(g, today, sum, rows, gap) {
   [[APP.META_OUT, 'META (حساب مش معانا)', 'مش داخل في التوتال: ' + outNames],
     [APP.MANUAL, 'MANUAL (DRAFT)', 'أوردرات يدوي'], [APP.BIO, 'ORGANIC (BIO)', 'لينك البايو: أورجانيك أكيد'],
     [APP.UNKNOWN_PLATFORM, 'NO SOURCE', 'من غير بيانات مصدر']].forEach(x => {
-    const t = sum.byPlatform[x[0]] || { orders: 0 };
+    const t = sum.byPlatform[x[0]] || { orders: 0, revenue: 0 };
     if ((x[0] === APP.UNKNOWN_PLATFORM || x[0] === APP.META_OUT) && !t.orders) return;
     const style = { bg: S.OTHER };
     g.set(r, 1, x[1], { bg: S.OTHER, b: 'bold' });
@@ -3221,6 +3223,7 @@ function todayClosing_(g, today, sum, rows, gap) {
     g.set(r, 3, '', style);
     g.set(r, 4, t.orders, Object.assign({ nf: S.COUNT, al: 'right' }, style));
     g.set(r, 5, '', style); g.set(r, 6, '', style);
+    g.set(r, 7, ratioOrBlank_(t.revenue || 0, t.orders, 2), Object.assign({ nf: S.MONEY, al: 'right' }, style));
     r++;
   });
   const grand = { bg: S.GRAND, b: 'bold' };
@@ -3376,10 +3379,10 @@ function writeToday_() {
   try { todayStockGroups_(sh, g); } catch (e) { console.error('today groups: ' + errText_(e)); }
   if (!drew) return;
   sh.setFrozenRows(0);
-  [[1, 150], [2, 210], [3, 120], [4, 130], [5, 130], [6, 130], [7, 24], [8, 300], [9, 260]].forEach(w => sh.setColumnWidth(w[0], w[1]));
-  for (let col = 10; col <= TODAY.WIDTH; col++) sh.setColumnWidth(col, 125);
-  sh.getRange(8 + gap, 1, 1, 6).setWrap(true);
-  sh.getRange(1, 1, 6, 8).setFontSize(10); // the cards were cells here before (1.45): back to normal
+  [[1, 150], [2, 210], [3, 120], [4, 130], [5, 130], [6, 130], [7, 130], [8, 24], [9, 300], [10, 260]].forEach(w => sh.setColumnWidth(w[0], w[1]));
+  for (let col = 11; col <= TODAY.WIDTH; col++) sh.setColumnWidth(col, 125);
+  sh.getRange(8 + gap, 1, 1, 7).setWrap(true);
+  sh.getRange(1, 1, 6, 9).setFontSize(10); // the cards were cells here before (1.45): back to normal
   [2, 3].forEach(row => sh.setRowHeight(row, 21));
   if (cards) { todayCardModeRule_(sh); todayCardCharts_(sh, view); }
 }
@@ -3948,7 +3951,7 @@ function lowVariants_(orderIds) {
 
 /*
  * Today: the colors under each product in the stock table are a row group, with its + / − on the product's row. Groups cover
- * whole rows, so the tables on the right (columns G on) leave those rows empty (todayMakeRoom_) and nothing else hides.
+ * whole rows, so the tables on the right (the gap column on) leave those rows empty (todayMakeRoom_) and nothing else hides.
  * Today is drawn in place, so when the colors' rows moved the old groups are taken off and made again, closed, and the ones
  * that were open (by product) opened again. The same when the groups on the sheet aren't what was drawn last time.
  */
@@ -3985,8 +3988,8 @@ function todayStockGroups_(sh, g) {
 }
 
 /*
- * The rows of the color groups hide whole rows: the cells on the right of the page (column G on) that land on those rows
- * go down past them, with their merges and live cells. The left side (A:F) stays as drawn.
+ * The rows of the color groups hide whole rows: the cells on the right of the page (TODAY.GAP_COL on) that land on those rows
+ * go down past them, with their merges and live cells. The left side stays as drawn.
  */
 function todayMakeRoom_(g) {
   const skip = new Set();
@@ -3995,11 +3998,11 @@ function todayMakeRoom_(g) {
   const map = [], R = g.rows.length;
   for (let r = 1, p = 1; r <= R; r++, p++) { while (skip.has(p)) p++; map[r] = p; }
   const at = r => map[r] || r;
-  const right = g.rows.map(line => line.slice(6));
-  g.rows.forEach(line => { if (line.length > 6) line.length = 6; });
-  right.forEach((cells, i) => cells.forEach((cell, k) => { if (cell) { const c = g.cell(at(i + 1), 7 + k); Object.assign(c, cell); } }));
-  g.merges.forEach(m => { if (m[1] >= 7) m[0] = at(m[0]); });
-  (g.live || []).forEach(x => { if (x[1] >= 7) x[0] = at(x[0]); });
+  const L = TODAY.GAP_COL - 1, right = g.rows.map(line => line.slice(L));
+  g.rows.forEach(line => { if (line.length > L) line.length = L; });
+  right.forEach((cells, i) => cells.forEach((cell, k) => { if (cell) { const c = g.cell(at(i + 1), L + 1 + k); Object.assign(c, cell); } }));
+  g.merges.forEach(m => { if (m[1] > L) m[0] = at(m[0]); });
+  (g.live || []).forEach(x => { if (x[1] > L) x[0] = at(x[0]); });
 }
 
 /* ======== 28_closing.gs ======== */
@@ -4880,8 +4883,8 @@ function todayCardRows_() {
 function todayCardNote_(g) {
   g.set(SHOPTAB.TC_ROW, 1, '⚠️ الكروت مش ظاهرة: فعّل Google Sheets API في Apps Script (Services ← + ← Google Sheets API ← Add، والاسم Sheets)، وبعدين ⚡',
     { bg: '#fff2cc', b: 'bold' });
-  g.fill(SHOPTAB.TC_ROW, 2, 5, { bg: '#fff2cc' });
-  g.merge(SHOPTAB.TC_ROW, 1, 1, 6);
+  g.fill(SHOPTAB.TC_ROW, 2, 6, { bg: '#fff2cc' });
+  g.merge(SHOPTAB.TC_ROW, 1, 1, 7);
   return null;
 }
 /* The period the cards show, as chosen in Today (column B of row SHOPTAB.TC_MODE_ROW): 'day' or 'month'. */
@@ -4915,7 +4918,7 @@ function todayCardCells_(g) {
   g.set(S.TC_MODE_ROW, 1, 'الكروت', { bg: '#f3f4f6', b: 'bold' });
   g.set(S.TC_MODE_ROW, 2, S.MODES[mode === 'month' ? 1 : 0], { bg: '#fff2cc', b: 'bold', al: 'center' });
   g.set(S.TC_MODE_ROW, 3, view.note, { fc: S.SOFT });
-  for (let r = S.TC_ROW; r < S.TC_ROW + S.TC_ROWS; r++) g.fill(r, 1, 6, hide);
+  for (let r = S.TC_ROW; r < S.TC_ROW + S.TC_ROWS; r++) g.fill(r, 1, 7, hide);
   todayCardDefs_().forEach((d, i) => {
     const c = view.cards.find(x => x.key === d[0]), v = c ? c.values : ['', '', ''];
     g.set(S.TC_ROW + i, 1, d[1], hide);

@@ -106,7 +106,7 @@ function lowVariants_(orderIds) {
 
 /*
  * Today: the colors under each product in the stock table are a row group, with its + / − on the product's row. Groups cover
- * whole rows, so the tables on the right (columns G on) leave those rows empty (todayMakeRoom_) and nothing else hides.
+ * whole rows, so the tables on the right (the gap column on) leave those rows empty (todayMakeRoom_) and nothing else hides.
  * Today is drawn in place, so when the colors' rows moved the old groups are taken off and made again, closed, and the ones
  * that were open (by product) opened again. The same when the groups on the sheet aren't what was drawn last time.
  */
@@ -143,8 +143,8 @@ function todayStockGroups_(sh, g) {
 }
 
 /*
- * The rows of the color groups hide whole rows: the cells on the right of the page (column G on) that land on those rows
- * go down past them, with their merges and live cells. The left side (A:F) stays as drawn.
+ * The rows of the color groups hide whole rows: the cells on the right of the page (TODAY.GAP_COL on) that land on those rows
+ * go down past them, with their merges and live cells. The left side stays as drawn.
  */
 function todayMakeRoom_(g) {
   const skip = new Set();
@@ -153,9 +153,9 @@ function todayMakeRoom_(g) {
   const map = [], R = g.rows.length;
   for (let r = 1, p = 1; r <= R; r++, p++) { while (skip.has(p)) p++; map[r] = p; }
   const at = r => map[r] || r;
-  const right = g.rows.map(line => line.slice(6));
-  g.rows.forEach(line => { if (line.length > 6) line.length = 6; });
-  right.forEach((cells, i) => cells.forEach((cell, k) => { if (cell) { const c = g.cell(at(i + 1), 7 + k); Object.assign(c, cell); } }));
-  g.merges.forEach(m => { if (m[1] >= 7) m[0] = at(m[0]); });
-  (g.live || []).forEach(x => { if (x[1] >= 7) x[0] = at(x[0]); });
+  const L = TODAY.GAP_COL - 1, right = g.rows.map(line => line.slice(L));
+  g.rows.forEach(line => { if (line.length > L) line.length = L; });
+  right.forEach((cells, i) => cells.forEach((cell, k) => { if (cell) { const c = g.cell(at(i + 1), L + 1 + k); Object.assign(c, cell); } }));
+  g.merges.forEach(m => { if (m[1] > L) m[0] = at(m[0]); });
+  (g.live || []).forEach(x => { if (x[1] > L) x[0] = at(x[0]); });
 }

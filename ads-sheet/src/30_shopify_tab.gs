@@ -415,8 +415,8 @@ function todayCardRows_() {
 function todayCardNote_(g) {
   g.set(SHOPTAB.TC_ROW, 1, '⚠️ الكروت مش ظاهرة: فعّل Google Sheets API في Apps Script (Services ← + ← Google Sheets API ← Add، والاسم Sheets)، وبعدين ⚡',
     { bg: '#fff2cc', b: 'bold' });
-  g.fill(SHOPTAB.TC_ROW, 2, 5, { bg: '#fff2cc' });
-  g.merge(SHOPTAB.TC_ROW, 1, 1, 6);
+  g.fill(SHOPTAB.TC_ROW, 2, 6, { bg: '#fff2cc' });
+  g.merge(SHOPTAB.TC_ROW, 1, 1, 7);
   return null;
 }
 /* The period the cards show, as chosen in Today (column B of row SHOPTAB.TC_MODE_ROW): 'day' or 'month'. */
@@ -450,7 +450,7 @@ function todayCardCells_(g) {
   g.set(S.TC_MODE_ROW, 1, 'الكروت', { bg: '#f3f4f6', b: 'bold' });
   g.set(S.TC_MODE_ROW, 2, S.MODES[mode === 'month' ? 1 : 0], { bg: '#fff2cc', b: 'bold', al: 'center' });
   g.set(S.TC_MODE_ROW, 3, view.note, { fc: S.SOFT });
-  for (let r = S.TC_ROW; r < S.TC_ROW + S.TC_ROWS; r++) g.fill(r, 1, 6, hide);
+  for (let r = S.TC_ROW; r < S.TC_ROW + S.TC_ROWS; r++) g.fill(r, 1, 7, hide);
   todayCardDefs_().forEach((d, i) => {
     const c = view.cards.find(x => x.key === d[0]), v = c ? c.values : ['', '', ''];
     g.set(S.TC_ROW + i, 1, d[1], hide);

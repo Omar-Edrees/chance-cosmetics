@@ -1,12 +1,12 @@
 /*
  * Today tab = Daily Ad Closing, same shape as House of Beauty's Daily Closing, without the 14% add-on.
- * Left (A:F): one row per ad account, platform totals, grand total. Account rows = platform numbers
- * (Meta / TikTok purchases), total rows = store orders by UTM. ROAS = sales ÷ spend.
- * Right (H:P): 3-hour snapshots, Meta benchmark vs today, product performance today and this month.
+ * Left (A:G): one row per ad account, platform totals, grand total. Account rows = platform numbers
+ * (Meta / TikTok purchases), total rows = store orders by UTM. ROAS = sales ÷ spend, AOV = sales ÷ orders.
+ * Right (I:Q): 3-hour snapshots, Meta benchmark vs today, product performance today and this month.
  * The tab is redrawn from scratch on every update; nothing is typed in it by hand.
  */
 const TODAY = {
-  GAP_COL: 7, RIGHT_COL: 8, WIDTH: 16,
+  GAP_COL: 8, RIGHT_COL: 9, WIDTH: 17,
   DARK: '#1f2937', YELLOW: '#fff200', META: '#1d4ed8', TIKTOK: '#111111', META_TOTAL: '#dbe8fb', TT_TOTAL: '#e0e0e0',
   GRAND: '#00ff00', LABEL: '#f3f4f6', METRIC: '#e8f0fe', AVG: '#e8eefc', SPECIAL: '#fde8e8', TOTAL: '#e8eefc',
   GREEN: '#d9ead3', RED: '#f4cccc', OTHER: '#f3f4f6', CATALOG: '#fff2cc',
@@ -171,8 +171,8 @@ function todayAccounts_(today) {
 function todayClosing_(g, today, sum, rows, gap) {
   const S = TODAY, pixel = cfgStr_('orders.method') === 'pixel';
   g.set(1, 1, (cfgStr_('business.name') || 'ADS').toUpperCase() + ' — DAILY AD CLOSING', { bg: S.DARK, fc: '#ffffff', b: 'bold', al: 'center' });
-  g.fill(1, 2, 5, { bg: S.DARK });
-  g.merge(1, 1, 1, 6);
+  g.fill(1, 2, 6, { bg: S.DARK });
+  g.merge(1, 1, 1, 7);
   const p = today.split('-').map(Number), shown = Utilities.formatDate(new Date(Date.UTC(p[0], p[1] - 1, p[2], 12)), 'UTC', 'dd-MMM-yyyy');
   [['Closing Date', shown], ['Status', 'LIVE — بيتحدث لوحده (نسخة الكود ' + APP.VERSION + ')'], ['Last Update', nowText_()],
     ['Orders Source', pixel ? '⚠️ مشتريات البيكسل (مش أوردرات حقيقية)' : 'Shopify (UTM)']].forEach((x, i) => {
@@ -182,7 +182,8 @@ function todayClosing_(g, today, sum, rows, gap) {
   g.live = [[5, 2]]; // Last Update: written every time, even when nothing else changed
   const totalNote = '(ACCOUNT: PLATFORM / TOTAL: SHOPIFY)';
   let r = 8 + (gap || 0); // gap: rows kept for the cards under the heading (30_shopify_tab.gs)
-  ['PLATFORM', 'AD ACCOUNT NAME', 'AMOUNT SPENT', 'ORDERS ' + totalNote, 'CPP ' + totalNote, 'ROAS (ACCOUNT: META ROAS / TOTAL: SHOPIFY ROAS)']
+  ['PLATFORM', 'AD ACCOUNT NAME', 'AMOUNT SPENT', 'ORDERS ' + totalNote, 'CPP ' + totalNote, 'ROAS (ACCOUNT: META ROAS / TOTAL: SHOPIFY ROAS)',
+    'AOV (ACCOUNT: META / TOTAL: SHOPIFY)']
     .forEach((h, i) => g.set(r, 1 + i, h, { bg: S.YELLOW, b: 'bold', al: 'center' }));
   r++;
   const accs = todayAccounts_(today);
@@ -192,6 +193,7 @@ function todayClosing_(g, today, sum, rows, gap) {
     g.set(row, 4, orders, Object.assign({ nf: S.COUNT, al: 'right' }, style));
     g.set(row, 5, ratioOrBlank_(spend, orders, 2), Object.assign({ nf: S.MONEY, al: 'right' }, style, style.bg ? {} : { bg: S.METRIC }));
     g.set(row, 6, hasValue ? ratioOrBlank_(value, spend, 2) : '', Object.assign({ nf: S.RATIO, al: 'right' }, style, style.bg ? {} : { bg: S.METRIC }));
+    g.set(row, 7, hasValue ? ratioOrBlank_(value, orders, 2) : '', Object.assign({ nf: S.MONEY, al: 'right' }, style, style.bg ? {} : { bg: S.METRIC }));
   };
   const platform = (label, color, list, totalLabel, totalStyle, key, plus) => {
     const first = r, items = list.length ? list : [{ name: '', spend: 0, orders: 0, value: 0 }];
@@ -217,7 +219,7 @@ function todayClosing_(g, today, sum, rows, gap) {
   [[APP.META_OUT, 'META (حساب مش معانا)', 'مش داخل في التوتال: ' + outNames],
     [APP.MANUAL, 'MANUAL (DRAFT)', 'أوردرات يدوي'], [APP.BIO, 'ORGANIC (BIO)', 'لينك البايو: أورجانيك أكيد'],
     [APP.UNKNOWN_PLATFORM, 'NO SOURCE', 'من غير بيانات مصدر']].forEach(x => {
-    const t = sum.byPlatform[x[0]] || { orders: 0 };
+    const t = sum.byPlatform[x[0]] || { orders: 0, revenue: 0 };
     if ((x[0] === APP.UNKNOWN_PLATFORM || x[0] === APP.META_OUT) && !t.orders) return;
     const style = { bg: S.OTHER };
     g.set(r, 1, x[1], { bg: S.OTHER, b: 'bold' });
@@ -225,6 +227,7 @@ function todayClosing_(g, today, sum, rows, gap) {
     g.set(r, 3, '', style);
     g.set(r, 4, t.orders, Object.assign({ nf: S.COUNT, al: 'right' }, style));
     g.set(r, 5, '', style); g.set(r, 6, '', style);
+    g.set(r, 7, ratioOrBlank_(t.revenue || 0, t.orders, 2), Object.assign({ nf: S.MONEY, al: 'right' }, style));
     r++;
   });
   const grand = { bg: S.GRAND, b: 'bold' };
@@ -380,10 +383,10 @@ function writeToday_() {
   try { todayStockGroups_(sh, g); } catch (e) { console.error('today groups: ' + errText_(e)); }
   if (!drew) return;
   sh.setFrozenRows(0);
-  [[1, 150], [2, 210], [3, 120], [4, 130], [5, 130], [6, 130], [7, 24], [8, 300], [9, 260]].forEach(w => sh.setColumnWidth(w[0], w[1]));
-  for (let col = 10; col <= TODAY.WIDTH; col++) sh.setColumnWidth(col, 125);
-  sh.getRange(8 + gap, 1, 1, 6).setWrap(true);
-  sh.getRange(1, 1, 6, 8).setFontSize(10); // the cards were cells here before (1.45): back to normal
+  [[1, 150], [2, 210], [3, 120], [4, 130], [5, 130], [6, 130], [7, 130], [8, 24], [9, 300], [10, 260]].forEach(w => sh.setColumnWidth(w[0], w[1]));
+  for (let col = 11; col <= TODAY.WIDTH; col++) sh.setColumnWidth(col, 125);
+  sh.getRange(8 + gap, 1, 1, 7).setWrap(true);
+  sh.getRange(1, 1, 6, 9).setFontSize(10); // the cards were cells here before (1.45): back to normal
   [2, 3].forEach(row => sh.setRowHeight(row, 21));
   if (cards) { todayCardModeRule_(sh); todayCardCharts_(sh, view); }
 }

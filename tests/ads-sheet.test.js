@@ -202,20 +202,22 @@ function todayRow(e, label, col) {
 test('Today: صف لكل حساب بأرقام المنصة، والإجماليات من أوردرات الموقع، ومن غير 14%', () => {
   const e = scenario(), tab = e.ss.getSheetByName('Today');
   assert.match(String(tab.getRange(1, 1).getValue()), /CHANCE COSMETICS — DAILY AD CLOSING/);
-  assert.deepEqual(tab.getRange(8, 1, 1, 6).getValues()[0].map(h => String(h).split(' ')[0]),
-    ['PLATFORM', 'AD', 'AMOUNT', 'ORDERS', 'CPP', 'ROAS']);
-  const all = tab.getDataRange().getValues().map(r => r.slice(0, 6));
+  assert.deepEqual(tab.getRange(8, 1, 1, 7).getValues()[0].map(h => String(h).split(' ')[0]),
+    ['PLATFORM', 'AD', 'AMOUNT', 'ORDERS', 'CPP', 'ROAS', 'AOV']);
+  const all = tab.getDataRange().getValues().map(r => r.slice(0, 7));
   assert.ok(!all.flat().some(v => /14%|ضريبة/.test(String(v))), 'مفيش 14% في الجدول');
   const acc1 = all.find(r => r[1] === 'Chance 26'), acc2 = all.find(r => r[1] === 'Chance Golden Era'), acc3 = all.find(r => r[1] === 'chance store . egy3');
-  assert.deepEqual(acc1.slice(2), [1000, 4, 250, 1.8]);
-  assert.deepEqual(acc2.slice(2), [100, 2, 50, 9]);
-  assert.deepEqual(acc3.slice(2), [0, 0, '', '']);
+  // AOV للحساب من Meta (قيمة المشتريات ÷ المشتريات)، وللتوتال من شوبيفاي (المبيعات ÷ الأوردرات)
+  assert.deepEqual(acc1.slice(2), [1000, 4, 250, 1.8, 450]);
+  assert.deepEqual(acc2.slice(2), [100, 2, 50, 9, 450]);
+  assert.deepEqual(acc3.slice(2), [0, 0, '', '', '']);
   assert.equal(all[8][0], 'META');
   const meta = all.find(r => r[0] === 'META TOTAL'), tt = all.find(r => r[0] === 'TIKTOK TOTAL'), grand = all.find(r => r[0] === 'GRAND TOTAL');
-  assert.deepEqual(meta.slice(2), [1100, 2, 550, 0.95]);
-  assert.deepEqual(tt.slice(2), [0, 1, 0, '']);
-  assert.deepEqual(grand.slice(2), [1100, 3, 366.67, 1.18]);
-  assert.ok(all.some(r => r[0] === 'TIKTOK' && r[1] === 'TikTok'));
+  assert.deepEqual(meta.slice(2), [1100, 2, 550, 0.95, 525]);
+  assert.deepEqual(tt.slice(2), [0, 1, 0, '', 250]);
+  assert.deepEqual(grand.slice(2), [1100, 3, 366.67, 1.18, 433.33]);
+  assert.ok(all.some(r => r[0] === 'TIKTOK' && r[1] === 'TikTok' && r[6] === ''), 'TikTok مفيهوش قيمة مشتريات: AOV فاضي');
+  assert.equal(tab.getDataRange().getValues().find(r => r[8] === 'TIME') !== undefined, true, 'الجداول اللي على اليمين بتبدأ من عمود I');
   assert.match(String(e.c.getStatus_('LIVE')), /✓ OK/);
 });
 
@@ -230,15 +232,15 @@ test('Today: لقطات الـ 3 ساعات من تاب Intraday، مع CPP و S
   e.ss.getSheetByName('Intraday').appendRow([e.today, '15:00', 'الإجمالي', 500, 3, 166.67, 1250]);
   e.c.writeToday_();
   const values = e.ss.getSheetByName('Today').getDataRange().getValues();
-  const head = values.find(r => r[7] === 'TIME');
-  assert.deepEqual(head.slice(7, 16), ['TIME', 'META SPEND', 'ORDERS (META + DIRECT)', 'CPP (META + DIRECT)', 'SHOPIFY ROAS (META + DIRECT)', 'TIKTOK SPEND', 'TIKTOK ORDERS', 'TIKTOK CPP', 'SHOPIFY ROAS (TIKTOK)']);
-  assert.deepEqual(values.filter(r => /^\d+:00 [AP]M$/.test(r[7])).map(r => r[7]), ['3:00 AM', '6:00 AM', '9:00 AM', '12:00 PM', '3:00 PM', '6:00 PM', '9:00 PM', '12:00 AM'], 'كل 3 ساعات على مدار اليوم');
-  assert.deepEqual(todayRow(e, '3:00 PM', 8).slice(7, 16), ['3:00 PM', 500, 3, 166.67, 2.5, 0, 0, '', '']);
-  assert.deepEqual(todayRow(e, '6:00 PM', 8).slice(8, 16), ['', '', '', '', '', '', '', '']);
+  const head = values.find(r => r[8] === 'TIME');
+  assert.deepEqual(head.slice(8, 17), ['TIME', 'META SPEND', 'ORDERS (META + DIRECT)', 'CPP (META + DIRECT)', 'SHOPIFY ROAS (META + DIRECT)', 'TIKTOK SPEND', 'TIKTOK ORDERS', 'TIKTOK CPP', 'SHOPIFY ROAS (TIKTOK)']);
+  assert.deepEqual(values.filter(r => /^\d+:00 [AP]M$/.test(r[8])).map(r => r[8]), ['3:00 AM', '6:00 AM', '9:00 AM', '12:00 PM', '3:00 PM', '6:00 PM', '9:00 PM', '12:00 AM'], 'كل 3 ساعات على مدار اليوم');
+  assert.deepEqual(todayRow(e, '3:00 PM', 9).slice(8, 17), ['3:00 PM', 500, 3, 166.67, 2.5, 0, 0, '', '']);
+  assert.deepEqual(todayRow(e, '6:00 PM', 9).slice(9, 17), ['', '', '', '', '', '', '', '']);
   // صفوف قديمة: الشيت كان بيحوّل "18:00" لوقت (تاريخ 1899)، وبتتقري برضه
   e.ss.getSheetByName('Intraday').appendRow([e.today, e.c.makeDate('1899-12-30T18:00:00+02:00'), 'META', 800, 4, 200, 2400]);
   e.c.writeToday_();
-  assert.deepEqual(todayRow(e, '6:00 PM', 8).slice(7, 12), ['6:00 PM', 800, 4, 200, 3]);
+  assert.deepEqual(todayRow(e, '6:00 PM', 9).slice(8, 13), ['6:00 PM', 800, 4, 200, 3]);
 });
 
 test('Today: بنشمارك Meta، أرقام التلات شهور اللي فاتوا مع بعض مقابل كل حساب النهارده، بترتيب الفانل', () => {
@@ -250,14 +252,14 @@ test('Today: بنشمارك Meta، أرقام التلات شهور اللي ف�
   e.c.setupAll();
   e.c.liveTick();
   const values = e.ss.getSheetByName('Today').getDataRange().getValues();
-  const head = values.find(r => r[7] === 'METRIC');
+  const head = values.find(r => r[8] === 'METRIC');
   const mon = i => e.c.Utilities.formatDate(new Date(Date.UTC(p[0], p[1] - 1 - i, 15)), 'UTC', 'MMM-yyyy');
-  assert.deepEqual(head.slice(7, 12), ['METRIC', 'LAST 3 MONTHS (' + mon(3) + ' → ' + mon(1) + ')', 'Chance 26', 'Chance Golden Era', 'chance store . egy3']);
-  const metrics = values.map(r => r[7]), first = metrics.indexOf('METRIC') + 1;
+  assert.deepEqual(head.slice(8, 13), ['METRIC', 'LAST 3 MONTHS (' + mon(3) + ' → ' + mon(1) + ')', 'Chance 26', 'Chance Golden Era', 'chance store . egy3']);
+  const metrics = values.map(r => r[8]), first = metrics.indexOf('METRIC') + 1;
   assert.deepEqual(metrics.slice(first, first + 18), ['Meta ROAS', 'AOV', 'CVR', 'CPM', 'CPC (all)', 'CPC (link)', 'CTR (all)', 'CTR (link)',
     'Hook rate', 'Hold rate', 'Cost per content view', 'Link click → LPV', 'Cost per LPV', 'Content view → ATC', 'ATC → Checkout',
     'Checkout → Purchase', 'LPV → Purchase', '']);
-  const row = l => values.find(r => r[7] === l).slice(7, 12);
+  const row = l => values.find(r => r[8] === l).slice(8, 13);
   // التلات شهور مع بعض: صرف 1000 ÷ 3000 ظهور = CPM 333.33 (من غير الشهر الرابع، 50)؛ والنهارده 600 أسوأ
   assert.deepEqual(row('CPM'), ['CPM', 1000 / 3, 600, '—', '—']);
   assert.deepEqual(row('AOV'), ['AOV', '—', 450, '—', '—']);
@@ -267,8 +269,8 @@ test('Today: بنشمارك Meta، أرقام التلات شهور اللي ف�
   const t = e.requests.filter(u => /time_increment=monthly/.test(u) && /level=account/.test(u) && /video_thruplay/.test(u))
     .map(u => JSON.parse(decodeURIComponent(u.match(/time_range=([^&]+)/)[1])));
   assert.ok(t.some(x => x.since === day(3).slice(0, 8) + '01' && x.until === e.c.shiftKey_(today.slice(0, 8) + '01', -1)), 'التلات شهور اللي قبل الشهر ده');
-  const cpm = values.find(r => r[7] === 'CPM');
-  assert.equal(e.ss.getSheetByName('Today').attr(values.indexOf(cpm) + 1, 10).bg, '#f4cccc');
+  const cpm = values.find(r => r[8] === 'CPM');
+  assert.equal(e.ss.getSheetByName('Today').attr(values.indexOf(cpm) + 1, 11).bg, '#f4cccc');
   // Hook و Hold من الفيديو: 3 ثواني ÷ الظهور، و ThruPlay ÷ 3 ثواني
   const raw = e.c.funnelRaw_([{ impressions: '1000', actions: [{ action_type: 'video_view', value: '300' }], video_thruplay_watched_actions: [{ action_type: 'video_view', value: '60' }] }]);
   assert.deepEqual([raw.videoViews, raw.thruplays], [300, 60]);
@@ -281,14 +283,14 @@ test('Today: بنشمارك Meta، أرقام التلات شهور اللي ف�
 
 test('Today: أداء المنتجات بالقطع والمبيعات لكل منتج، والإجمالي فيه القطع والأوردرات والصرف و AOV و ROAS', () => {
   const e = scenario(), values = e.ss.getSheetByName('Today').getDataRange().getValues();
-  const titles = values.map(r => String(r[7])).filter(t => /^PRODUCT PERFORMANCE/.test(t));
+  const titles = values.map(r => String(r[8])).filter(t => /^PRODUCT PERFORMANCE/.test(t));
   assert.equal(titles.length, 2);
-  const heads = values.filter(r => r[7] === 'PRODUCT');
+  const heads = values.filter(r => r[8] === 'PRODUCT');
   assert.equal(heads.length, 2);
-  heads.forEach(h => assert.deepEqual(h.slice(7, 15), ['PRODUCT', 'PIECES', 'ORDERS', 'REVENUE', 'SPEND', 'AOV', 'SHOPIFY ROAS', '']));
+  heads.forEach(h => assert.deepEqual(h.slice(8, 16), ['PRODUCT', 'PIECES', 'ORDERS', 'REVENUE', 'SPEND', 'AOV', 'SHOPIFY ROAS', '']));
   // كل قطعة على منتجها، ومبيعات الأوردر 1001 (750) متقسمة بسعر Lip Oil (300) و Blush (250). أوردر TikTok داخل.
-  const i = values.findIndex(r => r[7] === 'PRODUCT');
-  assert.deepEqual(values.slice(i + 1, i + 4).map(r => r.slice(7, 14)), [
+  const i = values.findIndex(r => r[8] === 'PRODUCT');
+  assert.deepEqual(values.slice(i + 1, i + 4).map(r => r.slice(8, 15)), [
     ['Lip Oil', 3, '', 829.41, '', '', ''],
     ['Blush', 2, '', 470.59, '', '', ''],
     ['TOTAL', 5, 3, 1300, 1100, 433.33, 1.18],
@@ -554,7 +556,7 @@ test('الكتالوج: Today فيه صف CATALOG واحد بصرفه وأورد
   const between = (v, col, from, to) => { const i = v.findIndex(r => r[col] === from); return v.slice(i + 1, v.findIndex((r, j) => j > i && r[col] === to) + 1); };
   const v = e.ss.getSheetByName('Today').getDataRange().getValues();
   // Today: قطع أوردرات الكتالوج كلها في صف واحد، والباقي كل قطعة على منتجها (Blush مالوش سعر: المبيعات بالقطع)
-  assert.deepEqual(between(v, 7, 'PRODUCT', 'TOTAL').map(r => r.slice(7, 14)), [
+  assert.deepEqual(between(v, 8, 'PRODUCT', 'TOTAL').map(r => r.slice(8, 15)), [
     ['CATALOG (كل إعلانات الكتالوج)', 1, '', 250, '', '', ''],
     ['Blush', 2, '', 200, '', '', ''],
     ['Lip Oil', 1, '', 100, '', '', ''],
@@ -677,9 +679,9 @@ test('أوردرات من حساب Meta مش معانا: صف لوحدها بر�
   assert.deepEqual(row('META TOTAL').slice(2, 4), [600, 2], 'META TOTAL من غير أوردر الحساب التاني');
   assert.deepEqual(row('META (حساب مش معانا)').slice(1, 4), ['مش داخل في التوتال: Marshmallow', '', 1]);
   assert.equal(row('GRAND TOTAL')[3], 2, 'أوردرات الحساب التاني برا GRAND TOTAL');
-  const i = v.findIndex(r => r[7] === 'PRODUCT');
+  const i = v.findIndex(r => r[8] === 'PRODUCT');
   // أوردر 2 جه من إعلان Lip Oil ومافيهوش Lip Oil: كل قطعة على منتجها
-  assert.deepEqual(v.slice(i + 1, i + 6).map(r => r.slice(7, 14)), [
+  assert.deepEqual(v.slice(i + 1, i + 6).map(r => r.slice(8, 15)), [
     ['Blush', 2, '', 360, '', '', ''], ['Mascara', 2, '', 360, '', '', ''], ['Lip Oil', 1, '', 300, '', '', ''],
     ['Primer', 1, '', 180, '', '', ''], ['TOTAL', 6, 2, 1200, 600, 600, 2]]);
   const t = e.ss.getSheetByName('الكتالوج').getDataRange().getValues(), j = t.findIndex(r => r[7] === 'CAMPAIGN');
@@ -945,8 +947,8 @@ test('PRODUCT PERFORMANCE: أوردرات DIRECT والمانيول (Draft) دا
       flow(4, [B, B, B, B], 'Blush x2').slice(0, 16).concat(['shopify_draft_order'])] });
   e.c.setupAll();
   e.c.liveTick(); e.c.liveTick();
-  const v = e.ss.getSheetByName('Today').getDataRange().getValues(), i = v.findIndex(r => /^PRODUCT PERFORMANCE — TODAY/.test(String(r[7])));
-  assert.deepEqual(v.slice(i + 2, i + 5).map(r => r.slice(7, 14)), [
+  const v = e.ss.getSheetByName('Today').getDataRange().getValues(), i = v.findIndex(r => /^PRODUCT PERFORMANCE — TODAY/.test(String(r[8])));
+  assert.deepEqual(v.slice(i + 2, i + 5).map(r => r.slice(8, 15)), [
     ['Blush', 3, '', 1000, '', '', ''], ['Lip Oil', 2, '', 1000, '', '', ''], ['TOTAL', 5, 4, 2000, 600, 500, 3.33]],
     'أوردر Meta + أوردر DIRECT لنفس المنتج، وأوردر Draft داخل');
   const cl = closingRow(e.ss.getSheetByName('Closing'), dayLabel(e.c, today));
