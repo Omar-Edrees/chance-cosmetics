@@ -186,7 +186,13 @@ function todayClosing_(g, today, sum, rows, gap) {
     'AOV (ACCOUNT: META / TOTAL: SHOPIFY)']
     .forEach((h, i) => g.set(r, 1 + i, h, { bg: S.YELLOW, b: 'bold', al: 'center' }));
   r++;
-  const accs = todayAccounts_(today);
+  const accs = todayAccounts_(today), net = todayNetSales_(today);
+  // AOV of the total rows like Shopify's: the products after their discounts, without shipping (Net Sales), ÷ the orders
+  // that have it (an order not read yet waits for the next update).
+  const netAov = keys => {
+    const t = keys.filter(Boolean).reduce((a, k) => { const x = net.by[k] || { net: 0, n: 0 }; return { net: a.net + x.net, n: a.n + x.n }; }, { net: 0, n: 0 });
+    return ratioOrBlank_(t.net, t.n, 2);
+  };
   const line = (row, name, spend, orders, value, style, hasValue) => {
     g.set(row, 2, name, style);
     g.set(row, 3, Math.round(spend * 100) / 100, Object.assign({ nf: S.MONEY, al: 'right' }, style));
@@ -205,6 +211,7 @@ function todayClosing_(g, today, sum, rows, gap) {
     if (add) { t.orders += add.orders; t.revenue += add.revenue; } // orders with no ad (DIRECT) count with Meta's spend
     g.set(r, 1, totalLabel, totalStyle);
     line(r, add && add.orders ? 'شامل DIRECT (مباشر): ' + add.orders : '', t.spend, t.orders, t.revenue, totalStyle, true);
+    g.cell(r, 7).v = netAov([key, plus]);
     r++;
   };
   platform('META', S.META, accs.META, 'META TOTAL', { bg: S.META_TOTAL, b: 'bold', fc: '#1d4ed8' }, 'META', APP.DIRECT);
@@ -227,13 +234,31 @@ function todayClosing_(g, today, sum, rows, gap) {
     g.set(r, 3, '', style);
     g.set(r, 4, t.orders, Object.assign({ nf: S.COUNT, al: 'right' }, style));
     g.set(r, 5, '', style); g.set(r, 6, '', style);
-    g.set(r, 7, ratioOrBlank_(t.revenue || 0, t.orders, 2), Object.assign({ nf: S.MONEY, al: 'right' }, style));
+    g.set(r, 7, netAov([x[0]]), Object.assign({ nf: S.MONEY, al: 'right' }, style));
     r++;
   });
   const grand = { bg: S.GRAND, b: 'bold' };
   g.set(r, 1, 'GRAND TOTAL', grand);
   line(r, '', sum.total.spend, sum.total.orders, sum.total.revenue, grand, true);
+  g.cell(r, 7).v = ratioOrBlank_(net.total.net, net.total.n, 2);
   return r;
+}
+
+/*
+ * Net Sales (32_shopify_orders.gs: products after discounts, no shipping) of the day's store orders: {by: {platform: {net, n}},
+ * total: {net, n}}, n = the orders that have it. Platforms as in Daily Log; the outside account's orders (META OUT) aren't in the total.
+ */
+function todayNetSales_(day) {
+  const out = { by: {}, total: { net: 0, n: 0 } };
+  if (!ss_().getSheetByName(APP.T.ORDERS)) return out;
+  const net = grossSalesMap_(true), known = metaIdsOf_();
+  recentRows_(APP.T.ORDERS, ORDERS_HEADERS.length, 2, sortKey_, day).forEach(o => {
+    if (asKey_(o[2]) !== day || !net.has(String(o[0]))) return;
+    const k = outsideMeta_(o, known) ? APP.META_OUT : o[3], v = net.get(String(o[0])), x = out.by[k] = out.by[k] || { net: 0, n: 0 };
+    x.net += v; x.n++;
+    if (k !== APP.META_OUT) { out.total.net += v; out.total.n++; }
+  });
+  return out;
 }
 
 /* 3-hour snapshots: spend and store orders of the day so far at each hour in intraday.hours. Meta's include DIRECT. */

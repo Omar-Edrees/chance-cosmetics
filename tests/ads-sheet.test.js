@@ -213,12 +213,23 @@ test('Today: صف لكل حساب بأرقام المنصة، والإجمالي
   assert.deepEqual(acc3.slice(2), [0, 0, '', '', '']);
   assert.equal(all[8][0], 'META');
   const meta = all.find(r => r[0] === 'META TOTAL'), tt = all.find(r => r[0] === 'TIKTOK TOTAL'), grand = all.find(r => r[0] === 'GRAND TOTAL');
-  assert.deepEqual(meta.slice(2), [1100, 2, 550, 0.95, 525]);
-  assert.deepEqual(tt.slice(2), [0, 1, 0, '', 250]);
-  assert.deepEqual(grand.slice(2), [1100, 3, 366.67, 1.18, 433.33]);
+  // AOV التوتال زي شوبيفاي: Net Sales (المنتجات بعد الخصم من غير الشحن)، ولسه مااتقراش من شوبيفاي: فاضي
+  assert.deepEqual(meta.slice(2), [1100, 2, 550, 0.95, '']);
+  assert.deepEqual(tt.slice(2), [0, 1, 0, '', '']);
+  assert.deepEqual(grand.slice(2), [1100, 3, 366.67, 1.18, '']);
   assert.ok(all.some(r => r[0] === 'TIKTOK' && r[1] === 'TikTok' && r[6] === ''), 'TikTok مفيهوش قيمة مشتريات: AOV فاضي');
   assert.equal(tab.getDataRange().getValues().find(r => r[8] === 'TIME') !== undefined, true, 'الجداول اللي على اليمين بتبدأ من عمود I');
   assert.match(String(e.c.getStatus_('LIVE')), /✓ OK/);
+  // Net Sales من شوبيفاي: أوردر 1001 و 1002 (Meta) و 1003 (TikTok)، و 1004 بتاع إمبارح مش داخل
+  const H = ['Order ID', 'Created At', 'Total Price', 'Products', 'UTM Source', 'UTM Campaign', 'UTM Content', 'UTM ID', 'UTM Term', 'Attr UTM Source',
+    'Attr UTM Campaign', 'Attr UTM Content', 'Attr UTM ID', 'Attr UTM Term', 'Order Referrer', 'Source Name', 'City', 'Gross Sales', 'Net Sales', 'Variants'];
+  const so = (id, net) => { const r = H.map(() => ''); r[0] = id; r[18] = net; return r; };
+  e.ss.addSheet('Shopify Orders', [H, so('#1001', 700), so('#1002', 250), so('#1003', 200), so('#1004', 9999)]);
+  e.c.resetCaches_();
+  e.c.withLock_(() => e.c.rebuildViews_({ full: true }));
+  const v2 = tab.getDataRange().getValues().map(r => r.slice(0, 7)), aov = l => v2.find(r => r[0] === l)[6];
+  assert.deepEqual([aov('META TOTAL'), aov('TIKTOK TOTAL'), aov('GRAND TOTAL'), v2.find(r => r[1] === 'Chance 26')[6]], [475, 200, 383.33, 450],
+    'التوتال من Net Sales ÷ الأوردرات، والحساب لسه من Meta');
 });
 
 test('Today: لقطات الـ 3 ساعات من تاب Intraday، مع CPP و Shopify ROAS، وأوردرات DIRECT مع Meta', () => {
