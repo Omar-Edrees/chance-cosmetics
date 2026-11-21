@@ -241,7 +241,7 @@ test('Today: لقطات الـ 3 ساعات من تاب Intraday، مع CPP و S
   assert.deepEqual(todayRow(e, '6:00 PM', 8).slice(7, 12), ['6:00 PM', 800, 4, 200, 3]);
 });
 
-test('Today: بنشمارك Meta، أحسن شهر من التلات شهور اللي فاتوا مقابل كل حساب النهارده، بترتيب الفانل', () => {
+test('Today: بنشمارك Meta، أرقام التلات شهور اللي فاتوا مع بعض مقابل كل حساب النهارده، بترتيب الفانل', () => {
   const probe = env(), today = probe.c.todayKey_(), p = today.split('-').map(Number);
   const day = i => new Date(Date.UTC(p[0], p[1] - 1 - i, 10)).toISOString().slice(0, 10);
   // كل صف = 1000 ظهور و 2 شراية: CPM الشهر = الصرف، وتكلفة الشراية = الصرف ÷ 2
@@ -251,14 +251,15 @@ test('Today: بنشمارك Meta، أحسن شهر من التلات شهور ا
   e.c.liveTick();
   const values = e.ss.getSheetByName('Today').getDataRange().getValues();
   const head = values.find(r => r[7] === 'METRIC');
-  assert.deepEqual(head.slice(7, 12), ['METRIC', 'BEST MONTH (LAST 3 MONTHS)', 'Chance 26', 'Chance Golden Era', 'chance store . egy3']);
+  const mon = i => e.c.Utilities.formatDate(new Date(Date.UTC(p[0], p[1] - 1 - i, 15)), 'UTC', 'MMM-yyyy');
+  assert.deepEqual(head.slice(7, 12), ['METRIC', 'LAST 3 MONTHS (' + mon(3) + ' → ' + mon(1) + ')', 'Chance 26', 'Chance Golden Era', 'chance store . egy3']);
   const metrics = values.map(r => r[7]), first = metrics.indexOf('METRIC') + 1;
   assert.deepEqual(metrics.slice(first, first + 18), ['Meta ROAS', 'AOV', 'CVR', 'CPM', 'CPC (all)', 'CPC (link)', 'CTR (all)', 'CTR (link)',
     'Hook rate', 'Hold rate', 'Cost per content view', 'Link click → LPV', 'Cost per LPV', 'Content view → ATC', 'ATC → Checkout',
     'Checkout → Purchase', 'LPV → Purchase', '']);
   const row = l => values.find(r => r[7] === l).slice(7, 12);
-  // أحسن شهر: أقل CPM (200) من التلات شهور، مش الشهر الرابع (50)؛ والنهارده 600 أسوأ
-  assert.deepEqual(row('CPM'), ['CPM', 200, 600, '—', '—']);
+  // التلات شهور مع بعض: صرف 1000 ÷ 3000 ظهور = CPM 333.33 (من غير الشهر الرابع، 50)؛ والنهارده 600 أسوأ
+  assert.deepEqual(row('CPM'), ['CPM', 1000 / 3, 600, '—', '—']);
   assert.deepEqual(row('AOV'), ['AOV', '—', 450, '—', '—']);
   assert.deepEqual(row('Meta ROAS'), ['Meta ROAS', '—', 1.5, '—', '—']);
   assert.deepEqual(row('Checkout → Purchase'), ['Checkout → Purchase', '—', 2 / 3, '—', '—']);
@@ -273,8 +274,9 @@ test('Today: بنشمارك Meta، أحسن شهر من التلات شهور ا
   assert.deepEqual([raw.videoViews, raw.thruplays], [300, 60]);
   assert.deepEqual([e.c.funnelRatio_(raw, ['Hook rate', 'videoViews', 'impressions', 1, 'pct', false, true]),
     e.c.funnelRatio_(raw, ['Hold rate', 'thruplays', 'videoViews', 1, 'pct', false])], [0.3, 0.2]);
-  // معدل خطوة فوق 100% مايتاخدش لو فيه شهر تحته
-  assert.equal(e.c.funnelBest_([{ checkouts: 10, purchases: 12 }, { checkouts: 10, purchases: 5 }], ['Checkout → Purchase', 'purchases', 'checkouts', 1, 'pct', false]), 0.5);
+  // مش أحسن شهر ولا متوسط الشهور: مجموع التلات شهور (17 شراية ÷ 20 تشيك أوت)
+  const tot = e.c.funnelMonthsTotal_([{ checkouts: 10, purchases: 12 }, { checkouts: 10, purchases: 5 }]);
+  assert.equal(e.c.funnelRatio_(tot, ['Checkout → Purchase', 'purchases', 'checkouts', 1, 'pct', false]), 17 / 20);
 });
 
 test('Today: أداء المنتجات بالقطع والمبيعات لكل منتج، والإجمالي فيه القطع والأوردرات والصرف و AOV و ROAS', () => {

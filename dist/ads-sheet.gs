@@ -11,7 +11,7 @@
  * Ad accounts and stores are read-only from here: no writes to Meta, TikTok or order sources.
  */
 const APP = {
-  VERSION: '1.62.0',
+  VERSION: '1.63.0',
   T: {
     SETTINGS: 'Settings', ACCOUNTS: 'Accounts', PRODUCTS: 'Products', ADMAP: 'Ad Map',
     ADS: 'Ads Raw', ACC_RAW: 'Account Raw', ORDERS: 'Orders Raw', DAILY: 'Daily Log',
@@ -3085,15 +3085,8 @@ function todayFunnel_() {
   const props = PropertiesService.getDocumentProperties(), read = k => { try { return JSON.parse(props.getProperty(k) || 'null'); } catch (e) { return null; } };
   return { today: read(TODAY.FUNNEL_KEY), best: read(TODAY.BEST_KEY) };
 }
-/*
- * A metric's best month (the benchmark): lowest cost or highest rate of the months' totals, like Daily Account Funnel.
- * A step rate over 100% (an event not fully tracked) counts only if no month is at or under 100%.
- */
-function funnelBest_(months, m) {
-  let vals = months.map(raw => funnelRatio_(raw, m)).filter(v => typeof v === 'number' && isFinite(v) && v > 0);
-  if (m[4] === 'pct' && vals.some(v => v <= 1)) vals = vals.filter(v => v <= 1);
-  return vals.length ? (m[5] ? Math.min.apply(null, vals) : Math.max.apply(null, vals)) : '';
-}
+/* The benchmark: the 3 months as one total (all Meta accounts), so each metric is the 3 months' own number, not an average of months. */
+function funnelMonthsTotal_(months) { return months.reduce((t, raw) => funnelAdd_(t, raw), {}); }
 function funnelRatio_(raw, m) {
   return raw && raw[m[2]] > 0 && !(m[6] && !raw[m[1]]) ? raw[m[1]] / raw[m[2]] * m[3] : '';
 }
@@ -3269,10 +3262,13 @@ function todayBenchmark_(g, r, today, shown) {
     .concat(accounts_('META').filter(a => !(f.today && f.today.day === today && f.today.accounts.some(x => x.id === a.id)))
       .map(a => ({ id: a.id, name: a.name || a.id })));
   const months = f.best && f.best.months ? Object.keys(f.best.months).map(k => f.best.months[k]) : [], width = Math.max(2 + accs.length, 2);
+  const total = months.length ? funnelMonthsTotal_(months) : null;
+  const mon = k => Utilities.formatDate(new Date(Date.UTC(Number(k.slice(0, 4)), Number(k.slice(5, 7)) - 1, 15)), 'UTC', 'MMM-yyyy');
+  const span = f.best && f.best.from && f.best.to ? ' (' + mon(f.best.from) + ' → ' + mon(f.best.to) + ')' : '';
   r = todayHead_(g, r, c, width, 'META BENCHMARK vs TODAY | ' + shown,
-    ['METRIC', 'BEST MONTH (LAST ' + S.BEST_MONTHS + ' MONTHS)'].concat(accs.map(a => (a.error ? '⚠️ ' : '') + a.name)));
+    ['METRIC', 'LAST ' + S.BEST_MONTHS + ' MONTHS' + span].concat(accs.map(a => (a.error ? '⚠️ ' : '') + a.name)));
   S.METRICS.forEach(m => {
-    const base = funnelBest_(months, m), nf = { money: S.MONEY, pct: S.PCT, ratio: S.RATIO }[m[4]];
+    const v3 = total ? funnelRatio_(total, m) : '', base = typeof v3 === 'number' && isFinite(v3) && v3 > 0 ? v3 : '', nf = { money: S.MONEY, pct: S.PCT, ratio: S.RATIO }[m[4]];
     g.set(r, c, m[0], { b: 'bold' });
     g.set(r, c + 1, base === '' ? '—' : base, { nf: nf, bg: S.AVG, al: 'center' });
     accs.forEach((a, i) => {
