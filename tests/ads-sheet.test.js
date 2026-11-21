@@ -2074,3 +2074,61 @@ test('رصيد TikTok في Today تحت Meta: الرصيد المتاح ويكف
   tick();
   assert.match(String(row()[1]), /^✗ TikTok code 40001: No permission/);
 });
+
+test('Duplication: أوردرات المنصة قدام أوردرات شوبيفاي لكل كامبين وأد سيت وإعلان، و DIRECT متوزعة تقديري، والكامبينات الواقفة تحت + لوحدها', () => {
+  const probe = env(), today = probe.c.todayKey_(), yest = probe.c.shiftKey_(today, -1), B = '(blank)';
+  const flow = (id, day, products, x) => {
+    const r = ['gid://shopify/Order/' + id, ' #' + id, ' N', B, 500, ' ' + day + 'T10:00:00+03:00', B, B, B, B, B, B, B, B, B, products, '4655075', B, B];
+    Object.keys(x || {}).forEach(k => { r[k] = x[k]; });
+    return r;
+  };
+  const fb = (camp, content) => ({ 6: 'facebook', 8: camp, 9: content || B });
+  const c2 = row => Object.assign(row, { campaign_id: 'C2', campaign_name: 'Camp 2', adset_id: 'S2', adset_name: 'Set 2' });
+  const e = env({ orderHead: FLOW_HEAD, activeAds: { [A1]: ['111'] },
+    ads: { [A1]: [adRow(today, '111', 600), adRow(today, '222', 400), c2(adRow(today, '333', 100)), adRow(yest, '111', 300)] },
+    creatives: { 111: 'https://chance-cosmetics.com/products/lip-oil', 222: 'https://chance-cosmetics.com/products/lip-oil', 333: 'https://chance-cosmetics.com/products/blush' },
+    stock: [['P1', 'V1', 'Lip Oil', 'Default Title', 'LO', 'lip-oil', 40, 300], ['P2', 'V2', 'Blush', 'Default Title', 'BL', 'blush', 40, 250]],
+    orders: [flow(1, today, 'Lip Oil x1', fb('Camp', '111')), flow(2, today, 'Lip Oil x1', fb('Camp', '222')), flow(3, today, 'Blush x1', fb('Camp 2')),
+      flow(4, today, 'Lip Oil x1', { 14: 'Direct(Chancestoreegy)' }), flow(5, today, 'Mask x1', { 14: 'Direct(Chancestoreegy)' }),
+      flow(6, today, 'Blush x1', { 16: 'shopify_draft_order' }), flow(7, today, 'Blush x1', { 6: 'instagram', 9: 'link_in_bio' }),
+      flow(8, yest, 'Lip Oil x1', fb('Camp', '111')), flow(9, today, 'Blush x1', { 6: 'tiktok', 8: 'TT Camp' })] });
+  e.user.TIKTOK_TOKEN = 'TTTOKEN';
+  fakeTikTok(e, { rows: [{ day: today, ad: '9001', spend: 150, buys: 3 }] });
+  e.c.setupAll();
+  e.c.liveTick(); e.c.liveTick();
+  const sh = e.ss.getSheetByName('Duplication'), v = () => sh.getDataRange().getValues();
+  assert.ok(sh, 'التاب اتعمل');
+  assert.deepEqual(v()[1].slice(0, 3), ['الفترة', 'النهارده', today]);
+  const at = (from, label) => v().findIndex((r, i) => i >= from && r[0] === label);
+  const mi = v().findIndex(r => /^Meta \| /.test(String(r[0]))), ti = v().findIndex(r => /^TikTok \| /.test(String(r[0])));
+  // الملخص: البيكسل 6 (3 إعلانات × 2)، وشوبيفاي 5 = 3 بالـ UTM + 2 DIRECT (من غير المانيول والبايو وأوردر إمبارح) زي META TOTAL في Today
+  assert.deepEqual(v()[mi + 2].slice(0, 6), [6, 5, 3, 2, 1, 0.2]);
+  assert.equal(e.ss.getSheetByName('Today').getDataRange().getValues().find(r => r[0] === 'META TOTAL')[3], 5, 'نفس رقم Today');
+  assert.equal(sh.attr(mi + 3, 6).bg, '#f4cccc', 'المنصة بتعد أكتر بـ 20%');
+  // الكامبين الشغالة: DIRECT بتاع Lip Oil على 111 و 222 بالصرف (0.6 و 0.4)، و Mask مفيش إعلان عليه فعلى كل اللي صرفوا النهارده (1000 من 1100)
+  const c1 = at(mi, 'Camp');
+  assert.deepEqual(v()[c1].slice(0, 10), ['Camp', 'Chance 26', '🟢 شغال', 1000, 4, 2, 1.9, 3.9, 0.1, 0.023]);
+  assert.deepEqual(v()[c1 + 1].slice(0, 3), ['↳ Set', '', '🟢 شغال']);
+  assert.deepEqual([v()[c1 + 2].slice(0, 8), v()[c1 + 3].slice(0, 8)], [
+    ['        • Ad 111', '', '🟢 شغال', 600, 2, 1, 1.1, 2.1], ['        • Ad 222', '', '⏸ واقف', 400, 2, 1, 0.8, 1.8]]);
+  // الواقفة تحت + لوحدها، والأوردر اللي الـ UTM فيه اسم الكامبين بس اتحسب عليها
+  const stop = at(mi, '⏸ كامبينات واقفة دلوقتي (1)');
+  assert.deepEqual(v()[stop + 1].slice(0, 9), ['Camp 2', 'Chance 26', '⏸ واقف', 100, 2, 1, 0.1, 1.1, 0.9]);
+  assert.deepEqual(v()[at(mi, 'TOTAL')].slice(3, 10), [1100, 6, 3, 2, 5, 1, 0.2]);
+  // + جنب الكامبين بيفتح الأد سيتس، و + جنب الأد سيت بيفتح الإعلانات؛ كله مقفول في الأول
+  const R = i => i + 1;
+  assert.deepEqual([sh.getRowGroupDepth(R(c1)), sh.getRowGroupDepth(R(c1 + 1)), sh.getRowGroupDepth(R(c1 + 2)), sh.getRowGroupDepth(R(stop)),
+    sh.getRowGroupDepth(R(stop + 1)), sh.getRowGroupDepth(R(stop + 3))], [0, 1, 2, 0, 1, 3]);
+  assert.equal(sh.getRowGroup(R(c1 + 1), 1).isCollapsed(), true);
+  // TikTok: 3 من المنصة، وأوردر واحد من شوبيفاي اتربط بالكامبين من اسمها في الـ UTM
+  assert.deepEqual(v()[ti + 2].slice(0, 6), [3, 1, 1, '', 2, 2]);
+  assert.deepEqual(v()[at(ti, 'TT Camp')].slice(0, 10), ['TT Camp', 'TikTok', '🟢 شغال', 150, 3, 1, '', 1, 2, 2]);
+  // اللي اتفتح بيفضل مفتوح لما الصفوف تتغير
+  sh.getRowGroup(R(c1 + 1), 1).expand();
+  e.c.withLock_(() => e.c.writeDupTab_());
+  assert.equal(sh.getRowGroup(R(c1 + 1), 1).isCollapsed(), false);
+  // الفترة من القايمة في B2
+  sh.getRange('B2').setValue('آخر 7 أيام');
+  e.c.writeDupTab_();
+  assert.deepEqual(v()[mi + 2].slice(0, 3), [8, 6, 4], 'إمبارح داخل: إعلان 111 (2) وأوردر 8');
+});

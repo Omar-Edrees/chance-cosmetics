@@ -51,8 +51,8 @@ function refreshProductsNow() {
  * live: after ads sync, before views (outside the lock, for reads). today: the same for ⚡ (Today's own reads).
  * menu: [label, functionName]. */
 const EXT = {
-  views: [slow => chanceViews_(slow), () => writeShopTab_(), () => writeMetaCamps_()],
-  edit: [(name, a1) => chanceEdit_(name, a1), (name, a1) => campaignMapEdit_(name, a1)],
+  views: [slow => chanceViews_(slow), () => writeShopTab_(), () => writeMetaCamps_(), () => writeDupTab_()],
+  edit: [(name, a1) => chanceEdit_(name, a1), (name, a1) => campaignMapEdit_(name, a1), (name, a1) => dupEdit_(name, a1)],
   setup: [() => chanceSetup_()],
   live: [() => syncShopifyStatus_(), () => fillGrossSales_(), () => fillOrderVariants_(), () => checkShopifyOrders_(), () => syncShopifyStock_(false), () => syncShopifyCollections_(), () => refreshAccountNames_(), () => discoverAccounts_(), () => chanceLive_(), () => refreshTodayFunnel_(), () => refreshFunnel_(false),
     () => refreshShopTab_(false), () => refreshMetaCamps_(false)],
