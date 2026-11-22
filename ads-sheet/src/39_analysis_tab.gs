@@ -143,7 +143,7 @@ function anaDrawActions_(sh, today, manual, F, M, errors) {
   actions.forEach(f => {
     g.set(r, 1, ANA.PRI[f.pri], { bg: ANA.PRI_BG[f.pri], b: 'bold', al: 'center' });
     g.set(r, 2, f.action, { b: 'bold' });
-    g.set(r, 3, f.kind === 'task' ? f.title : f.title + (f.detail ? ' — ' + f.detail : ''), {});
+    g.set(r, 3, f.kind === 'task' ? f.title : f.title + (f.detail ? '\n' + f.detail : ''), {});
     g.set(r, 4, f.area, { al: 'center', fc: ANA.GREY });
     g.set(r, 5, false, { al: 'center' });
     findRows.push({ row: r, id: f.id, action: f.action, metric: f.metric, scope: f.scope, trow: f.trow || 0 });
@@ -202,7 +202,7 @@ function anaDrawActions_(sh, today, manual, F, M, errors) {
   sh.getRange(1, 2, sh.getMaxRows(), 2).setWrap(true);
   sh.getRange(first, R, N, 1).setWrap(true);
   sh.getRange(first, BA, N, 1).setWrap(true);
-  sh.getRange(1, 1, Math.max(g.rows.length, 1), W).setVerticalAlignment('top');
+  anaLook_(sh, g, W);
 }
 
 /*
@@ -211,7 +211,7 @@ function anaDrawActions_(sh, today, manual, F, M, errors) {
  */
 function anaMapGrid_(g) {
   const map = c => ANA.LC[c - ANA.R] || c;
-  return { kinds: g.kinds, cell: (r, c) => g.cell(r, map(c)), set: (r, c, v, s) => g.set(r, map(c), v, s),
+  return { raw: g, kinds: g.kinds, cell: (r, c) => g.cell(r, map(c)), set: (r, c, v, s) => g.set(r, map(c), v, s),
     fill: (r, c, n, s) => { for (let i = 0; i < n; i++) g.set(r, map(c + i), g.cell(r, map(c + i)).v, s); },
     merge: (r, c, rows, cols) => g.merge(r, map(c), rows, map(c + cols - 1) - map(c) + 1) };
 }
@@ -252,27 +252,27 @@ function anaDrawAnalysis_(sh, F, P, M, ctx, errors) {
     });
   }
   // 2) The accounts: Shopify ROAS today, the last 3 days and the 7 before.
-  let b = box(4, 7, 'الحسابات — Shopify ROAS', ['الحساب', 'النهارده', 'آخر 3 أيام', 'الـ 7 قبلها']);
-  const y = shiftKey_(F.today, -1), d3 = shiftKey_(F.today, -3), d4 = shiftKey_(F.today, -4), d10 = shiftKey_(F.today, -10);
+  let b = box(4, 7, 'الحسابات — Shopify ROAS', ['الحساب', 'النهارده', 'آخر 3 أيام', 'آخر 7 أيام', 'الشهر كله']);
+  const y = shiftKey_(F.today, -1), d3 = shiftKey_(F.today, -3), d7 = shiftKey_(F.today, -7);
   const ids = (P.acc && P.acc.meta || []).concat(P.acc && P.acc.tt || []);
   const sumAll = (from, to) => ids.reduce((t, id) => anaAdd_(t, anaSum_(F.acc[id], from, to)), anaZero_());
   const accLine = (label, fn, style) => {
     g.set(b, 7, label, Object.assign({ b: 'bold' }, style || {}));
-    [[F.today, F.today], [d3, y], [d10, d4]].forEach((p, i) => anaRoasCell_(g, b, 8 + i, anaRoas_(fn(p[0], p[1])), be, anaRoas_(fn(F.month0, F.today))));
+    [[F.today, F.today], [d3, y], [d7, y], [F.month0, F.today]].forEach((p, i) => anaRoasCell_(g, b, 8 + i, anaRoas_(fn(p[0], p[1])), be, anaRoas_(fn(F.month0, F.today))));
     b++;
   };
   accLine('كل الحسابات', sumAll, { bg: ANA.BLUE });
   ids.slice(0, 8).forEach(id => accLine((F.accPlat[id] === 'TIKTOK' ? 'TikTok ' : '') + F.accName[id], (from, to) => anaSum_(F.acc[id], from, to)));
   // 3) The important problems.
-  let c = box(4, 12, 'المشاكل المهمة (' + M.bad.length + ')', ['الأولوية', 'المشكلة', 'القسم']);
-  if (!M.bad.length) { g.set(c, 12, 'مفيش مشاكل مهمة دلوقتي ✅', { fc: ANA.GREY }); g.merge(c, 12, 1, 3); c++; }
+  let c = box(4, 13, 'المشاكل المهمة (' + M.bad.length + ')', ['الأولوية', 'المشكلة', 'القسم']);
+  if (!M.bad.length) { g.set(c, 13, 'مفيش مشاكل مهمة دلوقتي ✅', { fc: ANA.GREY }); g.merge(c, 13, 1, 3); c++; }
   M.bad.slice(0, ANA.TOP_LIST).forEach(f => {
-    g.set(c, 12, ANA.PRI[f.pri], { bg: ANA.PRI_BG[f.pri], b: 'bold', al: 'center' });
-    g.set(c, 13, f.title, { b: 'bold' });
-    g.set(c, 14, f.area, { al: 'center', fc: ANA.GREY });
+    g.set(c, 13, ANA.PRI[f.pri], { bg: ANA.PRI_BG[f.pri], b: 'bold', al: 'center' });
+    g.set(c, 14, f.title, { b: 'bold' });
+    g.set(c, 15, f.area, { al: 'center', fc: ANA.GREY });
     c++;
   });
-  if (M.bad.length > ANA.TOP_LIST) { g.set(c, 13, 'و ' + (M.bad.length - ANA.TOP_LIST) + ' كمان في تاب ' + ANA.TAB, { fc: ANA.GREY }); c++; }
+  if (M.bad.length > ANA.TOP_LIST) { g.set(c, 14, 'و ' + (M.bad.length - ANA.TOP_LIST) + ' كمان في تاب ' + ANA.TAB, { fc: ANA.GREY }); c++; }
   let r = Math.max(a, b, c) + 1;
   // 4) Cancellation, returns and ROAS: the last 7 full days against the 7 before, this month against last month.
   a = box(r, 1, 'الإلغاء والمرتجع والرؤاس', ['', 'الفترة دي', 'قبلها', 'التغيير', '']);
@@ -302,12 +302,12 @@ function anaDrawAnalysis_(sh, F, P, M, ctx, errors) {
     b++;
   });
   // 6) What goes well.
-  c = box(r, 12, 'الحاجات الكويسة (' + M.good.length + ')', ['', 'الحاجة الكويسة', 'القسم']);
-  if (!M.good.length) { g.set(c, 12, 'مفيش حاجة طالعة بوضوح دلوقتي', { fc: ANA.GREY }); g.merge(c, 12, 1, 3); c++; }
+  c = box(r, 13, 'الحاجات الكويسة (' + M.good.length + ')', ['', 'الحاجة الكويسة', 'القسم']);
+  if (!M.good.length) { g.set(c, 13, 'مفيش حاجة طالعة بوضوح دلوقتي', { fc: ANA.GREY }); g.merge(c, 13, 1, 3); c++; }
   M.good.slice(0, ANA.TOP_LIST).forEach(f => {
-    g.set(c, 12, '🟢', { bg: ANA.PRI_BG[4], al: 'center' });
-    g.set(c, 13, f.title, { b: 'bold' });
-    g.set(c, 14, f.area, { al: 'center', fc: ANA.GREY });
+    g.set(c, 13, '🟢', { bg: ANA.PRI_BG[4], al: 'center' });
+    g.set(c, 14, f.title, { b: 'bold' });
+    g.set(c, 15, f.area, { al: 'center', fc: ANA.GREY });
     c++;
   });
   r = Math.max(a, b, c) + 1;
@@ -317,8 +317,9 @@ function anaDrawAnalysis_(sh, F, P, M, ctx, errors) {
   const sec = (key, fn) => {
     const t = r;
     r = fn(r);
-    g.kinds[t] = ['sec|' + key, 0, true];
-    for (let i = t + 1; i < r; i++) if (!g.kinds[i]) g.kinds[i] = ['', 1, false];
+    g.kinds[t] = ['', 0, false]; // the title is two rows: its + is on the second one
+    g.kinds[t + 1] = ['sec|' + key, 0, true];
+    for (let i = t + 2; i < r; i++) if (!g.kinds[i]) g.kinds[i] = ['', 1, false];
     r++;
   };
   sec('watch', q => anaDrawWatch_(dg, q, M.watch));
@@ -337,9 +338,6 @@ function anaDrawAnalysis_(sh, F, P, M, ctx, errors) {
   const rowsIds = [];
   for (let i = first; i < r; i++) rowsIds.push(g.kinds[i] || ['', 0, false]);
   anaGroupsDraw_(sh, g, first, rowsIds);
-  sh.getRange(1, 13, sh.getMaxRows(), 1).setWrap(true);
-  sh.getRange(1, 7, sh.getMaxRows(), 1).setWrap(true);
-  sh.getRange(first, 1, Math.max(r - first, 1), 1).setWrap(true);
 }
 
 /*
@@ -383,31 +381,64 @@ function anaGroupsDraw_(sh, g, first, ids) {
     props.setProperty(key, JSON.stringify({ sig: sig, first: first, ids: ids }));
   }
   ANA.W2.forEach((w, i) => sh.setColumnWidth(i + 1, w));
-  sh.getRange(1, 1, Math.max(g.rows.length, 1), W).setVerticalAlignment('top');
+  anaLook_(sh, g, W);
+}
+/* Bigger text, wrapped, and the parts' titles big (two rows each) with their line under them. */
+function anaLook_(sh, g, W) {
+  const n = Math.max(g.rows.length, 1);
+  sh.getRange(1, 1, n, W).setFontSize(11).setWrap(true).setVerticalAlignment('top');
+  sh.getRange(1, 1, 1, W).setFontSize(15).setVerticalAlignment('middle');
+  sh.setRowHeight(1, 34);
+  (g.big || []).forEach(r => { sh.getRange(r, 1, 2, W).setFontSize(15).setVerticalAlignment('middle'); sh.setRowHeight(r, 24); sh.setRowHeight(r + 1, 24); });
+  (g.notes || []).forEach(r => sh.setRowHeight(r, 24));
 }
 
 /* The things to keep an eye on (🟡): no action for now. */
 function anaDrawWatch_(g, r, list) {
   const R = ANA.R;
-  r = anaHead_(g, r, '🟡 تتراقب بس (' + list.length + ') — مش محتاجة أكشن دلوقتي، بس لو كبرت هتطلع في الأكشنز', ['القسم', '', '', '', '', 'لو كبرت تعمل إيه', '', '', '', '', 'المتابعة']);
+  r = anaHead_(g, r, '🟡 تتراقب بس (' + list.length + ')', ['القسم', '', '', '', '', 'لو كبرت تعمل إيه', '', '', '', '', '', 'المتابعة'],
+    'حاجات مش محتاجة أكشن دلوقتي، ولو كبرت هتطلع في تاب ' + ANA.TAB + '.');
   if (!list.length) return anaEmpty_(g, r, 'مفيش');
   list.forEach(f => {
     g.set(r, R, f.area, { b: 'bold', fc: ANA.GREY });
     g.set(r, R + 5, f.action, {});
-    g.set(r, R + 10, f.title + (f.detail ? '\n' + f.detail : ''), {});
+    g.set(r, R + 11, f.title + (f.detail ? '\n' + f.detail : ''), {});
     r++;
   });
   return r;
 }
 
-/* A part's title bar (the whole width) and header row; returns the first data row. */
-function anaHead_(g, r, title, headers) {
+/*
+ * A part's title: big, two rows tall, across the whole tab (its + is next to it); then a line saying what's in it, and the
+ * header row. headers null: none (the part draws its own). Returns the first data row.
+ */
+function anaHead_(g, r, title, headers, note) {
+  const raw = g.raw || g, W = ANA.W2.length;
+  raw.set(r, 1, title, { bg: ANA.DARK, fc: '#ffffff', b: 'bold', al: 'center' });
+  for (let c = 1; c <= W; c++) [r, r + 1].forEach(x => { if (x !== r || c > 1) raw.set(x, c, '', { bg: ANA.DARK }); });
+  raw.merge(r, 1, 2, W);
+  (raw.big = raw.big || []).push(r);
+  r += 2;
+  if (note) {
+    raw.set(r, 1, note, { fc: '#4b5563', bg: '#f9fafb' });
+    for (let c = 2; c <= W; c++) raw.set(r, c, '', { bg: '#f9fafb' });
+    raw.merge(r, 1, 1, W);
+    (raw.notes = raw.notes || []).push(r);
+    r++;
+  }
+  (headers || []).forEach((h, i) => g.set(r, ANA.R + i, h, { bg: TODAY.YELLOW, b: 'bold', al: 'center' }));
+  return headers && headers.length ? r + 1 : r;
+}
+/* A table inside a part (a dark bar and its header row). */
+function anaSub_(g, r, title, headers) {
   g.set(r, ANA.R, title, { bg: ANA.DARK, fc: '#ffffff', b: 'bold' });
   g.fill(r, ANA.R + 1, 11, { bg: ANA.DARK });
   g.merge(r, ANA.R, 1, 12);
   headers.forEach((h, i) => g.set(r + 1, ANA.R + i, h, { bg: TODAY.YELLOW, b: 'bold', al: 'center' }));
   return r + 2;
 }
+/* Lines as bullet points, one under the other. */
+function anaList_(items) { return items.filter(Boolean).map(x => '• ' + x).join('\n'); }
 function anaEmpty_(g, r, text) { g.set(r, ANA.R, text, { fc: ANA.GREY }); g.merge(r, ANA.R, 1, 6); return r + 1; }
 function anaRoasCell_(g, r, c, v, be, ref) {
   if (v === null || v === undefined || v === '') { g.set(r, c, '—', { al: 'center', fc: ANA.GREY }); return; }
@@ -417,10 +448,11 @@ function anaRoasCell_(g, r, c, v, be, ref) {
 
 function anaDrawRoas_(g, r, F, part, ctx) {
   const meta = (part && part.meta || []).slice(0, 4), tt = (part && part.tt || []).slice(0, 5), be = ctx.be, R = ANA.R;
-  g.set(r, R, 'META — Shopify ROAS لكل حساب يوم بيوم (الأخضر فوق التعادل بـ 20%، الأصفر حواليه، الأحمر تحته)', { bg: ANA.DARK, fc: '#ffffff', b: 'bold' });
+  r = anaHead_(g, r, '📈 الرؤاس لكل حساب يوم بيوم', null, 'Shopify ROAS من أول الشهر. أخضر = فوق التعادل بـ 20% أو أكتر، أصفر = حواليه، أحمر = تحته.');
+  g.set(r, R, 'META', { bg: ANA.DARK, fc: '#ffffff', b: 'bold' });
   g.fill(r, R + 1, 5, { bg: ANA.DARK });
   g.merge(r, R, 1, 6);
-  g.set(r, R + 6, 'TIKTOK — Shopify ROAS لكل حساب', { bg: '#111111', fc: '#ffffff', b: 'bold' });
+  g.set(r, R + 6, 'TIKTOK', { bg: '#111111', fc: '#ffffff', b: 'bold' });
   g.fill(r, R + 7, 5, { bg: '#111111' });
   g.merge(r, R + 6, 1, 6);
   r++;
@@ -451,8 +483,8 @@ function anaDrawRoas_(g, r, F, part, ctx) {
 
 function anaDrawWindows_(g, r, F, part) {
   const R = ANA.R;
-  r = anaHead_(g, r, '3-HOUR CHECK — كل 3 ساعات لوحدها (مش من أول اليوم): الرؤاس قدام نفس الوقت في الـ 7 أيام اللي قبل إمبارح، والكامبينات اللي صرفت أكتر فيها',
-    ['الوقت', 'صرف Meta', 'أوردرات (Meta + DIRECT)', 'Shopify ROAS', 'المعتاد (7 أيام)', 'أكتر كامبينات صرفت في الوقت ده', 'صرف TikTok', 'أوردرات TikTok', 'ROAS TikTok']);
+  r = anaHead_(g, r, '⏱ كل 3 ساعات (النهارده وإمبارح)', ['الوقت', 'صرف Meta', 'أوردرات (Meta + DIRECT)', 'Shopify ROAS', 'المعتاد (7 أيام)', 'أكتر كامبينات صرفت في الوقت ده', 'صرف TikTok', 'أوردرات TikTok', 'ROAS TikTok'],
+    'كل 3 ساعات لوحدها (مش من أول اليوم)، قدام نفس الوقت في الـ 7 أيام اللي قبل إمبارح، والكامبينات اللي صرفت أكتر فيها.');
   const rows = part && part.rows || [];
   if (!rows.length) return anaEmpty_(g, r, 'مفيش لقطات لسه (بتتاخد كل 3 ساعات في Today)');
   let last = -1;
@@ -475,8 +507,8 @@ function anaDrawWindows_(g, r, F, part) {
 
 function anaDrawBench_(g, r, part) {
   const R = ANA.R;
-  r = anaHead_(g, r, 'META BENCHMARK vs TODAY — لكل حساب: المتريكس اللي أوحش من التلات شهور اللي فاتوا بأكتر من ' + Math.round(ANA.WORSE * 100) + '% (TikTok: قدام آخر 7 أيام)',
-    ['الحساب', 'الصرف النهارده', 'ROAS النهارده', 'ROAS البنشمارك', 'متريكس أوحش', 'اللي أوحش (النهارده بدل البنشمارك)']);
+  r = anaHead_(g, r, '📊 البنشمارك النهارده', ['الحساب', 'الصرف النهارده', 'ROAS النهارده', 'ROAS البنشمارك', 'متريكس أوحش', 'اللي أوحش (النهارده بدل البنشمارك)'],
+    'المتريكس اللي أوحش من التلات شهور اللي فاتوا بـ ' + Math.round(ANA.WORSE * 100) + '% أو أكتر، لكل حساب. TikTok قدام آخر 7 أيام.');
   const rows = part && part.rows || [];
   if (!rows.length) return anaEmpty_(g, r, 'لسه مفيش أرقام النهارده من Meta');
   rows.forEach(x => {
@@ -493,8 +525,8 @@ function anaDrawBench_(g, r, part) {
 
 function anaDrawFunnel_(g, r, part) {
   const R = ANA.R;
-  r = anaHead_(g, r, 'DAILY ACCOUNT FUNNEL — آخر 3 أيام كاملة قدام الـ 14 يوم اللي قبلها: الخطوات اللي وقعت أو اتحسنت ' + Math.round(ANA.DROP * 100) + '% أو أكتر' +
-    (part && part.day ? ' (قراية Meta: ' + part.day + ')' : ''), ['الحساب', 'صرف 3 أيام', 'CVR 3 أيام', 'CVR قبلها', 'خطوات وقعت', 'اللي وقع / اللي اتحسن']);
+  r = anaHead_(g, r, '🔻 الفانل: آخر 3 أيام', ['الحساب', 'صرف 3 أيام', 'CVR 3 أيام', 'CVR قبلها', 'خطوات وقعت', 'اللي وقع / اللي اتحسن'],
+    'الخطوات اللي وقعت أو اتحسنت ' + Math.round(ANA.DROP * 100) + '% أو أكتر في آخر 3 أيام كاملة قدام الـ 14 يوم اللي قبلها' + (part && part.day ? ' (قراية Meta: ' + part.day + ').' : '.'));
   if (!part || part.none) return anaEmpty_(g, r, 'أرقام الفانل بتيجي مع تحديث Daily Account Funnel (كل 3 ساعات أو من المنيو 📈)');
   if (!part.rows.length) return anaEmpty_(g, r, 'مفيش حساب صرف ' + ANA.MIN_SPEND + ' أو أكتر في آخر 3 أيام');
   const show = x => x.name + ' ' + (/%/.test(x.nf) ? (Math.round(x.v * 1000) / 10) + '%' : anaNum_(x.v, 2)) + ' (' + anaPct_(x.v / x.b - 1) + ')';
@@ -504,8 +536,8 @@ function anaDrawFunnel_(g, r, part) {
     g.set(r, R + 2, x.cvr === '' ? '—' : x.cvr, { nf: '0.00%', al: 'center' });
     g.set(r, R + 3, x.cvrB === '' ? '—' : x.cvrB, { nf: '0.00%', al: 'center', fc: ANA.GREY });
     g.set(r, R + 4, x.worse.length, { al: 'center', b: 'bold', bg: x.worse.length ? ANA.RED : ANA.GREEN });
-    g.set(r, R + 5, (x.worse.length ? '🔻 ' + x.worse.map(show).join('، ') : '') + (x.worse.length && x.better.length ? '\n' : '') +
-      (x.better.length ? '🔺 ' + x.better.map(show).join('، ') : '') || '✅ مفيش تغيير كبير', {});
+    g.set(r, R + 5, [x.worse.length ? '🔻 وقع:\n' + anaList_(x.worse.map(show)) : '', x.better.length ? '🔺 اتحسن:\n' + anaList_(x.better.map(show)) : '']
+      .filter(Boolean).join('\n') || '✅ مفيش تغيير كبير', {});
     r++;
   });
   return r;
@@ -513,9 +545,8 @@ function anaDrawFunnel_(g, r, part) {
 
 function anaDrawStock_(g, r, part) {
   const R = ANA.R;
-  r = anaHead_(g, r, 'الستوك — الأولوية بس: المنتجات اللي عليها إعلانات شغالة أو بتتباع كتير، وألوانها خلصت أو هتخلص في ' + COVER.RED + ' أيام (' +
-    (part && part.rows ? part.rows.length : 0) + ' منتج، اضغط + جنب المنتج تشوف ألوانه)',
-    ['المنتج ← اللون', 'الستوك', 'اتباع آخر 7 أيام', 'اتباع آخر 30 يوم', 'يكفي كام يوم', 'ملاحظة', 'اطلب كام (30 يوم)']);
+  r = anaHead_(g, r, '📦 الستوك (' + (part && part.rows ? part.rows.length : 0) + ' منتج)', ['المنتج ← اللون', 'الستوك', 'اتباع آخر 7 أيام', 'اتباع آخر 30 يوم', 'يكفي كام يوم', 'ملاحظة', 'اطلب كام (30 يوم)'],
+    'المنتجات اللي عليها إعلانات أو بتتباع كتير وألوانها خلصت أو هتخلص في ' + COVER.RED + ' أيام. + جنب المنتج تفتح ألوانه.');
   if (!part || part.none) return anaEmpty_(g, r, 'محتاج الشيت مربوط بأبليكيشن شوبيفاي (ستوك الألوان وأوردراتها)');
   if (!part.rows.length) return anaEmpty_(g, r, 'مفيش ألوان بتتباع وقرّبت تخلص ✅');
   part.rows.forEach(p => {
@@ -542,8 +573,8 @@ function anaDrawStock_(g, r, part) {
 
 function anaDrawCancel_(g, r, part) {
   const R = ANA.R, pc = v => (v === null || v === undefined ? '—' : v);
-  r = anaHead_(g, r, 'الإلغاء — آخر 7 أيام كاملة قدام الـ 7 اللي قبلها (الإلغاء = اتلغى ÷ الأوردرات اللي اتحسمت: اتلغت أو اتشحنت؛ المرتجع = رجع ÷ الشحنات اللي خلصت)',
-    ['البند', 'أوردرات', 'اتحسموا', 'اتلغى', 'نسبة الإلغاء', 'الإلغاء قبلها', 'التغيير', 'المرتجع', 'المرتجع قبلها']);
+  r = anaHead_(g, r, '❌ الإلغاء والمرتجع', ['البند', 'أوردرات', 'اتحسموا', 'اتلغى', 'نسبة الإلغاء', 'الإلغاء قبلها', 'التغيير', 'المرتجع', 'المرتجع قبلها'],
+    'آخر 7 أيام كاملة قدام الـ 7 اللي قبلها. الإلغاء = اتلغى ÷ اللي اتحسم (اتلغى أو اتشحن)، والمرتجع = رجع ÷ الشحنات اللي خلصت.');
   if (!part || !part.rows) return anaEmpty_(g, r, 'مفيش أوردرات');
   part.rows.forEach((x, i) => {
     const up = x.ca !== null && x.cb !== null ? x.ca - x.cb : null;
@@ -558,7 +589,7 @@ function anaDrawCancel_(g, r, part) {
     g.set(r, R + 8, pc(x.rb), { nf: ANA.PCT, al: 'center', fc: ANA.GREY });
     r++;
   });
-  r = anaHead_(g, r + 1, 'ACTUAL ROAS — آخر 14 يوم: الإلغاء والمرتجع والرؤاس الفعلي (المتسلم بس ÷ الصرف) يوم بيوم',
+  r = anaSub_(g, r + 1, 'ACTUAL ROAS — آخر 14 يوم يوم بيوم (الرؤاس الفعلي = المتسلم بس ÷ الصرف)',
     ['اليوم', 'أوردرات', 'اتحسموا', 'اتلغى', 'نسبة الإلغاء', 'ملاحظة', 'المرتجع', 'الصرف', 'Actual ROAS']);
   (part.days || []).forEach(x => {
     g.set(r, R, anaDay_(x.d), { b: 'bold' });
@@ -577,8 +608,8 @@ function anaDrawCancel_(g, r, part) {
 
 function anaDrawDup_(g, r, part) {
   const R = ANA.R;
-  r = anaHead_(g, r, 'DUPLICATION — آخر 7 أيام: الكامبينات اللي المنصة بتعد فيها أوردرات أكتر من شوبيفاي بـ ' + Math.round(ANA.DUP * 100) + '% أو أكتر (صرف ' + ANA.DUP_SPEND + ' أو أكتر)',
-    ['الكامبين', 'الصرف', 'أوردرات المنصة', 'أوردرات شوبيفاي', 'الدوبليكيشن', 'الحساب', 'CPP المنصة', 'CPP الحقيقي', 'الحالة']);
+  r = anaHead_(g, r, '🔁 الدوبليكيشن (' + (part && part.rows ? part.rows.length : 0) + ' كامبين)', ['الكامبين', 'الصرف', 'أوردرات المنصة', 'أوردرات شوبيفاي', 'الدوبليكيشن', 'الحساب', 'CPP المنصة', 'CPP الحقيقي', 'الحالة'],
+    'آخر 7 أيام: الكامبينات اللي صرفت ' + ANA.DUP_SPEND + ' أو أكتر والمنصة بتعد فيها أوردرات أكتر من شوبيفاي بـ ' + Math.round(ANA.DUP * 100) + '% أو أكتر.');
   if (part && part.all) ['META', 'TIKTOK'].forEach(p => {
     const a = part.all[p] && part.all[p].all;
     if (!a || !(a.spend > 0)) return;
@@ -610,8 +641,8 @@ function anaDrawDup_(g, r, part) {
 
 function anaDrawShop_(g, r, part) {
   const R = ANA.R, m = part && part.m;
-  r = anaHead_(g, r, 'SHOPIFY — النهارده قدام إمبارح والأسبوع اللي فات لحد نفس الساعة' + (m ? ' (' + m.at + ')' : ''),
-    ['المتريك', 'النهارده', 'إمبارح', 'التغيير', m ? m.wName : 'الأسبوع اللي فات', 'المعنى', 'التغيير عن الأسبوع']);
+  r = anaHead_(g, r, '🛍 شوبيفاي النهارده', ['المتريك', 'النهارده', 'إمبارح', 'التغيير', m ? m.wName : 'الأسبوع اللي فات', 'المعنى', 'التغيير عن الأسبوع'],
+    'النهارده قدام إمبارح والأسبوع اللي فات لحد نفس الساعة' + (m ? ' (' + m.at + ')' : '') + '، ومعنى التغيير.');
   if (!m) return anaEmpty_(g, r, 'كروت شوبيفاي لسه ماتقرتش النهارده (محتاج الشيت مربوط بالأبليكيشن)');
   const means = { spend: 'الصرف', sessions: 'الزيارات من غير البوتات', total: 'بعد المرتجعات والإلغاء', gross: 'المنتجات قبل الخصم', orders: 'كل أوردرات المتجر',
     cr: 'الزيارات اللي اشترت', aov: 'متوسط الأوردر', bounce: 'اللي خرج من أول صفحة (الأقل أحسن)' };
@@ -640,8 +671,8 @@ function anaDrawShop_(g, r, part) {
 
 function anaDrawProducts_(g, r, part) {
   const R = ANA.R;
-  r = anaHead_(g, r, 'المنتجات — الأكتر بيعًا آخر 7 أيام كاملة قدام الـ 7 اللي قبلها (قطع من أوردرات مااتلغتش ولا رجعت)',
-    ['المنتج', 'قطع آخر 7 أيام', 'قطع الـ 7 قبلها', 'التغيير', 'Shopify ROAS', 'ملاحظة', 'الصرف 7 أيام', 'الستوك', 'يكفي كام يوم', 'إعلانات شغالة']);
+  r = anaHead_(g, r, '🛒 المنتجات الأكتر بيعًا', ['المنتج', 'قطع آخر 7 أيام', 'قطع الـ 7 قبلها', 'التغيير', 'Shopify ROAS', 'ملاحظة', 'الصرف 7 أيام', 'الستوك', 'يكفي كام يوم', 'إعلانات شغالة'],
+    'آخر 7 أيام كاملة قدام الـ 7 اللي قبلها، قطع من أوردرات مااتلغتش ولا رجعت.');
   const rows = part && part.rows || [];
   if (!rows.length) return anaEmpty_(g, r, 'مفيش مبيعات');
   rows.forEach(x => {
@@ -664,9 +695,9 @@ function anaDrawProducts_(g, r, part) {
 
 function anaDrawGov_(g, r, part) {
   const R = ANA.R;
-  r = anaHead_(g, r, 'المحافظات — آخر 30 يوم: فين التوصيل أحسن والإلغاء أقل (فرصة لكامبينات مستهدفة)' +
-    (part && part.cAvg !== null && part.dAvg !== null ? ' | المتوسط: إلغاء ' + Math.round(part.cAvg * 100) + '% وتوصيل ' + Math.round(part.dAvg * 100) + '%' : ''),
-    ['المحافظة', 'أوردرات 30 يوم', '% من الأوردرات', 'الإلغاء', 'التوصيل', 'الحكم', 'المرتجع']);
+  r = anaHead_(g, r, '📍 المحافظات', ['المحافظة', 'أوردرات 30 يوم', '% من الأوردرات', 'الإلغاء', 'التوصيل', 'الحكم', 'المرتجع'],
+    'آخر 30 يوم: فين التوصيل أحسن والإلغاء أقل (فرصة لكامبينات مستهدفة)' +
+    (part && part.cAvg !== null && part.dAvg !== null ? '. المتوسط: إلغاء ' + Math.round(part.cAvg * 100) + '% وتوصيل ' + Math.round(part.dAvg * 100) + '%.' : '.'));
   const rows = (part && part.rows || []).slice(0, 15);
   if (!rows.length) return anaEmpty_(g, r, 'مفيش محافظات معروفة للأوردرات');
   rows.forEach(x => {
@@ -684,8 +715,8 @@ function anaDrawGov_(g, r, part) {
 
 function anaDrawCatalog_(g, r, part) {
   const R = ANA.R;
-  r = anaHead_(g, r, 'الكتالوج — آخر 14 يوم: المنتجات اللي إعلانات الكتالوج بتبيعها (الأوردرات على المنتج الأساسي في الأوردر، والصرف من تقسيمة Meta)',
-    ['المنتج', 'أوردرات من الكتالوج', '% من أوردرات الكتالوج', 'صرف الكتالوج عليه', 'Shopify ROAS', 'ملاحظة']);
+  r = anaHead_(g, r, '🗂 الكتالوج', ['المنتج', 'أوردرات من الكتالوج', '% من أوردرات الكتالوج', 'صرف الكتالوج عليه', 'Shopify ROAS', 'ملاحظة'],
+    'آخر 14 يوم: المنتجات اللي إعلانات الكتالوج بتبيعها (الأوردر على المنتج اللي فيه قطع أكتر، والصرف من تقسيمة Meta).');
   const rows = part && part.rows || [];
   if (!rows.length) return anaEmpty_(g, r, 'مفيش إعلانات كتالوج في آخر 14 يوم');
   rows.forEach(x => {

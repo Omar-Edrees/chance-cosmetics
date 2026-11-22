@@ -2201,29 +2201,34 @@ test('Actions و Analysis: المهم بس في Actions بالأولوية، و�
   // Actions: الأكشنز (A)، ومهامي (G)، وقبل وبعد (L) جنب بعض، والمهم بس
   assert.deepEqual([v()[3][0], v()[3][6], v()[3][11]].map(x => x.split(' — ')[0].split(' (')[0]), ['الأكشنز', 'مهامي', 'قبل وبعد']);
   // الستوك: Lip Oil عليه إعلان، Nude خلص و Red يكفي يومين، وكانوا بيتباعوا 12 قطعة في الشهر: عاجل
-  assert.deepEqual(v()[5].slice(0, 2), ['🔴 عاجل', 'اطلب ستوك بالترتيب ده: Nude (30 قطعة)، Red (28 قطعة). ولحد ما يوصل، شيل الألوان الخلصانة من الإعلانات']);
+  // الكلام الكتير نقط تحت بعض
+  assert.deepEqual(v()[5].slice(0, 2), ['🔴 عاجل', 'اطلب ستوك Lip Oil بالترتيب ده:\n• Nude: 30 قطعة\n• Red: 28 قطعة\nولحد ما يوصل، شيل الألوان الخلصانة من الإعلانات']);
+  assert.equal(v()[5][2], 'Lip Oil: 1 لون خلص و 1 لون قرّب يخلص وعليه 1 إعلان شغال\n• Nude: نفد، اتباع 12 في 30 يوم\n• Red: يكفي 2 يوم، اتباع 12 في 30 يوم');
   assert.equal(v()[5][4], false, 'خانة ✅');
   // الفانل (CPM غلي) راقب بس: مش في الأكشنز، في تاب Analysis
   assert.equal(v()[6][0], '🟡 1 حاجة تتراقب بس (من غير أكشن دلوقتي): في تاب Analysis');
   assert.equal(find(1, /CPM/), -1);
   // Analysis: الجداول الصغيرة فوق جنب بعض
   const a = () => an.getDataRange().getValues(), at = (col, re) => a().findIndex(r => re.test(String(r[col])));
-  assert.deepEqual([a()[3][0], a()[3][6], a()[3][11]].map(x => x.split(' (')[0]), ['النهارده بسرعة', 'الحسابات — Shopify ROAS', 'المشاكل المهمة']);
-  assert.deepEqual(a()[5].slice(11, 14), ['🔴 عاجل', 'Lip Oil: 1 لون خلص و 1 لون قرّب يخلص وعليه 1 إعلان شغال', 'الستوك']);
+  assert.deepEqual([a()[3][0], a()[3][6], a()[3][12]].map(x => x.split(' (')[0]), ['النهارده بسرعة', 'الحسابات — Shopify ROAS', 'المشاكل المهمة']);
+  assert.deepEqual(a()[4].slice(6, 11), ['الحساب', 'النهارده', 'آخر 3 أيام', 'آخر 7 أيام', 'الشهر كله']);
+  assert.deepEqual(a()[5].slice(12, 15), ['🔴 عاجل', 'Lip Oil: 1 لون خلص و 1 لون قرّب يخلص وعليه 1 إعلان شغال', 'الستوك']);
   assert.equal(a()[5][6], 'كل الحسابات');
   const cn = at(0, /^الإلغاء \(7 أيام\)$/);
   assert.deepEqual(a()[cn].slice(0, 4).map(x => (typeof x === 'number' ? Math.round(x * 1000) / 1000 : x)), ['الإلغاء (7 أيام)', 0.214, 0.3, '-8.6 نقطة']);
   // التفاصيل تحت، كل جزء تحت + مقفول، والستوك + جنب كل منتج على ألوانه
-  const st = at(0, /^الستوك — الأولوية بس/), lip = at(0, /^Lip Oil \(2 لون\)$/), R = i => i + 1;
+  // العنوان قصير وكبير على صفين، والـ + على التاني، وتحته سطر بيقول فيه إيه
+  const st = at(0, /^📦 الستوك \(1 منتج\)$/) + 1, lip = at(0, /^Lip Oil \(2 لون\)$/), R = i => i + 1;
+  assert.match(a()[st + 1][0], /^المنتجات اللي عليها إعلانات أو بتتباع كتير/);
   assert.deepEqual(a()[lip + 1].slice(0, 5), ['   ↳ Nude', 0, 7, 12, 'نفد']);
   assert.equal(a()[lip + 1][7], 30, 'اطلب كام');
-  assert.deepEqual([an.getRowGroupDepth(R(st)), an.getRowGroupDepth(R(st + 1)), an.getRowGroupDepth(R(lip)), an.getRowGroupDepth(R(lip + 1))], [0, 1, 1, 2]);
+  assert.deepEqual([an.getRowGroupDepth(R(st - 1)), an.getRowGroupDepth(R(st)), an.getRowGroupDepth(R(st + 1)), an.getRowGroupDepth(R(lip)), an.getRowGroupDepth(R(lip + 1))], [0, 0, 1, 1, 2]);
   assert.equal(an.getRowGroup(R(st + 1), 1).isCollapsed(), true, 'مقفول');
   assert.equal(an.getRowGroupDepth(R(at(0, /^النهارده بسرعة/) + 2)), 0, 'الجداول الصغيرة بره الجروبات');
   // اللي اتفتح بيفضل مفتوح مع التحديث
   an.getRowGroup(R(st + 1), 1).expand();
   e.c.withLock_(() => e.c.writeAnalysisTab_());
-  assert.equal(an.getRowGroup(R(at(0, /^الستوك — الأولوية بس/) + 1), 1).isCollapsed(), false);
+  assert.equal(an.getRowGroup(R(at(0, /^📦 الستوك/) + 2), 1).isCollapsed(), false);
   const roas = at(0, /^الشهر لحد النهارده$/);
   assert.equal(a()[roas - 1][2], 'Chance 26');
   assert.equal(a()[roas + 1][0], e.c.anaDay_(today) + ' (لحد دلوقتي)');
@@ -2292,12 +2297,12 @@ test('Analysis: كل 3 ساعات لوحدها قدام نفس الوقت في �
   assert.deepEqual(v.find(r => r[6] === '9:00 AM → 12:00 PM').slice(6, 10), ['9:00 AM → 12:00 PM', 1000, 0.5, 2]);
   // التفاصيل تحت: الأوردرات والكامبينات اللي صرفت في الوقت ده
   const at = v.findIndex(r => r[0] === '9:00 AM → 12:00 PM');
-  assert.deepEqual([v[at].slice(0, 5), v[at][6]], [['9:00 AM → 12:00 PM', 1000, 1, 0.5, 2], 'Camp (صرف 800 و 1 أوردر)']);
-  assert.deepEqual(v.find(r => r[12] === 'النهارده من 9:00 AM لـ 12:00 PM: رؤاس Meta 0.5 والمعتاد 2').slice(11, 13), ['🟠 مهم', 'النهارده من 9:00 AM لـ 12:00 PM: رؤاس Meta 0.5 والمعتاد 2'],
+  assert.deepEqual([v[at].slice(0, 5), v[at][6]], [['9:00 AM → 12:00 PM', 1000, 1, 0.5, 2], '• Camp (صرف 800 و 1 أوردر)']);
+  assert.deepEqual(v.find(r => r[13] === 'النهارده من 9:00 AM لـ 12:00 PM: رؤاس Meta 0.5 والمعتاد 2').slice(12, 14), ['🟠 مهم', 'النهارده من 9:00 AM لـ 12:00 PM: رؤاس Meta 0.5 والمعتاد 2'],
     'في المشاكل المهمة');
   const act = e.ss.getSheetByName('Actions').getDataRange().getValues().find(r => /^راجع Camp في الوقت ده/.test(String(r[1])));
   assert.equal(act[0], '🟠 مهم');
-  assert.match(act[2], /صرف 1,000 وجاب 1 أوردر. أكتر صرف: Camp/);
+  assert.match(act[2], /\n• صرف 1,000 وجاب 1 أوردر\nأكتر كامبينات صرفت:\n• Camp/);
   // لقطة الكامبينات بتتاخد مع لقطة Today: صرف كل كامبين لحد الساعة دي
   e.c.takeIntraAds_();
   const got = snaps.getDataRange().getValues().slice(1).filter(r => r[0] === today && r[1] !== '9:00' && r[1] !== '12:00');
@@ -2310,7 +2315,7 @@ test('Actions: الحاجات اللي من نوع واحد وأولوية وا�
     action: 'وقّف كامبين ' + name, impact: impact, metric: 'Shopify ROAS', scope: name });
   const out = e.c.anaMerge_([f('camp-stop|1', 1, 500, 'A'), f('camp-stop|2', 1, 900, 'B'), f('camp-stop|3', 1, 100, 'C'), f('win|x', 3, 50, 'W'), f('win|y', 2, 70, 'V')]);
   assert.equal(out.length, 3);
-  assert.deepEqual([out[0].pri, out[0].title, out[0].action, out[0].impact], [1, '3 كامبينات شغالة تحت التعادل', 'وقّف: B، A، C', 1500]);
-  assert.match(out[0].detail, /^كامبين B: تحت التعادل \(صرف 900\)؛ كامبين A/);
+  assert.deepEqual([out[0].pri, out[0].title, out[0].action, out[0].impact], [1, '3 كامبينات شغالة تحت التعادل', 'وقّف:\n• B\n• A\n• C', 1500]);
+  assert.equal(out[0].detail, '• كامبين B: تحت التعادل\n• كامبين A: تحت التعادل\n• كامبين C: تحت التعادل');
   assert.equal(JSON.stringify(out.slice(1).map(x => [x.id, x.pri])), JSON.stringify([['win|y', 2], ['win|x', 3]]), 'كل أولوية لوحدها');
 });

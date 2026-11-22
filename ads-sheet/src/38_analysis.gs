@@ -19,8 +19,8 @@
  */
 const ANA = {
   TAB: 'Actions', TAB2: 'Analysis', OLD_TAB: 'Analysis & Actions', SNAP: 'Intraday Ads', GROUPS: 'ANA_GROUPS',
-  /* Analysis: 14 columns, F and K narrow gaps between the small tables at the top; the tables under them skip the gaps. */
-  W2: [190, 85, 85, 85, 85, 14, 175, 85, 85, 85, 14, 90, 330, 95], LC: [1, 2, 3, 4, 5, 7, 8, 9, 10, 12, 13, 14], BACK: 60, WIDTH: 18, TOP: 4, MIN_ROWS: 12, SPARE: 4,
+  /* Analysis: 15 columns, F and L narrow gaps between the small tables at the top; the tables under them skip the gaps. */
+  W2: [190, 85, 85, 85, 85, 14, 175, 85, 85, 85, 85, 14, 90, 330, 95], LC: [1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 13, 14], BACK: 60, WIDTH: 18, TOP: 4, MIN_ROWS: 12, SPARE: 4,
   R: 7, BA: 12, // tasks start at column G (5 columns), before / after at column L (7 columns); the left side is A–E
   FUNNEL_KEY: 'ANA_FUNNEL', DONE_KEY: 'ANA_DONE', ROWS_KEY: 'ANA_ROWS', FIND_KEY: 'ANA_FINDS', PENDING_KEY: 'ANA_PENDING', DONE_DAYS: 7,
   STOCK_COLOR: 5, STOCK_NO_ADS: 30, STOCK_ACT: 15, STOCK_ROWS: 15, ACT_GOOD: 5, TOP_LIST: 8,
@@ -229,8 +229,8 @@ function anaMerge_(finds) {
     const item = f => f.item || (f.scope !== ANA.BIZ ? f.scope : f.title), more = list.length > 6 ? ' و ' + (list.length - 6) + ' كمان' : '';
     const scopes = Array.from(new Set(list.map(f => f.scope)));
     out.push({ id: k.split('|')[0] + '|' + sha_(list.map(item).sort().join('|')).slice(0, 12), kind: list[0].kind, pri: list[0].pri, area: list[0].area,
-      title: list.length + ' ' + m[0], detail: list.slice(0, 6).map(f => f.title + (f.detail ? ' (' + f.detail + ')' : '')).join('؛ ') + more,
-      action: m[1] + ': ' + list.slice(0, 6).map(item).join('، ') + more, impact: list.reduce((s, f) => s + f.impact, 0),
+      title: list.length + ' ' + m[0], detail: anaList_(list.slice(0, 6).map(f => f.title)) + more,
+      action: m[1] + ':\n' + anaList_(list.slice(0, 6).map(item)) + more, impact: list.reduce((s, f) => s + f.impact, 0),
       metric: list[0].metric, scope: scopes.length === 1 ? scopes[0] : ANA.BIZ, n: list.length });
   });
   return out.sort((a, b) => (a.pri - b.pri) || (b.impact - a.impact));
@@ -246,18 +246,18 @@ function anaAccounts_(F, ctx) {
   meta.concat(tt).forEach(id => {
     const name = F.accName[id], t3 = anaSum_(F.acc[id], d3, y), t7 = anaSum_(F.acc[id], d10, d4), r3 = anaRoas_(t3), r7 = anaRoas_(t7);
     if (!(t3.spend >= ANA.MIN_SPEND) || r3 === null || r7 === null || !(r7 > 0)) return;
-    const ch = r3 / r7 - 1, nums = 'رؤاس ' + anaNum_(r3, 2) + ' في آخر 3 أيام (صرف ' + anaMoney_(t3.spend) + ' و ' + t3.orders + ' أوردر)، كان ' +
-      anaNum_(r7, 2) + ' في الـ 7 أيام اللي قبلها' + (be ? '. التعادل ' + anaNum_(be, 2) : '');
+    const ch = r3 / r7 - 1, nums = anaList_(['آخر 3 أيام: رؤاس ' + anaNum_(r3, 2) + '، صرف ' + anaMoney_(t3.spend) + '، ' + t3.orders + ' أوردر',
+      'الـ 7 أيام اللي قبلها: رؤاس ' + anaNum_(r7, 2), be ? 'التعادل: ' + anaNum_(be, 2) : '']);
     const camps = code => (mc || []).filter(c => c.acc === id && c.verdict && c.verdict.code === code).slice(0, 3).map(c => c.name);
     if (ch <= -ANA.DROP) {
       const bad = camps('🔴').concat(camps('🟠'));
       anaFind_(out, { id: 'acc-drop|' + id, pri: be && r3 < be ? 1 : 2, area: 'الحسابات', title: 'حساب ' + name + ': الرؤاس نزل ' + anaPct_(ch), detail: nums,
-        action: 'شوف اللي موقّع الرؤاس في الحساب ده في Meta Campaigns' + (bad.length ? ' (أوحش كامبينات: ' + bad.join('، ') + ')' : '') + ' ووقّف اللي تحت التعادل',
+        action: 'شوف اللي موقّع الرؤاس في الحساب ده في Meta Campaigns ووقّف اللي تحت التعادل' + (bad.length ? '. أوحش كامبينات:\n' + anaList_(bad) : ''),
         impact: t3.spend * Math.min(-ch, 1), scope: name });
     } else if (ch >= ANA.DROP && (!be || r3 >= be)) {
       const good = camps('🟢');
       anaFind_(out, { id: 'acc-up|' + id, kind: 'good', pri: 4, area: 'الحسابات', title: 'حساب ' + name + ': الرؤاس طالع ' + anaPct_(ch), detail: nums,
-        action: good.length ? 'زوّد الميزانية 20% على الكامبينات الكسبانة: ' + good.join('، ') : 'زوّد الميزانية 20% على الكامبينات اللي فوق التعادل في الحساب ده وراقب يومين',
+        action: good.length ? 'زوّد الميزانية 20% على الكامبينات الكسبانة:\n' + anaList_(good) : 'زوّد الميزانية 20% على الكامبينات اللي فوق التعادل في الحساب ده وراقب يومين',
         impact: t3.spend * ch, scope: name });
     }
   });
@@ -265,8 +265,7 @@ function anaAccounts_(F, ctx) {
   if (be) meta.concat(tt).forEach(id => {
     const t = anaSum_(F.acc[id], F.today, F.today), r = anaRoas_(t);
     if (t.spend >= 1.5 * ANA.MIN_SPEND && r !== null && r < be * ANA.WINDOW_LOW) anaFind_(out, { id: 'acc-today|' + id, pri: 1, area: 'الحسابات',
-      title: 'حساب ' + F.accName[id] + ' النهارده: رؤاس ' + anaNum_(r, 2) + ' لحد دلوقتي', detail: 'صرف ' + anaMoney_(t.spend) + ' و ' + t.orders +
-        ' أوردر، والتعادل ' + anaNum_(be, 2), action: 'شوف الـ 3 ساعات تحت وأنهي كامبين بتصرف من غير أوردرات، وقلل ميزانيتها أو وقّفها لحد بكره',
+      title: 'حساب ' + F.accName[id] + ' النهارده: رؤاس ' + anaNum_(r, 2) + ' لحد دلوقتي', detail: anaList_(['صرف ' + anaMoney_(t.spend), t.orders + ' أوردر', 'التعادل: ' + anaNum_(be, 2)]), action: 'شوف الـ 3 ساعات تحت وأنهي كامبين بتصرف من غير أوردرات، وقلل ميزانيتها أو وقّفها لحد بكره',
       impact: t.spend * (1 - r / be), scope: F.accName[id] });
   });
   return { find: out, meta: meta, tt: tt };
@@ -336,13 +335,13 @@ function anaThreeHours_(F, ctx) {
         who.push({ k: k, spend: s, orders: os.length, revenue: os.reduce((x, o) => x + o.total, 0) });
       });
       who.sort((x, y) => (y.spend - y.revenue / Math.max(ur || be || 1, 0.1)) - (x.spend - x.revenue / Math.max(ur || be || 1, 0.1)));
-      const why = !a || !b ? 'لقطات الكامبينات بتبدأ من أول لقطة بعد التحديث ده' : !who.length ? '' : who.slice(0, 3)
-        .map(x => (F.campName[x.k] || x.k) + ' (صرف ' + anaMoney_(x.spend) + ' و ' + x.orders + ' أوردر)').join('، ');
+      const why = !a || !b ? 'لقطات الكامبينات بتبدأ من أول لقطة بعد التحديث ده' : !who.length ? '' : anaList_(who.slice(0, 3)
+        .map(x => (F.campName[x.k] || x.k) + ' (صرف ' + anaMoney_(x.spend) + ' و ' + x.orders + ' أوردر)'));
       const weak = r !== null && ur !== null && m.spend >= ANA.WINDOW_MIN && r < ur * ANA.WINDOW_LOW;
       rows.push({ d: d, n: n, w: w, r: r, ur: ur, why: why, weak: weak });
       if (weak) anaFind_(out, { id: 'win|' + d + '|' + w.to, pri: n ? 3 : 2, area: 'الـ 3 ساعات', item: (n ? 'إمبارح ' : '') + anaHour_(w.from) + ' → ' + anaHour_(w.to),
         title: (n ? 'إمبارح' : 'النهارده') + ' من ' + anaHour_(w.from) + ' لـ ' + anaHour_(w.to) + ': رؤاس Meta ' + anaNum_(r, 2) + ' والمعتاد ' + anaNum_(ur, 2),
-        detail: 'صرف ' + anaMoney_(m.spend) + ' وجاب ' + m.orders + ' أوردر' + (why ? '. أكتر صرف: ' + why : ''),
+        detail: '• صرف ' + anaMoney_(m.spend) + ' وجاب ' + m.orders + ' أوردر' + (who.length ? '\nأكتر كامبينات صرفت:\n' + why : ''),
         action: who.length ? 'راجع ' + (F.campName[who[0].k] || '') + ' في الوقت ده: لو بيتكرر كل يوم في نفس الساعات قلل ميزانيتها أو غيّر الكرييتيف'
           : 'لو نفس الوقت بيقع كل يوم، الصرف فيه مش جايب: راقب الساعات دي في Meta Campaigns',
         impact: m.spend * (1 - r / ur), scope: who.length ? F.campName[who[0].k] : ANA.BIZ });
@@ -379,13 +378,13 @@ function anaBench_(F, ctx) {
     });
     const show = x => x.name + ' ' + (x.nf === 'pct' ? (Math.round(x.v * 1000) / 10) + '% بدل ' + (Math.round(x.b * 1000) / 10) + '%' : anaNum_(x.v, 2) + ' بدل ' + anaNum_(x.b, 2));
     rows.push({ name: a.name, plat: 'META', spend: spend, roas: funnelRatio_(a.raw, TODAY.METRICS[0]), base: base ? funnelRatio_(base, TODAY.METRICS[0]) : '',
-      worse: worse, text: spend < 300 ? 'لسه بدري (صرف أقل من 300)' : worse.length ? worse.map(show).join('، ') : '✅ كله زي البنشمارك أو أحسن' });
+      worse: worse, text: spend < 300 ? 'لسه بدري (صرف أقل من 300)' : worse.length ? anaList_(worse.map(show)) : '✅ كله زي البنشمارك أو أحسن' });
     if (!worse.length) return;
     const fixes = [];
     worse.forEach(x => { const t = anaFix_(x.name); if (t && fixes.indexOf(t) < 0) fixes.push(t); });
     anaFind_(out, { id: 'bench|' + a.id, pri: worse.some(x => /ROAS/.test(x.name)) ? 2 : 3, area: 'البنشمارك',
-      title: 'حساب ' + a.name + ' النهارده أوحش من البنشمارك في ' + worse.length + ' متريك', detail: worse.map(show).join('، '),
-      action: fixes.slice(0, 2).join('. '), impact: spend * Math.min(worse[0].w, 1), scope: a.name });
+      title: 'حساب ' + a.name + ' النهارده أوحش من البنشمارك في ' + worse.length + ' متريك', detail: anaList_(worse.map(show)),
+      action: anaList_(fixes.slice(0, 2)), impact: spend * Math.min(worse[0].w, 1), scope: a.name });
   });
   // TikTok: today against the 7 days before, from Ads Raw.
   const tt = Object.keys(F.accPlat).filter(id => F.accPlat[id] === 'TIKTOK'), raw = {};
@@ -409,9 +408,9 @@ function anaBench_(F, ctx) {
     const show = x => x.name + ' ' + (x.nf === 'pct' ? (Math.round(x.v * 1000) / 10) + '% بدل ' + (Math.round(x.b * 1000) / 10) + '%' : anaNum_(x.v, 2) + ' بدل ' + anaNum_(x.b, 2));
     const t = anaSum_(F.acc[id], today, today);
     rows.push({ name: F.accName[id], plat: 'TIKTOK', spend: now.spend, roas: anaRoas_(t), base: '', worse: worse,
-      text: now.spend < 300 ? 'لسه بدري (صرف أقل من 300)' : worse.length ? worse.map(show).join('، ') + ' (قدام آخر 7 أيام)' : '✅ زي آخر 7 أيام أو أحسن' });
+      text: now.spend < 300 ? 'لسه بدري (صرف أقل من 300)' : worse.length ? anaList_(worse.map(show)) : '✅ زي آخر 7 أيام أو أحسن' });
     if (worse.length) anaFind_(out, { id: 'bench-tt|' + id, pri: 3, area: 'البنشمارك', title: 'TikTok ' + F.accName[id] + ' النهارده أوحش من آخر 7 أيام في ' + worse.length + ' متريك',
-      detail: worse.map(show).join('، '), action: /CPP/.test(worse[0].name) ? 'الكرييتيفات بتجيب كليكات من غير شرا: جرّب كرييتيف أو عرض جديد' : 'الكرييتيف تعب أو الجمهور غلي: نزّل فيديوهات جديدة',
+      detail: anaList_(worse.map(show)), action: /CPP/.test(worse[0].name) ? 'الكرييتيفات بتجيب كليكات من غير شرا: جرّب كرييتيف أو عرض جديد' : 'الكرييتيف تعب أو الجمهور غلي: نزّل فيديوهات جديدة',
       impact: now.spend * Math.min(worse[0].w, 1), scope: F.accName[id] });
   });
   return { find: out, rows: rows };
@@ -457,11 +456,11 @@ function anaFunnel_(F) {
       const fixes = [];
       worse.forEach(x => { const t = anaFix_(x.name); if (t && fixes.indexOf(t) < 0) fixes.push(t); });
       anaFind_(out, { id: 'funnel|' + a.id, pri: worse.some(x => /CVR|Pur\/Chk|Chk\/ATC|ATC\/CV/.test(x.name)) ? 2 : 3, area: 'الفانل',
-        title: (a.id === 'all' ? 'الفانل كله' : 'فانل ' + a.name) + ': ' + worse.length + ' خطوة وقعت في آخر 3 أيام', detail: worse.map(show).join('، ') + ' (قدام الـ 14 يوم اللي قبلها)',
-        action: fixes.slice(0, 2).join('. '), impact: num_(now.spend) * Math.min(worse[0].w, 1), scope: a.id === 'all' ? ANA.BIZ : a.name });
+        title: (a.id === 'all' ? 'الفانل كله' : 'فانل ' + a.name) + ': ' + worse.length + ' خطوة وقعت في آخر 3 أيام', detail: anaList_(worse.map(show)) + '\n(قدام الـ 14 يوم اللي قبلها)',
+        action: anaList_(fixes.slice(0, 2)), impact: num_(now.spend) * Math.min(worse[0].w, 1), scope: a.id === 'all' ? ANA.BIZ : a.name });
     }
     if (better.length && !worse.length) anaFind_(out, { id: 'funnel-up|' + a.id, kind: 'good', pri: 4, area: 'الفانل',
-      title: (a.id === 'all' ? 'الفانل كله' : 'فانل ' + a.name) + ': ' + better.map(x => x.name).join(' و ') + ' اتحسنوا', detail: better.map(show).join('، '),
+      title: (a.id === 'all' ? 'الفانل كله' : 'فانل ' + a.name) + ': ' + better.map(x => x.name).join(' و ') + ' اتحسنوا', detail: anaList_(better.map(show)),
       action: better.some(x => /CTR|Hook|CPC|CPM/.test(x.name)) ? 'الكرييتيفات الجديدة شغالة: اعمل منها أكتر وزوّد عليها' : 'الصفحة أو العرض بيحوّل أحسن: زوّد الصرف على نفس المنتجات',
       impact: num_(now.spend) * Math.min(better[0].w, 1), scope: a.id === 'all' ? ANA.BIZ : a.name });
   });
@@ -474,8 +473,8 @@ function anaCampaigns_(F, ctx) {
   const out = [];
   (ctx.mc || []).forEach(c => {
     const v = c.verdict || {}, s3 = c.w && c.w[3] ? c.w[3] : mcZero_(), r = s3.spend > 0 ? s3.revenue / s3.spend : null, acc = F.accName[c.acc] || c.acc;
-    const nums = 'صرف 3 أيام ' + anaMoney_(s3.spend) + ' و ' + s3.orders + ' أوردر' + (r !== null ? '، رؤاس ' + anaNum_(r, 2) : '') +
-      (c.target && c.target.v ? '، التعادل ' + anaNum_(c.target.v, 2) : '') + (v.reason ? '. ' + v.reason : '');
+    const nums = anaList_(['صرف 3 أيام ' + anaMoney_(s3.spend) + ' و ' + s3.orders + ' أوردر', r !== null ? 'رؤاس ' + anaNum_(r, 2) : '',
+      c.target && c.target.v ? 'التعادل ' + anaNum_(c.target.v, 2) : '', v.reason]);
     const base = { scope: c.name, impact: s3.spend, detail: nums };
     if (v.code === '🔴' && c.active) anaFind_(out, Object.assign(base, { id: 'camp-stop|' + c.id, pri: 1, area: 'الكامبينات', title: 'كامبين ' + c.name + ' (' + acc + '): تحت التعادل', action: 'وقّف كامبين ' + c.name }));
     if (v.code === '🟠') anaFind_(out, Object.assign(base, { id: 'camp-drop|' + c.id, pri: 2, area: 'الكامبينات', title: 'كامبين ' + c.name + ' (' + acc + '): كانت كويسة ونزلت تحت التعادل' + (v.metric ? ' (' + v.metric + ')' : ''),
@@ -527,9 +526,9 @@ function anaStock_(F) {
       item: name + ' (' + list.slice(0, 3).map(v => v.title + ' ' + v.need).join('، ') + ')',
       title: name + ': ' + (gone.length ? gone.length + ' لون خلص' : '') + (gone.length && list.length > gone.length ? ' و ' : '') +
         (list.length > gone.length ? (list.length - gone.length) + ' لون قرّب يخلص' : '') + (ads > 0 ? ' وعليه ' + ads + ' إعلان شغال' : ''),
-      detail: list.slice(0, 5).map(v => v.title + ' (' + (v.days === 0 ? 'نفد' : 'يكفي ' + Math.floor(v.days) + ' يوم') + '، اتباع ' + v.m + ' في 30 يوم)').join('، '),
-      action: 'اطلب ستوك بالترتيب ده: ' + list.slice(0, 5).map(v => v.title + ' (' + v.need + ' قطعة)').join('، ') +
-        (ads > 0 && gone.length ? '. ولحد ما يوصل، شيل الألوان الخلصانة من الإعلانات' : ''),
+      detail: anaList_(list.slice(0, 5).map(v => v.title + ': ' + (v.days === 0 ? 'نفد' : 'يكفي ' + Math.floor(v.days) + ' يوم') + '، اتباع ' + v.m + ' في 30 يوم')),
+      action: 'اطلب ستوك ' + name + ' بالترتيب ده:\n' + anaList_(list.slice(0, 5).map(v => v.title + ': ' + v.need + ' قطعة')) +
+        (ads > 0 && gone.length ? '\nولحد ما يوصل، شيل الألوان الخلصانة من الإعلانات' : ''),
       impact: m * (price[name] || 100) / 30 * 7, metric: 'الأوردرات في اليوم', scope: name });
   });
   return { find: out, rows: rows };
@@ -557,8 +556,8 @@ function anaCancelPart_(F, ctx) {
   if (biz.ca !== null && biz.cb !== null && biz.a.decided >= 20) {
     const up = biz.ca - biz.cb, worst = prods.map(n => rows.find(r => r.label === n)).filter(r => r.ca !== null && r.ca > biz.ca).sort((a, b) => b.ca - a.ca).slice(0, 3);
     if (up >= 0.05 || (biz.cb > 0 && biz.ca / biz.cb - 1 >= 0.25 && up >= 0.03)) anaFind_(out, { id: 'cancel-up', pri: 2, area: 'الإلغاء',
-      title: 'الإلغاء زاد: ' + Math.round(biz.ca * 100) + '% آخر 7 أيام (كان ' + Math.round(biz.cb * 100) + '%)', detail: biz.a.cancelled + ' أوردر اتلغى من ' + biz.a.decided +
-        ' اتحسموا' + (worst.length ? '. أكتر منتجات بتتلغي: ' + worst.map(r => r.label + ' ' + Math.round(r.ca * 100) + '%').join('، ') : ''),
+      title: 'الإلغاء زاد: ' + Math.round(biz.ca * 100) + '% آخر 7 أيام (كان ' + Math.round(biz.cb * 100) + '%)', detail: '• ' + biz.a.cancelled + ' أوردر اتلغى من ' + biz.a.decided +
+        ' اتحسموا' + (worst.length ? '\nأكتر منتجات بتتلغي:\n' + anaList_(worst.map(r => r.label + ' ' + Math.round(r.ca * 100) + '%')) : ''),
       action: 'راجع التأكيد: سرعة الاتصال بالعميل بعد الأوردر، والسعر والشحن في الفورم' + (worst.length ? '، وصفحة ' + worst[0].label + ' (صورها وسعرها)' : ''),
       impact: (biz.a.cancelled - biz.cb * biz.a.decided) * (biz.a.revenue / Math.max(biz.a.orders, 1)), metric: 'نسبة الإلغاء' });
     else if (up <= -0.05) anaFind_(out, { id: 'cancel-down', kind: 'good', pri: 4, area: 'الإلغاء', title: 'الإلغاء قل: ' + Math.round(biz.ca * 100) + '% آخر 7 أيام (كان ' + Math.round(biz.cb * 100) + '%)',
@@ -593,7 +592,7 @@ function anaDup_(F, ctx) {
     rows.push({ name: c.name, acc: acc, plat: p, s: s, shop: shop, dup: dup, cppP: cppP, cppS: cppS, on: c.on });
     anaFind_(out, { id: 'dup|' + c.id, pri: c.on ? 2 : 3, area: 'الدوبليكيشن',
       title: 'كامبين ' + c.name + ' (' + acc + '): المنصة بتعد ' + Math.round(s.pixel) + ' أوردر وشوبيفاي ' + Math.round(shop * 10) / 10 + (dup !== null ? ' (دوبليكيشن ' + Math.round(dup * 100) + '%)' : ''),
-      detail: 'آخر 7 أيام، صرف ' + anaMoney_(s.spend) + '. CPP المنصة ' + anaMoney_(cppP) + ' والحقيقي ' + (cppS ? anaMoney_(cppS) : '—'),
+      detail: anaList_(['آخر 7 أيام، صرف ' + anaMoney_(s.spend), 'CPP المنصة ' + anaMoney_(cppP), 'CPP الحقيقي ' + (cppS ? anaMoney_(cppS) : '—')]),
       action: 'احكم على ' + c.name + ' بأوردرات شوبيفاي مش المنصة: CPP الحقيقي ' + (cppS ? anaMoney_(cppS) : 'مالوش أوردرات') + '. لو تحت التعادل وقّفها أو قلل ميزانيتها',
       impact: s.spend * Math.min(gap / Math.max(s.pixel, 1), 1), scope: c.name });
   }));
@@ -648,7 +647,7 @@ function anaProducts_(F, ctx) {
   rows.forEach(r => {
     const low = r.days !== null && r.days < 15 ? '. بس الستوك ' + (r.days === 0 ? 'خلص' : 'يكفي ' + Math.floor(r.days) + ' يوم') + '، اطلب الأول' : '';
     if (r.a >= 15 && r.ch !== null && r.ch >= 0.3) anaFind_(out, { id: 'prod-up|' + r.name, kind: 'good', pri: 4, area: 'المنتجات',
-      title: r.name + ' بيبيع أكتر: ' + r.a + ' قطعة آخر 7 أيام (' + anaPct_(r.ch) + ')', detail: 'كان ' + r.b + ' قطعة في الـ 7 أيام اللي قبلها' + (r.roas !== null ? '، Shopify ROAS ' + anaNum_(r.roas, 2) : ''),
+      title: r.name + ' بيبيع أكتر: ' + r.a + ' قطعة آخر 7 أيام (' + anaPct_(r.ch) + ')', detail: anaList_(['كان ' + r.b + ' قطعة في الـ 7 أيام اللي قبلها', r.roas !== null ? 'Shopify ROAS ' + anaNum_(r.roas, 2) : '']),
       action: (r.ads > 0 ? 'ركّز عليه: زوّد الصرف على إعلاناته واعمله كرييتيفات جديدة' : 'مفيش عليه إعلانات شغالة: جرّب كامبين عليه') + low, impact: r.a * 50, metric: 'الأوردرات في اليوم', scope: r.name });
     else if (r.spend >= 1000 && be && r.roas !== null && r.roas >= be * 1.3) anaFind_(out, { id: 'prod-roas|' + r.name, kind: 'good', pri: 4, area: 'المنتجات',
       title: r.name + ': Shopify ROAS ' + anaNum_(r.roas, 2) + ' آخر 7 أيام (التعادل ' + anaNum_(be, 2) + ')', detail: 'صرف ' + anaMoney_(r.spend) + ' و ' + r.a + ' قطعة',
@@ -675,12 +674,12 @@ function anaGov_(F) {
     if (r.del >= dAvg + 0.05 && r.c <= cAvg) {
       r.verdict = '🟢 فرصة';
       anaFind_(out, { id: 'gov-good|' + r.name, kind: 'good', pri: 4, area: 'المحافظات', item: r.name, title: r.name + ': التوصيل ' + Math.round(r.del * 100) + '% والإلغاء ' + Math.round(r.c * 100) + '%',
-        detail: 'أحسن من المتوسط (توصيل ' + Math.round(dAvg * 100) + '% وإلغاء ' + Math.round(cAvg * 100) + '%)، ' + r.x.orders + ' أوردر في 30 يوم',
+        detail: anaList_(['المتوسط: توصيل ' + Math.round(dAvg * 100) + '% وإلغاء ' + Math.round(cAvg * 100) + '%', r.x.orders + ' أوردر في 30 يوم']),
         action: 'جرّب كامبين مستهدفة على ' + r.name + ' أو زوّد الميزانية فيها', impact: r.x.orders * 20 });
     } else if (r.c >= cAvg + 0.1 || r.del <= dAvg - 0.1) {
       r.verdict = '🔴 ضعيفة';
       anaFind_(out, { id: 'gov-bad|' + r.name, pri: 3, area: 'المحافظات', item: r.name, title: r.name + ': ' + (r.c >= cAvg + 0.1 ? 'الإلغاء ' + Math.round(r.c * 100) + '%' : 'التوصيل ' + Math.round(r.del * 100) + '% بس'),
-        detail: 'المتوسط: إلغاء ' + Math.round(cAvg * 100) + '% وتوصيل ' + Math.round(dAvg * 100) + '%، ' + r.x.orders + ' أوردر في 30 يوم',
+        detail: anaList_(['المتوسط: إلغاء ' + Math.round(cAvg * 100) + '% وتوصيل ' + Math.round(dAvg * 100) + '%', r.x.orders + ' أوردر في 30 يوم']),
         action: 'استبعد ' + r.name + ' من الاستهداف أو خلي التأكيد فيها أقوى', impact: r.x.orders * 20 });
     }
   });
@@ -694,7 +693,7 @@ function anaCatalog_(F, ctx) {
     .filter(r => r.orders > 0 || r.spend >= 100).sort((a, b) => (b.orders - a.orders) || (b.spend - a.spend));
   const top = rows.filter(r => r.orders >= 3 && (!be || r.roas === null || r.roas >= be)).slice(0, 3);
   if (top.length) anaFind_(out, { id: 'cat-top', kind: 'good', pri: 4, area: 'الكتالوج', title: 'الكتالوج بيبيع ' + top.map(r => r.name).join(' و ') + ' أكتر',
-    detail: top.map(r => r.name + ' ' + r.orders + ' أوردر' + (r.roas !== null ? ' (رؤاس ' + anaNum_(r.roas, 2) + ')' : '')).join('، ') + ' في آخر 14 يوم',
+    detail: anaList_(top.map(r => r.name + ': ' + r.orders + ' أوردر' + (r.roas !== null ? '، رؤاس ' + anaNum_(r.roas, 2) : ''))) + '\n(آخر 14 يوم)',
     action: 'اعمل Product set بالمنتجات دي وكامبين كتالوج عليها، أو اعملهم إعلانات خاصة بيهم', impact: top.reduce((s, r) => s + r.revenue, 0) / 14, scope: top[0].name });
   if (be && all.spend >= 2000 && all.revenue / all.spend < be * 0.8) anaFind_(out, { id: 'cat-low', pri: 2, area: 'الكتالوج',
     title: 'إعلانات الكتالوج رؤاسها ' + anaNum_(all.revenue / all.spend, 2) + ' آخر 14 يوم (التعادل ' + anaNum_(be, 2) + ')', detail: 'صرف ' + anaMoney_(all.spend) + ' و ' + all.orders + ' أوردر',
