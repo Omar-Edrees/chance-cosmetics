@@ -11,7 +11,7 @@
  * Ad accounts and stores are read-only from here: no writes to Meta, TikTok or order sources.
  */
 const APP = {
-  VERSION: '1.71.0',
+  VERSION: '1.72.0',
   T: {
     SETTINGS: 'Settings', ACCOUNTS: 'Accounts', PRODUCTS: 'Products', ADMAP: 'Ad Map',
     ADS: 'Ads Raw', ACC_RAW: 'Account Raw', ORDERS: 'Orders Raw', DAILY: 'Daily Log',
@@ -4065,7 +4065,7 @@ function todayMakeRoom_(g) {
  * can be (re)archived from the menu.
  *
  * Columns: TOTAL SPEND (Meta + TikTok, Daily Log), TOTAL ORDERS (every store order but the outside account's, as GRAND TOTAL
- * in Today), ROAS (the orders' totals as made, after discounts with shipping, ÷ spend = Shopify ROAS), ACTUAL ROAS (delivered sales ÷ spend), AOV (sales ÷ orders),
+ * in Today), ROAS (the orders' totals as made, after discounts with shipping, ÷ spend = Shopify ROAS), ACTUAL ROAS (delivered sales ÷ spend), AOV (like Shopify's: NET SALES ÷ the orders read for it, so no shipping),
  * GROSS SALES (the orders' products at their price before discounts, no shipping, as made: 32_shopify_orders.gs),
  * NET SALES (the same products after their discounts, no shipping, as made), REVENUE (delivered orders only, what was
  * collected), TOTAL UNITS, UPO (units ÷ orders), TOTAL ORDERS again (next to the status columns), CONFIRMED (shipped),
@@ -4085,7 +4085,7 @@ const CLOSING = {
     ['TOTAL ORDERS', t => t.orders, '#,##0', false],
     ['ROAS', t => ratioOrBlank_(t.sales, t.spend, 2), '0.00"x"', false],
     ['ACTUAL ROAS', t => (t.known ? ratioOrBlank_(t.revenue, t.knownSpend, 2) : ''), '0.00"x"', true],
-    ['AOV', t => ratioOrBlank_(t.sales, t.orders, 0), '#,##0', false],
+    ['AOV', t => (t.netN > 0 ? ratioOrBlank_(t.net, t.netN, 0) : ''), '#,##0', false], // like Shopify's: NET SALES ÷ the orders that have it
     // Every order of the day has it (read from Shopify), else empty rather than too small.
     ['GROSS SALES', t => (t.orders > 0 && t.grossN === t.orders ? round2_(t.gross) : ''), '#,##0', false],
     ['NET SALES', t => (t.orders > 0 && t.netN === t.orders ? round2_(t.net) : ''), '#,##0', false],
@@ -4165,7 +4165,7 @@ function closingGrid_(month, title, note, today, updated) {
   g.set(2, 7, note, { fc: C.SOFT });
   g.merge(2, 7, 1, W - 6);
   g.set(3, 1, 'TOTAL ORDERS = كل أوردرات شوبيفاي (ماعدا الأكاونت اللي مش معانا)، ومتكرر قبل CONFIRMED عشان المقارنة. ' +
-    'ROAS = إجمالي كل الأوردرات وقت ما اتعملت (بعد الخصم ومعاه الشحن) ÷ الصرف، و AOV = نفس الإجمالي ÷ الأوردرات. ' +
+    'ROAS = إجمالي كل الأوردرات وقت ما اتعملت (بعد الخصم ومعاه الشحن) ÷ الصرف، و AOV زي شوبيفاي = NET SALES (المنتجات بعد الخصم ومن غير الشحن) ÷ الأوردرات اللي اتقرت. ' +
     'GROSS SALES = المنتجات بسعرها قبل الخصم ومن غير الشحن، و NET SALES = نفس المنتجات بعد الخصم ومن غير الشحن، وقت ما الأوردر اتعمل (فاضيين لحد ما يتقروا من شوبيفاي). ' +
     'CONFIRMED = اتشحن. IN SHIPPING = اتشحن ولسه في الشحن (مااتسلمش ومارجعش). DELIVERED = اتسلم واتحصّل. REVENUE = مبيعات المتسلم بس، و ACTUAL ROAS = REVENUE ÷ الصرف. ' +
     'UPO = القطع ÷ الأوردرات. CPL = الصرف ÷ كل الأوردرات. CPO = الصرف ÷ المتسلم. CROSS-SELL REVENUE = اللي اتزود على الأوردرات المتسلمة بعد ما اتعملت (جوه REVENUE). ' +

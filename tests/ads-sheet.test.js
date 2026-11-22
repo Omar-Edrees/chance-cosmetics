@@ -374,8 +374,8 @@ test('Closing: المتأكد والمتسلم و REVENUE الفعلي والك�
   e.c.liveTick(); e.c.liveTick();
   const sh = e.ss.getSheetByName('Closing'), a = closingRow(sh, dayLabel(e.c, d1));
   assert.deepEqual([a['TOTAL SPEND'], a['TOTAL ORDERS'], a.ROAS, a.AOV, a['TOTAL UNITS'], a['CONFIRMED ORDERS'], a['IN SHIPPING'], a['DELIVERED ORDERS'], a.REVENUE,
-    a['ACTUAL ROAS'], a.CPO, a['CROSS-SELL REVENUE'], a.CPL], [1000, 5, 1.5, 300, 7, 4, 1, 2, 1100, 1.1, 500, 300, 200],
-  'المتسلم: أوردر 1 (اتزود عليه 300 بعد ما اتعمل) وأوردر 2؛ والقطع من شوبيفاي لأوردر 1');
+    a['ACTUAL ROAS'], a.CPO, a['CROSS-SELL REVENUE'], a.CPL], [1000, 5, 1.5, '', 7, 4, 1, 2, 1100, 1.1, 500, 300, 200],
+  'المتسلم: أوردر 1 (اتزود عليه 300 بعد ما اتعمل) وأوردر 2؛ والقطع من شوبيفاي لأوردر 1؛ و AOV فاضي لحد ما NET SALES يتقري من شوبيفاي');
   if (today >= d2) {
     const b = closingRow(sh, dayLabel(e.c, d2));
     assert.deepEqual([b['TOTAL ORDERS'], b['CONFIRMED ORDERS'], b.REVENUE, b['ACTUAL ROAS']], [1, '', '', ''], 'بعد آخر قراية للحالة: فاضي');
@@ -1903,7 +1903,8 @@ test('Closing: GROSS SALES (المنتجات قبل الخصم ومن غير ا�
   assert.equal(tab[0][18], 'Net Sales');
   assert.deepEqual(tab.slice(1).map(r => r[18]), [649, 449]);
   const day = closingRow(e.ss.getSheetByName('Closing'), dayLabel(e.c, today));
-  assert.deepEqual([day['GROSS SALES'], day['NET SALES'], day.ROAS, day.AOV], [1147, 1098, '', 634]);
+  // AOV زي شوبيفاي: NET SALES (من غير الشحن) ÷ الأوردرات = 1098 ÷ 2
+  assert.deepEqual([day['GROSS SALES'], day['NET SALES'], day.ROAS, day.AOV], [1147, 1098, '', 549]);
   assert.match(e.ss.getSheetByName('Health').getDataRange().getValues().map(r => r.join(' ')).join('\n'), /الجروس سيلز من شوبيفاي .*✓ 2 أوردر/);
   // أوردر جديد لسه ماتقراش الجروس بتاعه: اليوم يبان فاضي مش ناقص
   opt.created.push(order(3, '08:00', 300));
