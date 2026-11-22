@@ -1,11 +1,12 @@
 /*
- * Drawing the "Analysis & Actions" tab (the parts are in 38_analysis.gs).
- * Left (A–E): the actions, most urgent first (with ✅ to mark one done), then the problems, then the good things.
- * Right, at the top (fixed rows): your tasks (G–K) and the before / after table (L–R), both typed by hand in the yellow rows:
- * they are read before every drawing and drawn again in place, so what you type stays. A task that isn't done joins the
- * actions list with its priority. ✅ on an action moves it to the before / after table (today's date, the metric and what
- * it's on), and hides it for ANA.DONE_DAYS days; before = the 7 days before the day it was done, after = from that day.
- * Right, under them: every part's numbers, one table each.
+ * Drawing the "Actions" and "Analysis" tabs (the parts are in 38_analysis.gs).
+ * Actions: only what needs doing: 🔴 urgent and 🟠 important (findings of one kind merged into one action), the best
+ * ANA.ACT_GOOD opportunities and your open tasks, with ✅ to mark one done; your tasks (G–K) and before / after (L–R), typed
+ * by hand in the yellow rows: read before every drawing and drawn again in place, so what you type stays. ✅ moves an action
+ * to before / after (today's date, the metric and what it's on) and hides it for ANA.DONE_DAYS days.
+ * Analysis: small tables at the top to read at a glance (today, the accounts, the important problems, cancellation,
+ * today's 3-hour windows, what goes well), then every part's table under a + on its title, closed unless you opened it
+ * (the stock: a + on each product for its colors). 🟡 findings (watch only, no action) are there, not in Actions.
  * Drawn with the views (every 15 minutes) when there's time left in the run, and from the menu.
  */
 
@@ -95,7 +96,9 @@ function anaEdit_(name, a1) {
 
 function writeAnalysisTab_() {
   if (DEADLINE_ && DEADLINE_ - Date.now() < 60000) return false; // not enough time left in this run: the next one draws it
-  const sh = ensureTab_(ANA.TAB), today = todayKey_(), props = PropertiesService.getDocumentProperties();
+  // The tab of version 1.68 becomes Actions (what's typed in it stays); its numbers move to Analysis.
+  if (!ss_().getSheetByName(ANA.TAB) && ss_().getSheetByName(ANA.OLD_TAB)) ss_().getSheetByName(ANA.OLD_TAB).setName(ANA.TAB);
+  const sh = ensureTab_(ANA.TAB), today = todayKey_();
   const manual = anaReadManual_(sh, today), F = anaFacts_(today), ctx = { mc: MC_LAST_ ? MC_LAST_.camps : null };
   ctx.be = anaBe_(F);
   const P = {}, errors = [];
@@ -107,36 +110,38 @@ function writeAnalysisTab_() {
   let finds = [];
   Object.keys(P).forEach(k => { finds = finds.concat(P[k].find || []); });
   const seen = {};
-  finds = finds.filter(f => !(done[f.id] && done[f.id] > since) && !seen[f.id] && (seen[f.id] = true));
-  const order = (a, b) => (a.pri - b.pri) || (b.impact - a.impact);
-  // Your tasks: open ones first by priority; they join the actions.
+  finds = anaMerge_(finds.filter(f => !seen[f.id] && (seen[f.id] = true))).filter(f => !(done[f.id] && done[f.id] > since));
+  const M = { bad: finds.filter(f => f.kind === 'bad' && f.pri <= 2), good: finds.filter(f => f.kind === 'good'), watch: finds.filter(f => f.pri === 3) };
+  if (errors.length) console.error('Analysis: ' + errors.join(' | '));
+  anaDrawActions_(sh, today, manual, F, M, errors);
+  anaDrawAnalysis_(ensureTab_(ANA.TAB2), F, P, M, ctx, errors);
+  return true;
+}
+
+/* Tab Actions: the urgent and important actions, the best opportunities and your open tasks; your tasks; before / after. */
+function anaDrawActions_(sh, today, manual, F, M, errors) {
+  const props = PropertiesService.getDocumentProperties(), order = (a, b) => (a.pri - b.pri) || (b.impact - a.impact);
   const tasks = manual.tasks.slice().sort((a, b) => ((a.status === ANA.STATUS[2]) - (b.status === ANA.STATUS[2])) || (a.pri - b.pri));
   const N = Math.max(ANA.MIN_ROWS, tasks.length + ANA.SPARE, manual.ba.length + ANA.SPARE), first = ANA.TOP + 2;
-  const actions = finds.slice().concat(tasks.map((t, i) => ({ id: 'task|' + sha_(t.text).slice(0, 12), kind: 'task', pri: t.pri, area: 'مهمة يدوية', title: t.note || 'مكتوبة بإيدك يوم ' + t.added,
-    action: t.text, impact: 0, metric: ANA.METRICS[0], scope: ANA.BIZ, trow: first + i, status: t.status })).filter(t => t.status !== ANA.STATUS[2]))
-    .sort(order);
-
-  const g = todayGrid_();
-  g.width = ANA.WIDTH;
-  const W = ANA.WIDTH, R = ANA.R, BA = ANA.BA, dark = { bg: ANA.DARK, fc: '#ffffff', b: 'bold' };
-  g.set(1, 1, 'ANALYSIS & ACTIONS — تعمل إيه دلوقتي' + (ctx.be ? ' | رؤاس التعادل ' + anaNum_(ctx.be, 2) : ' | مفيش رؤاس تعادل: اكتب be.roas في Settings'), dark);
+  const actions = M.bad.concat(M.good.slice(0, ANA.ACT_GOOD), tasks.map((t, i) => ({ id: 'task|' + sha_(t.text).slice(0, 12), kind: 'task', pri: t.pri,
+    area: 'مهمة يدوية', title: t.note || 'مكتوبة بإيدك يوم ' + t.added, action: t.text, impact: 0, metric: ANA.METRICS[0], scope: ANA.BIZ, trow: first + i,
+    status: t.status })).filter(t => t.status !== ANA.STATUS[2])).sort(order);
+  const g = todayGrid_(), W = ANA.WIDTH, R = ANA.R, BA = ANA.BA, dark = { bg: ANA.DARK, fc: '#ffffff', b: 'bold' };
+  g.width = W;
+  g.set(1, 1, 'ACTIONS — تعمل إيه النهارده بالترتيب' + (anaBe_(F) ? '' : ' | مفيش رؤاس تعادل: اكتب be.roas في Settings'), dark);
   g.fill(1, 2, W - 1, { bg: ANA.DARK });
   g.merge(1, 1, 1, W);
-  g.set(2, 1, 'الأكشنز مترتبة من الأهم: 🔴 عاجل (بيخسرك دلوقتي)، 🟠 مهم، 🟡 راقب، 🟢 فرصة تكبّر فيها، وجوه كل أولوية الأكبر فلوس الأول. ' +
-    'علّم ✅ لما تعمل الأكشن: بيتنقل لجدول "قبل وبعد" ويستخبى ' + ANA.DONE_DAYS + ' أيام. اكتب مهامك في الصفوف الصفرا (بتدخل في الأكشنز بأولويتها)، ' +
-    'وفي "قبل وبعد" اكتب الأكشن ويوم ما عملته والمقياس وعلى إيه (البيزنس كله، أو اسم حساب أو منتج أو كامبين): قبل = الـ 7 أيام اللي قبلها، بعد = من يومها.' +
+  g.set(2, 1, 'هنا المهم بس: 🔴 عاجل (بيخسرك دلوقتي) و 🟠 مهم، وأحسن ' + ANA.ACT_GOOD + ' فرص 🟢، ومهامك. الحاجات اللي من نوع واحد (كامبينات توقفها، منتجات تطلب لها ستوك ...) في أكشن واحد. ' +
+    'علّم ✅ لما تعمله: بيتنقل لـ "قبل وبعد" ويستخبى ' + ANA.DONE_DAYS + ' أيام. اللي محتاج تراقبه بس (🟡) والأرقام كلها في تاب ' + ANA.TAB2 + '.' +
     (errors.length ? '   ⚠️ أجزاء ماتحسبتش: ' + errors.join(' | ') : ''), { fc: '#374151' });
   g.merge(2, 1, 1, W);
   g.set(3, 1, 'آخر تحديث ' + nowText_(), { fc: ANA.GREY });
   g.merge(3, 1, 1, 3);
-
-  // Left: actions, problems, good things.
-  let r = todayHead_(g, ANA.TOP, 1, 5, 'الأكشنز — تعمل إيه بالترتيب (' + actions.length + ')', ['الأولوية', 'الأكشن', 'ليه (المشكلة بالأرقام)', 'القسم', '✅ اتعملت']);
+  let r = todayHead_(g, ANA.TOP, 1, 5, 'الأكشنز (' + actions.length + ')', ['الأولوية', 'الأكشن', 'ليه (بالأرقام)', 'القسم', '✅ اتعملت']);
   const findRows = [];
-  if (!actions.length) { g.set(r, 1, 'مفيش أكشنز دلوقتي', { fc: ANA.GREY }); g.merge(r, 1, 1, 5); r++; }
+  if (!actions.length) { g.set(r, 1, 'مفيش حاجة عاجلة دلوقتي ✅', { fc: ANA.GREY }); g.merge(r, 1, 1, 5); r++; }
   actions.forEach(f => {
-    const bg = ANA.PRI_BG[f.pri];
-    g.set(r, 1, ANA.PRI[f.pri], { bg: bg, b: 'bold', al: 'center' });
+    g.set(r, 1, ANA.PRI[f.pri], { bg: ANA.PRI_BG[f.pri], b: 'bold', al: 'center' });
     g.set(r, 2, f.action, { b: 'bold' });
     g.set(r, 3, f.kind === 'task' ? f.title : f.title + (f.detail ? ' — ' + f.detail : ''), {});
     g.set(r, 4, f.area, { al: 'center', fc: ANA.GREY });
@@ -144,22 +149,8 @@ function writeAnalysisTab_() {
     findRows.push({ row: r, id: f.id, action: f.action, metric: f.metric, scope: f.scope, trow: f.trow || 0 });
     r++;
   });
-  const listOf = (title, kind, headers) => {
-    r = todayHead_(g, r + 1, 1, 4, title, headers);
-    const list = finds.filter(f => f.kind === kind).sort(order);
-    if (!list.length) { g.set(r, 1, kind === 'bad' ? 'مفيش مشاكل ظاهرة دلوقتي ✅' : 'مفيش حاجة طالعة بوضوح دلوقتي', { fc: ANA.GREY }); g.merge(r, 1, 1, 4); r++; }
-    list.forEach(f => {
-      g.set(r, 1, ANA.PRI[f.pri], { bg: ANA.PRI_BG[f.pri], b: 'bold', al: 'center' });
-      g.set(r, 2, f.title, { b: 'bold' });
-      g.set(r, 3, f.detail || '', {});
-      g.set(r, 4, f.area, { al: 'center', fc: ANA.GREY });
-      r++;
-    });
-  };
-  listOf('المشاكل (' + finds.filter(f => f.kind === 'bad').length + ')', 'bad', ['الأولوية', 'المشكلة', 'التفاصيل', 'القسم']);
-  listOf('الحاجات الكويسة (' + finds.filter(f => f.kind === 'good').length + ')', 'good', ['', 'الحاجة الكويسة', 'التفاصيل', 'القسم']);
+  if (M.watch.length) { g.set(r, 1, '🟡 ' + M.watch.length + ' حاجة تتراقب بس (من غير أكشن دلوقتي): في تاب ' + ANA.TAB2, { fc: ANA.GREY }); g.merge(r, 1, 1, 5); }
 
-  // Right, top: your tasks and before / after, in fixed rows.
   todayHead_(g, ANA.TOP, R, 5, 'مهامي — اكتب هنا', ['المهمة', 'الأولوية', 'الحالة', 'اتضافت يوم', 'ملاحظات']);
   todayHead_(g, ANA.TOP, BA, 7, 'قبل وبعد — الأكشنز اللي اتعملت', ['الأكشن', 'اتعمل يوم', 'المقياس', 'على', 'قبل (7 أيام)', 'بعد', 'التغيير']);
   for (let i = 0; i < N; i++) {
@@ -186,32 +177,16 @@ function writeAnalysisTab_() {
     g.cell(row, R + 3).nf = '@'; // dates stay as typed text (2026-11-21)
     g.cell(row, BA + 1).nf = '@';
   }
-
-  // Right, under them: the parts' numbers.
-  let q = first + N + 1;
-  q = anaDrawRoas_(g, q, F, P.acc, ctx) + 1;
-  q = anaDrawWindows_(g, q, F, P.win) + 1;
-  q = anaDrawBench_(g, q, P.bench) + 1;
-  q = anaDrawFunnel_(g, q, P.funnel) + 1;
-  q = anaDrawStock_(g, q, P.stock) + 1;
-  q = anaDrawCancel_(g, q, P.cancel) + 1;
-  q = anaDrawDup_(g, q, P.dup) + 1;
-  q = anaDrawShop_(g, q, P.shop) + 1;
-  q = anaDrawProducts_(g, q, P.prod) + 1;
-  q = anaDrawGov_(g, q, P.gov) + 1;
-  anaDrawCatalog_(g, q, P.cat);
   g.live = [[3, 1]];
-
   const oldN = Number(props.getProperty(ANA.ROWS_KEY) || 0);
   let oldFinds = [];
   try { oldFinds = JSON.parse(propGetBig_(ANA.FIND_KEY) || '[]'); } catch (e) { oldFinds = []; }
   const drew = writeGrid_(sh, g);
   props.setProperty(ANA.ROWS_KEY, String(N));
   propSetBig_(ANA.FIND_KEY, JSON.stringify(findRows));
-  if (errors.length) console.error('Analysis: ' + errors.join(' | '));
-  if (!drew) return true;
+  if (!drew) return;
   // The ✅ boxes and the lists to choose from, where the rows are now.
-  const lastOld = oldFinds.length ? oldFinds[oldFinds.length - 1].row : 0;
+  const lastOld = Math.max(oldFinds.length ? oldFinds[oldFinds.length - 1].row : 0, sh.getLastRow());
   if (lastOld >= ANA.TOP) sh.getRange(ANA.TOP, 5, lastOld - ANA.TOP + 1, 1).setDataValidation(null);
   if (findRows.length) sh.getRange(findRows[0].row, 5, findRows.length, 1).insertCheckboxes();
   if (oldN > N) sh.getRange(first + N, R, oldN - N, 12).setDataValidation(null);
@@ -227,14 +202,212 @@ function writeAnalysisTab_() {
   sh.getRange(1, 2, sh.getMaxRows(), 2).setWrap(true);
   sh.getRange(first, R, N, 1).setWrap(true);
   sh.getRange(first, BA, N, 1).setWrap(true);
-  sh.getRange(first + N, R, Math.max(q - first - N, 1), 1).setWrap(true);
-  sh.getRange(first + N, BA, Math.max(q - first - N, 1), 1).setWrap(true);
   sh.getRange(1, 1, Math.max(g.rows.length, 1), W).setVerticalAlignment('top');
-  return true;
 }
 
-/* A part's title bar and header row on the right side, from column G; returns the first data row. */
-function anaHead_(g, r, title, headers) { return todayHead_(g, r, ANA.R, headers.length, title, headers); }
+/*
+ * A view of the grid for the Analysis tab's detail tables: they're written in columns ANA.R + 0 … 11 (as on one wide
+ * table), shown in the 12 columns that aren't gaps (ANA.LC). Row kinds for the + / − go in g.kinds.
+ */
+function anaMapGrid_(g) {
+  const map = c => ANA.LC[c - ANA.R] || c;
+  return { kinds: g.kinds, cell: (r, c) => g.cell(r, map(c)), set: (r, c, v, s) => g.set(r, map(c), v, s),
+    fill: (r, c, n, s) => { for (let i = 0; i < n; i++) g.set(r, map(c + i), g.cell(r, map(c + i)).v, s); },
+    merge: (r, c, rows, cols) => g.merge(r, map(c), rows, map(c + cols - 1) - map(c) + 1) };
+}
+
+/* Tab Analysis: small tables to read at a glance, then every part's table under a + (closed unless you opened it). */
+function anaDrawAnalysis_(sh, F, P, M, ctx, errors) {
+  const g = todayGrid_(), W = ANA.W2.length, dark = { bg: ANA.DARK, fc: '#ffffff', b: 'bold' }, be = ctx.be, props = PropertiesService.getDocumentProperties();
+  g.width = W; g.kinds = {};
+  g.set(1, 1, 'ANALYSIS — الدنيا ماشية إزاي' + (be ? ' | رؤاس التعادل ' + anaNum_(be, 2) : ' | مفيش رؤاس تعادل: اكتب be.roas في Settings'), dark);
+  g.fill(1, 2, W - 1, { bg: ANA.DARK });
+  g.merge(1, 1, 1, W);
+  g.set(2, 1, 'فوق: الجداول الصغيرة اللي تفهم منها الدنيا في بصة. تحت: كل جزء بالتفاصيل، اضغط + جنب عنوانه تفتحه. الأكشنز في تاب ' + ANA.TAB + '.' +
+    (errors.length ? '   ⚠️ أجزاء ماتحسبتش: ' + errors.join(' | ') : ''), { fc: '#374151' });
+  g.merge(2, 1, 1, W);
+  g.set(3, 1, 'آخر تحديث ' + nowText_(), { fc: ANA.GREY });
+  const box = (r, c, title, headers) => todayHead_(g, r, c, headers.length, title, headers);
+  const pc = v => (v === null || v === undefined || v === '' ? '—' : v);
+  const chBg = (v, up) => (typeof v !== 'number' || Math.abs(v) < 0.05 ? null : (v > 0) === up ? ANA.GREEN : ANA.RED);
+  // 1) Today at a glance (Shopify's cards until now, against yesterday until the same hour).
+  let a = box(4, 1, 'النهارده بسرعة', ['', 'النهارده', 'إمبارح', 'التغيير', 'الأسبوع اللي فات']);
+  const m = P.shop && P.shop.m;
+  if (m) {
+    g.set(4, 1, 'النهارده بسرعة (لحد ' + m.at + '، قدام نفس الساعة)', dark);
+    m.cards.forEach(c => {
+      const nf = c.pct ? '0.00%' : ANA.MONEY, x = c.values, ch = typeof x[0] === 'number' && typeof x[1] === 'number' && x[1] > 0 ? x[0] / x[1] - 1 : '';
+      g.set(a, 1, c.title, { b: 'bold' });
+      g.set(a, 2, pc(x[0]), { nf: nf, al: 'right', b: 'bold' });
+      g.set(a, 3, pc(x[1]), { nf: nf, al: 'right', fc: ANA.GREY });
+      g.set(a, 4, pc(ch), { nf: '0%', al: 'center', bg: c.up === null ? null : chBg(ch, c.up) });
+      g.set(a, 5, pc(x[2]), { nf: nf, al: 'right', fc: ANA.GREY });
+      a++;
+    });
+  } else {
+    const t = anaSum_(F.biz, F.today, F.today), y = anaSum_(F.biz, shiftKey_(F.today, -1), shiftKey_(F.today, -1));
+    g.set(4, 1, 'النهارده بسرعة (قدام إمبارح كله)', dark);
+    [['الصرف', 'spend', ANA.MONEY], ['الأوردرات', 'orders', ANA.COUNT], ['المبيعات', 'revenue', ANA.MONEY]].forEach(k => {
+      g.set(a, 1, k[0], { b: 'bold' }); g.set(a, 2, t[k[1]], { nf: k[2], al: 'right', b: 'bold' }); g.set(a, 3, y[k[1]], { nf: k[2], al: 'right', fc: ANA.GREY }); a++;
+    });
+  }
+  // 2) The accounts: Shopify ROAS today, the last 3 days and the 7 before.
+  let b = box(4, 7, 'الحسابات — Shopify ROAS', ['الحساب', 'النهارده', 'آخر 3 أيام', 'الـ 7 قبلها']);
+  const y = shiftKey_(F.today, -1), d3 = shiftKey_(F.today, -3), d4 = shiftKey_(F.today, -4), d10 = shiftKey_(F.today, -10);
+  const ids = (P.acc && P.acc.meta || []).concat(P.acc && P.acc.tt || []);
+  const sumAll = (from, to) => ids.reduce((t, id) => anaAdd_(t, anaSum_(F.acc[id], from, to)), anaZero_());
+  const accLine = (label, fn, style) => {
+    g.set(b, 7, label, Object.assign({ b: 'bold' }, style || {}));
+    [[F.today, F.today], [d3, y], [d10, d4]].forEach((p, i) => anaRoasCell_(g, b, 8 + i, anaRoas_(fn(p[0], p[1])), be, anaRoas_(fn(F.month0, F.today))));
+    b++;
+  };
+  accLine('كل الحسابات', sumAll, { bg: ANA.BLUE });
+  ids.slice(0, 8).forEach(id => accLine((F.accPlat[id] === 'TIKTOK' ? 'TikTok ' : '') + F.accName[id], (from, to) => anaSum_(F.acc[id], from, to)));
+  // 3) The important problems.
+  let c = box(4, 12, 'المشاكل المهمة (' + M.bad.length + ')', ['الأولوية', 'المشكلة', 'القسم']);
+  if (!M.bad.length) { g.set(c, 12, 'مفيش مشاكل مهمة دلوقتي ✅', { fc: ANA.GREY }); g.merge(c, 12, 1, 3); c++; }
+  M.bad.slice(0, ANA.TOP_LIST).forEach(f => {
+    g.set(c, 12, ANA.PRI[f.pri], { bg: ANA.PRI_BG[f.pri], b: 'bold', al: 'center' });
+    g.set(c, 13, f.title, { b: 'bold' });
+    g.set(c, 14, f.area, { al: 'center', fc: ANA.GREY });
+    c++;
+  });
+  if (M.bad.length > ANA.TOP_LIST) { g.set(c, 13, 'و ' + (M.bad.length - ANA.TOP_LIST) + ' كمان في تاب ' + ANA.TAB, { fc: ANA.GREY }); c++; }
+  let r = Math.max(a, b, c) + 1;
+  // 4) Cancellation, returns and ROAS: the last 7 full days against the 7 before, this month against last month.
+  a = box(r, 1, 'الإلغاء والمرتجع والرؤاس', ['', 'الفترة دي', 'قبلها', 'التغيير', '']);
+  const cp = P.cancel && P.cancel.rows ? P.cancel.rows : [], biz = cp[0], mon = cp[1];
+  const t7 = anaSum_(F.biz, shiftKey_(F.today, -7), y), p7 = anaSum_(F.biz, shiftKey_(F.today, -14), shiftKey_(F.today, -8));
+  const lineR = (label, v, w, up, nf) => {
+    const ch = typeof v === 'number' && typeof w === 'number' ? (nf === ANA.PCT ? v - w : w > 0 ? v / w - 1 : '') : '';
+    g.set(a, 1, label, { b: 'bold' });
+    g.set(a, 2, pc(v), { nf: nf, al: 'center', b: 'bold' });
+    g.set(a, 3, pc(w), { nf: nf, al: 'center', fc: ANA.GREY });
+    g.set(a, 4, ch === '' ? '—' : nf === ANA.PCT ? (ch > 0 ? '+' : '') + Math.round(ch * 1000) / 10 + ' نقطة' : ch, { nf: '0%', al: 'center',
+      bg: typeof ch === 'number' && Math.abs(ch) >= (nf === ANA.PCT ? 0.03 : 0.05) ? ((ch > 0) === up ? ANA.GREEN : ANA.RED) : null });
+    a++;
+  };
+  lineR('Shopify ROAS (7 أيام)', anaRoas_(t7), anaRoas_(p7), true, ANA.RATIO);
+  if (biz) { lineR('الإلغاء (7 أيام)', biz.ca, biz.cb, false, ANA.PCT); lineR('المرتجع (7 أيام)', biz.ra, biz.rb, false, ANA.PCT); }
+  if (mon) { lineR('الإلغاء (الشهر قدام اللي فات)', mon.ca, mon.cb, false, ANA.PCT); lineR('المرتجع (الشهر قدام اللي فات)', mon.ra, mon.rb, false, ANA.PCT); }
+  // 5) Today's 3-hour windows.
+  b = box(r, 7, 'الـ 3 ساعات النهارده (Meta + DIRECT)', ['الوقت', 'الصرف', 'ROAS', 'المعتاد']);
+  const wins = (P.win && P.win.rows || []).filter(x => !x.n);
+  if (!wins.length) { g.set(b, 7, 'لسه مفيش لقطات النهارده', { fc: ANA.GREY }); g.merge(b, 7, 1, 4); b++; }
+  wins.forEach(x => {
+    g.set(b, 7, anaHour_(x.w.from) + ' → ' + anaHour_(x.w.to), { b: 'bold' });
+    g.set(b, 8, anaNum_(x.w.META.spend, 0), { nf: ANA.MONEY, al: 'right' });
+    g.set(b, 9, x.r === null ? '—' : anaNum_(x.r, 2), { nf: ANA.RATIO, al: 'center', b: 'bold', bg: x.weak ? ANA.RED : x.r !== null && x.ur && x.r >= x.ur ? ANA.GREEN : null });
+    g.set(b, 10, x.ur === null ? '—' : anaNum_(x.ur, 2), { nf: ANA.RATIO, al: 'center', fc: ANA.GREY });
+    b++;
+  });
+  // 6) What goes well.
+  c = box(r, 12, 'الحاجات الكويسة (' + M.good.length + ')', ['', 'الحاجة الكويسة', 'القسم']);
+  if (!M.good.length) { g.set(c, 12, 'مفيش حاجة طالعة بوضوح دلوقتي', { fc: ANA.GREY }); g.merge(c, 12, 1, 3); c++; }
+  M.good.slice(0, ANA.TOP_LIST).forEach(f => {
+    g.set(c, 12, '🟢', { bg: ANA.PRI_BG[4], al: 'center' });
+    g.set(c, 13, f.title, { b: 'bold' });
+    g.set(c, 14, f.area, { al: 'center', fc: ANA.GREY });
+    c++;
+  });
+  r = Math.max(a, b, c) + 1;
+
+  // The detail tables, each under a + on its title.
+  const first = r, dg = anaMapGrid_(g);
+  const sec = (key, fn) => {
+    const t = r;
+    r = fn(r);
+    g.kinds[t] = ['sec|' + key, 0, true];
+    for (let i = t + 1; i < r; i++) if (!g.kinds[i]) g.kinds[i] = ['', 1, false];
+    r++;
+  };
+  sec('watch', q => anaDrawWatch_(dg, q, M.watch));
+  sec('roas', q => anaDrawRoas_(dg, q, F, P.acc, ctx));
+  sec('win', q => anaDrawWindows_(dg, q, F, P.win));
+  sec('bench', q => anaDrawBench_(dg, q, P.bench));
+  sec('funnel', q => anaDrawFunnel_(dg, q, P.funnel));
+  sec('stock', q => anaDrawStock_(dg, q, P.stock));
+  sec('cancel', q => anaDrawCancel_(dg, q, P.cancel));
+  sec('dup', q => anaDrawDup_(dg, q, P.dup));
+  sec('shop', q => anaDrawShop_(dg, q, P.shop));
+  sec('prod', q => anaDrawProducts_(dg, q, P.prod));
+  sec('gov', q => anaDrawGov_(dg, q, P.gov));
+  sec('cat', q => anaDrawCatalog_(dg, q, P.cat));
+  g.live = [[3, 1]];
+  const rowsIds = [];
+  for (let i = first; i < r; i++) rowsIds.push(g.kinds[i] || ['', 0, false]);
+  anaGroupsDraw_(sh, g, first, rowsIds);
+  sh.getRange(1, 13, sh.getMaxRows(), 1).setWrap(true);
+  sh.getRange(1, 7, sh.getMaxRows(), 1).setWrap(true);
+  sh.getRange(first, 1, Math.max(r - first, 1), 1).setWrap(true);
+}
+
+/*
+ * Draws the tab with its + / − from row `first` (ids: [key, depth, has kids] per row), like the Duplication tab: when the
+ * rows changed or the groups on the sheet aren't what was drawn, every row from `first` down is deleted and the groups are
+ * made again, closed, and the ones that were open opened again.
+ */
+function anaGroupsDraw_(sh, g, first, ids) {
+  const props = PropertiesService.getDocumentProperties(), key = ANA.GROUPS, W = g.width;
+  const sig = sha_(JSON.stringify([first, ids.map(x => x[0] + '/' + x[1])]));
+  let old = null;
+  try { old = JSON.parse(props.getProperty(key) || 'null'); } catch (e) { old = null; }
+  const ok = mcGroupsOk_(sh, first - 1, first, ids), same = old && old.sig === sig && sh.getLastRow() > 0 && ok, open = new Set();
+  if (!same) {
+    if (old && sh.getLastRow() >= old.first && (ok || mcGroupsOk_(sh, old.first - 1, old.first, old.ids))) {
+      old.ids.forEach((x, i) => {
+        if (!x[2] || !x[0]) return;
+        try { const grp = sh.getRowGroup(old.first + i + 1, x[1] + 1); if (grp && !grp.isCollapsed()) open.add(x[0]); } catch (e) { /* مفيش جروب */ }
+      });
+    }
+    mcUngroupAbove_(sh, first);
+    if (sh.getMaxRows() >= first) sh.deleteRows(first, sh.getMaxRows() - first + 1);
+    sh.insertRowsAfter(first - 1, ids.length + 20);
+    props.deleteProperty(key);
+    props.deleteProperty('GH_' + sh.getName());
+  }
+  const drew = writeGrid_(sh, g);
+  if (!drew && same) return;
+  if (!same) {
+    try { sh.setRowGroupControlPosition(SpreadsheetApp.GroupControlTogglePosition.BEFORE); } catch (e) { /* قديم */ }
+    ids.forEach((x, i) => {
+      if (!x[2]) return;
+      let k = i + 1;
+      while (k < ids.length && ids[k][1] > x[1]) k++;
+      if (k > i + 1) sh.getRange(first + i + 1, 1, k - i - 1, 1).shiftRowGroupDepth(1);
+    });
+    if (ids.some(x => x[1] > 0)) {
+      sh.collapseAllRowGroups();
+      ids.forEach((x, i) => { if (open.has(x[0]) && x[2]) { try { sh.getRowGroup(first + i + 1, x[1] + 1).expand(); } catch (e) { /* اتغير */ } } });
+    }
+    props.setProperty(key, JSON.stringify({ sig: sig, first: first, ids: ids }));
+  }
+  ANA.W2.forEach((w, i) => sh.setColumnWidth(i + 1, w));
+  sh.getRange(1, 1, Math.max(g.rows.length, 1), W).setVerticalAlignment('top');
+}
+
+/* The things to keep an eye on (🟡): no action for now. */
+function anaDrawWatch_(g, r, list) {
+  const R = ANA.R;
+  r = anaHead_(g, r, '🟡 تتراقب بس (' + list.length + ') — مش محتاجة أكشن دلوقتي، بس لو كبرت هتطلع في الأكشنز', ['القسم', '', '', '', '', 'لو كبرت تعمل إيه', '', '', '', '', 'المتابعة']);
+  if (!list.length) return anaEmpty_(g, r, 'مفيش');
+  list.forEach(f => {
+    g.set(r, R, f.area, { b: 'bold', fc: ANA.GREY });
+    g.set(r, R + 5, f.action, {});
+    g.set(r, R + 10, f.title + (f.detail ? '\n' + f.detail : ''), {});
+    r++;
+  });
+  return r;
+}
+
+/* A part's title bar (the whole width) and header row; returns the first data row. */
+function anaHead_(g, r, title, headers) {
+  g.set(r, ANA.R, title, { bg: ANA.DARK, fc: '#ffffff', b: 'bold' });
+  g.fill(r, ANA.R + 1, 11, { bg: ANA.DARK });
+  g.merge(r, ANA.R, 1, 12);
+  headers.forEach((h, i) => g.set(r + 1, ANA.R + i, h, { bg: TODAY.YELLOW, b: 'bold', al: 'center' }));
+  return r + 2;
+}
 function anaEmpty_(g, r, text) { g.set(r, ANA.R, text, { fc: ANA.GREY }); g.merge(r, ANA.R, 1, 6); return r + 1; }
 function anaRoasCell_(g, r, c, v, be, ref) {
   if (v === null || v === undefined || v === '') { g.set(r, c, '—', { al: 'center', fc: ANA.GREY }); return; }
@@ -340,17 +513,20 @@ function anaDrawFunnel_(g, r, part) {
 
 function anaDrawStock_(g, r, part) {
   const R = ANA.R;
-  r = anaHead_(g, r, 'الستوك — الألوان اللي خلصت أو هتخلص في ' + COVER.RED + ' أيام أو أقل وعليها طلب، الأكتر طلب الأول (القطع من أوردرات مااتلغتش ولا رجعت)',
+  r = anaHead_(g, r, 'الستوك — الأولوية بس: المنتجات اللي عليها إعلانات شغالة أو بتتباع كتير، وألوانها خلصت أو هتخلص في ' + COVER.RED + ' أيام (' +
+    (part && part.rows ? part.rows.length : 0) + ' منتج، اضغط + جنب المنتج تشوف ألوانه)',
     ['المنتج ← اللون', 'الستوك', 'اتباع آخر 7 أيام', 'اتباع آخر 30 يوم', 'يكفي كام يوم', 'ملاحظة', 'اطلب كام (30 يوم)']);
   if (!part || part.none) return anaEmpty_(g, r, 'محتاج الشيت مربوط بأبليكيشن شوبيفاي (ستوك الألوان وأوردراتها)');
   if (!part.rows.length) return anaEmpty_(g, r, 'مفيش ألوان بتتباع وقرّبت تخلص ✅');
   part.rows.forEach(p => {
-    g.set(r, R, p.name, { b: 'bold', bg: ANA.LABEL });
+    if (g.kinds) g.kinds[r] = ['stock|' + p.name, 1, true];
+    g.set(r, R, p.name + ' (' + p.list.length + ' لون)', { b: 'bold', bg: ANA.LABEL });
     g.fill(r, R + 1, 6, { bg: ANA.LABEL });
     g.set(r, R + 3, p.m, { nf: ANA.COUNT, al: 'center', b: 'bold', bg: ANA.LABEL });
     g.set(r, R + 5, p.ads > 0 ? 'عليه ' + p.ads + ' إعلان شغال' : 'مفيش إعلانات شغالة', { bg: ANA.LABEL, fc: p.ads > 0 ? '#991b1b' : ANA.GREY });
     r++;
     p.list.forEach(v => {
+      if (g.kinds) g.kinds[r] = ['', 2, false];
       g.set(r, R, '   ↳ ' + v.title, {});
       g.set(r, R + 1, v.stock, { nf: ANA.COUNT, al: 'center' });
       g.set(r, R + 2, v.w, { nf: ANA.COUNT, al: 'center' });
@@ -539,7 +715,7 @@ function refreshAnalysisNow() {
       try { writeMetaCamps_(); } catch (e) { console.error('meta camps: ' + errText_(e)); }
       writeAnalysisTab_();
     });
-    alert_('اتحدث تاب ' + ANA.TAB + ' ✅');
+    alert_('اتحدث تاب ' + ANA.TAB + ' وتاب ' + ANA.TAB2 + ' ✅');
     ss_().setActiveSheet(tab_(ANA.TAB));
-  } catch (e) { alert_('تاب ' + ANA.TAB + ' ماتحدثش:\n' + errText_(e)); }
+  } catch (e) { alert_('تاب ' + ANA.TAB + ' و ' + ANA.TAB2 + ' ماتحدثوش:\n' + errText_(e)); }
 }
