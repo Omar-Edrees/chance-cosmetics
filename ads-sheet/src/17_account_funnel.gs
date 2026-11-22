@@ -206,12 +206,20 @@ function writeFunnel_(data) {
   const monthEnd = ym => { const p = ym.split('-').map(Number); return new Date(Date.UTC(p[0], p[1], 0)).toISOString().slice(0, 10); };
   const allSpend = {};
   Object.keys(shop.spend).forEach(acc => Object.keys(shop.spend[acc]).forEach(d => { allSpend[d] = (allSpend[d] || 0) + shop.spend[acc][d]; }));
+  // The whole business: CPP and SHOPIFY ROAS on Meta + TikTok spend, the sheet's (Daily Log, like Closing and Actual ROAS) for
+  // the days it has spend from, so the three tabs show the same ROAS; before that Meta's.
+  const cover = spendFrom_(), bizSpend = {};
+  dailyRows_().forEach(x => { if (x[0] && x[1] !== APP.META_OUT) bizSpend[x[0]] = (bizSpend[x[0]] || 0) + num_(x[3]); });
+  const bizShop = (raw, from, to) => {
+    if ('shopOrders' in raw) raw.shopSpend = actualSpend_(bizSpend, from < shop.first ? shop.first : from, to, raw.shopSpend, cover);
+    return raw;
+  };
   const metricOf = (raw, m) => (m[2] === 'one' ? (m[1] in raw ? raw[m[1]] : '') : funnelValue_(raw, m));
   // The benchmark: each column's best month of the 3 before this one, the whole business (all accounts' month totals, not an
   // average; SHOPIFY ORDERS = every store order but those from an ad account not in the sheet). Lower is better for costs;
   // a step rate over 100% (an event not fully tracked) is used only if no month is at or under 100%.
-  const pastRaws = past.map(ym => funnelShopAdd_(funnelSum_(data.accounts.filter(a => !a.error).map(a => a.months[ym] || {})),
-    shop.all, allSpend, shop, ym + '-01', monthEnd(ym), true));
+  const pastRaws = past.map(ym => bizShop(funnelShopAdd_(funnelSum_(data.accounts.filter(a => !a.error).map(a => a.months[ym] || {})),
+    shop.all, allSpend, shop, ym + '-01', monthEnd(ym), true), ym + '-01', monthEnd(ym)));
   const auto = {}, bench = F.METRICS.map(m => {
     let vals = pastRaws.map(raw => metricOf(raw, m)).filter(v => typeof v === 'number' && isFinite(v) && v > 0);
     if (m[7] && vals.some(v => v <= 1)) vals = vals.filter(v => v <= 1);
@@ -231,7 +239,7 @@ function writeFunnel_(data) {
   const pct = Math.round(yellow * 100) + '%';
   g.set(2, 3, '🟢 أحسن من البنشمارك أو زيه   🟡 أسوأ لحد ' + pct + '   🔴 أسوأ بأكتر من ' + pct +
     ' — البنشمارك = أحسن شهر في ' + range3 + ' لكل عمود، للبيزنس كله (مجموع الشهر مش متوسط؛ أقل تكلفة وأعلى نسبة وأكتر أوردرات)' +
-    '. SHOPIFY ORDERS = أوردرات المتجر من إعلانات الحساب (UTM)، وأوردرات DIRECT على الحساب اللي بيصرف على المنتج اللي اتشرى، والمانيول على أكاونت المسيجات (attribution.manual_account في Settings)؛ وفي البيزنس كله: كل أوردرات شوبيفاي من أي مصدر ماعدا الأكاونت اللي مش معانا. وعليها CPP و AOV و SHOPIFY ROAS. META ORDERS = مشتريات البيكسل.' +
+    '. SHOPIFY ORDERS = أوردرات المتجر من إعلانات الحساب (UTM)، وأوردرات DIRECT على الحساب اللي بيصرف على المنتج اللي اتشرى، والمانيول على أكاونت المسيجات (attribution.manual_account في Settings)؛ وفي البيزنس كله: كل أوردرات شوبيفاي من أي مصدر ماعدا الأكاونت اللي مش معانا. وعليها CPP و AOV و SHOPIFY ROAS (في البيزنس كله على صرف Meta + TikTok زي Closing و Actual ROAS، فالرؤاس هو هو في التلات تابات). META ORDERS = مشتريات البيكسل.' +
     ' صفوف الشهور: الصرف والأوردرات مجموع الشهر، والنسب من مجموع الأرقام.' +
     ' نسبة خطوة فوق 100% (زي Pur/Chk) رمادي من غير لون: الخطوة اللي قبلها مش بتتسجل كلها (فورم الكاش مابيبعتش Checkout).');
   g.merge(2, 3, 1, W - 2);
@@ -252,19 +260,24 @@ function writeFunnel_(data) {
     r++;
   };
   // A section: name bar, totals of this month and the 3 before it, those 3 together, then the days.
-  const section = (name, months, days, error, shopDays, spendDays) => {
+  const section = (name, months, days, error, shopDays, spendDays, biz) => {
+    const add = (raw, from, to) => (biz ? bizShop(raw, from, to) : raw);
     g.set(r, 1, name + (error ? '   ⚠️ ماقدرتش أقرا الحساب: ' + error : ''), { bg: F.BAND, fc: '#ffffff', b: 'bold' });
     g.fill(r, 2, W - 1, { bg: F.BAND });
     g.merge(r, 1, 1, W);
     r++;
     if (error) return;
     data.months.forEach((ym, i) => line(funnelMonthName_(ym) + (i ? '' : ' (لحد النهارده)'),
-      funnelShopAdd_(Object.assign({}, months[ym] || {}), shopDays, spendDays, shop, ym + '-01', i ? monthEnd(ym) : today, true), { bg: F.AVG_BG, b: 'bold' }));
-    line('آخر 3 شهور (' + range3 + ')', funnelShopAdd_(funnelSum_(past.map(ym => months[ym] || {})), shopDays, spendDays, shop, pastFrom, pastTo, true),
+      add(funnelShopAdd_(Object.assign({}, months[ym] || {}), shopDays, spendDays, shop, ym + '-01', i ? monthEnd(ym) : today, true), ym + '-01', i ? monthEnd(ym) : today),
+      { bg: F.AVG_BG, b: 'bold' }));
+    line('آخر 3 شهور (' + range3 + ')', add(funnelShopAdd_(funnelSum_(past.map(ym => months[ym] || {})), shopDays, spendDays, shop, pastFrom, pastTo, true), pastFrom, pastTo),
       { bg: F.AVG3_BG, b: 'bold' });
     days.forEach(d => {
       const p = d.date.split('-').map(Number), raw = Object.assign({}, d.raw);
-      if (shop.first && d.date >= shop.first) { const s = (shopDays || {})[d.date] || { orders: 0, revenue: 0 }; raw.shopOrders = s.orders; raw.shopRevenue = s.revenue; raw.shopSpend = d.raw.spend; }
+      if (shop.first && d.date >= shop.first) {
+        const s = (shopDays || {})[d.date] || { orders: 0, revenue: 0 };
+        raw.shopOrders = s.orders; raw.shopRevenue = s.revenue; raw.shopSpend = biz && cover && d.date >= cover ? bizSpend[d.date] || 0 : d.raw.spend;
+      }
       line(Utilities.formatDate(new Date(Date.UTC(p[0], p[1] - 1, p[2], 12)), 'UTC', 'EEE dd-MMM'), raw, {});
     });
   };
@@ -272,7 +285,7 @@ function writeFunnel_(data) {
   data.months.forEach(ym => { allMonths[ym] = funnelSum_(ok.map(a => a.months[ym] || {})); });
   ok.forEach(a => a.days.forEach(d => { allDays[d.date] = funnelSum_([allDays[d.date] || {}, d.raw]); }));
   if (ok.length > 1) section('كل الحسابات (البيزنس كله)', allMonths,
-    Object.keys(allDays).sort().reverse().map(d => ({ date: d, raw: allDays[d] })), '', shop.all, allSpend);
+    Object.keys(allDays).sort().reverse().map(d => ({ date: d, raw: allDays[d] })), '', shop.all, allSpend, true);
   data.accounts.forEach(a => section(a.name, a.months, a.days, a.error, shop.acc[a.id] || {}, shop.spend[a.id] || {}));
   if (!data.accounts.length) g.set(r, 1, 'مفيش حساب Meta صرف في الفترة دي', { fc: '#6b7280' });
   if (!writeGrid_(sh, g)) return;

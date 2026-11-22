@@ -142,11 +142,11 @@ function anaDrawActions_(sh, today, manual, F, M, errors) {
   if (!actions.length) { g.set(r, 1, 'مفيش حاجة عاجلة دلوقتي ✅', { fc: ANA.GREY }); g.merge(r, 1, 1, 5); r++; }
   actions.forEach(f => {
     g.set(r, 1, ANA.PRI[f.pri], { bg: ANA.PRI_BG[f.pri], b: 'bold', al: 'center' });
-    g.set(r, 2, f.action, { b: 'bold' });
-    g.set(r, 3, f.kind === 'task' ? f.title : f.title + (f.detail ? '\n' + f.detail : ''), {});
+    g.set(r, 2, f.kind === 'task' ? f.action : anaDo_(f), { b: 'bold' });
+    g.set(r, 3, f.kind === 'task' ? f.title : anaWhy_(f), {});
     g.set(r, 4, f.area, { al: 'center', fc: ANA.GREY });
     g.set(r, 5, false, { al: 'center' });
-    findRows.push({ row: r, id: f.id, action: f.action, metric: f.metric, scope: f.scope, trow: f.trow || 0 });
+    findRows.push({ row: r, id: f.id, action: f.action + (f.item ? '\n' + f.item : ''), metric: f.metric, scope: f.scope, trow: f.trow || 0 });
     r++;
   });
   if (M.watch.length) { g.set(r, 1, '🟡 ' + M.watch.length + ' حاجة تتراقب بس (من غير أكشن دلوقتي): في تاب ' + ANA.TAB2, { fc: ANA.GREY }); g.merge(r, 1, 1, 5); }
@@ -178,6 +178,7 @@ function anaDrawActions_(sh, today, manual, F, M, errors) {
     g.cell(row, BA + 1).nf = '@';
   }
   g.live = [[3, 1]];
+  anaRtl_(g);
   const oldN = Number(props.getProperty(ANA.ROWS_KEY) || 0);
   let oldFinds = [];
   try { oldFinds = JSON.parse(propGetBig_(ANA.FIND_KEY) || '[]'); } catch (e) { oldFinds = []; }
@@ -255,20 +256,20 @@ function anaDrawAnalysis_(sh, F, P, M, ctx, errors) {
   let b = box(4, 7, 'الحسابات — Shopify ROAS', ['الحساب', 'النهارده', 'آخر 3 أيام', 'آخر 7 أيام', 'الشهر كله']);
   const y = shiftKey_(F.today, -1), d3 = shiftKey_(F.today, -3), d7 = shiftKey_(F.today, -7);
   const ids = (P.acc && P.acc.meta || []).concat(P.acc && P.acc.tt || []);
-  const sumAll = (from, to) => ids.reduce((t, id) => anaAdd_(t, anaSum_(F.acc[id], from, to)), anaZero_());
   const accLine = (label, fn, style) => {
     g.set(b, 7, label, Object.assign({ b: 'bold' }, style || {}));
     [[F.today, F.today], [d3, y], [d7, y], [F.month0, F.today]].forEach((p, i) => anaRoasCell_(g, b, 8 + i, anaRoas_(fn(p[0], p[1])), be, anaRoas_(fn(F.month0, F.today))));
     b++;
   };
-  accLine('كل الحسابات', sumAll, { bg: ANA.BLUE });
+  // The whole business: every store order ÷ Meta + TikTok spend, the same ROAS as Closing, Actual ROAS and the funnel.
+  accLine('البيزنس كله (زي Closing)', (from, to) => anaSum_(F.biz, from, to), { bg: ANA.BLUE });
   ids.slice(0, 8).forEach(id => accLine((F.accPlat[id] === 'TIKTOK' ? 'TikTok ' : '') + F.accName[id], (from, to) => anaSum_(F.acc[id], from, to)));
   // 3) The important problems.
   let c = box(4, 13, 'المشاكل المهمة (' + M.bad.length + ')', ['الأولوية', 'المشكلة', 'القسم']);
   if (!M.bad.length) { g.set(c, 13, 'مفيش مشاكل مهمة دلوقتي ✅', { fc: ANA.GREY }); g.merge(c, 13, 1, 3); c++; }
   M.bad.slice(0, ANA.TOP_LIST).forEach(f => {
     g.set(c, 13, ANA.PRI[f.pri], { bg: ANA.PRI_BG[f.pri], b: 'bold', al: 'center' });
-    g.set(c, 14, f.title, { b: 'bold' });
+    g.set(c, 14, anaHeadline_(f), { b: 'bold' });
     g.set(c, 15, f.area, { al: 'center', fc: ANA.GREY });
     c++;
   });
@@ -306,7 +307,7 @@ function anaDrawAnalysis_(sh, F, P, M, ctx, errors) {
   if (!M.good.length) { g.set(c, 13, 'مفيش حاجة طالعة بوضوح دلوقتي', { fc: ANA.GREY }); g.merge(c, 13, 1, 3); c++; }
   M.good.slice(0, ANA.TOP_LIST).forEach(f => {
     g.set(c, 13, '🟢', { bg: ANA.PRI_BG[4], al: 'center' });
-    g.set(c, 14, f.title, { b: 'bold' });
+    g.set(c, 14, anaHeadline_(f), { b: 'bold' });
     g.set(c, 15, f.area, { al: 'center', fc: ANA.GREY });
     c++;
   });
@@ -335,6 +336,7 @@ function anaDrawAnalysis_(sh, F, P, M, ctx, errors) {
   sec('gov', q => anaDrawGov_(dg, q, P.gov));
   sec('cat', q => anaDrawCatalog_(dg, q, P.cat));
   g.live = [[3, 1]];
+  anaRtl_(g);
   const rowsIds = [];
   for (let i = first; i < r; i++) rowsIds.push(g.kinds[i] || ['', 0, false]);
   anaGroupsDraw_(sh, g, first, rowsIds);
@@ -383,9 +385,14 @@ function anaGroupsDraw_(sh, g, first, ids) {
   ANA.W2.forEach((w, i) => sh.setColumnWidth(i + 1, w));
   anaLook_(sh, g, W);
 }
+/* Text that was left-aligned starts from the right in these right-to-left tabs. */
+function anaRtl_(g) { g.rows.forEach(line => line.forEach(x => { if (x && x.al === 'left') x.al = 'right'; })); }
 /* Bigger text, wrapped, and the parts' titles big (two rows each) with their line under them. */
 function anaLook_(sh, g, W) {
   const n = Math.max(g.rows.length, 1);
+  // Right to left: column A on the right, and every line read from the right, so Arabic isn't mixed up with the English names.
+  try { sh.setRightToLeft(true); } catch (e) { /* قديم */ }
+  try { sh.getRange(1, 1, n, W).setTextDirection(SpreadsheetApp.TextDirection.RIGHT_TO_LEFT); } catch (e) { /* مش متاحة */ }
   sh.getRange(1, 1, n, W).setFontSize(11).setWrap(true).setVerticalAlignment('top');
   sh.getRange(1, 1, 1, W).setFontSize(15).setVerticalAlignment('middle');
   sh.setRowHeight(1, 34);
@@ -401,8 +408,8 @@ function anaDrawWatch_(g, r, list) {
   if (!list.length) return anaEmpty_(g, r, 'مفيش');
   list.forEach(f => {
     g.set(r, R, f.area, { b: 'bold', fc: ANA.GREY });
-    g.set(r, R + 5, f.action, {});
-    g.set(r, R + 11, f.title + (f.detail ? '\n' + f.detail : ''), {});
+    g.set(r, R + 5, anaDo_(f), {});
+    g.set(r, R + 11, anaWhy_(f), {});
     r++;
   });
   return r;

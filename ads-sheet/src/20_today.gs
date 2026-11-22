@@ -241,7 +241,11 @@ function todayClosing_(g, today, sum, rows, gap) {
   const grand = { bg: S.GRAND, b: 'bold' };
   g.set(r, 1, 'GRAND TOTAL', grand);
   line(r, '', sum.total.spend, sum.total.orders, sum.total.revenue, grand, true);
-  g.cell(r, 7).v = ratioOrBlank_(net.total.net, net.total.n, 2);
+  // The same number as the AOV card (Shopify's own: products after discounts ÷ every store order, read this update), so the
+  // two never differ; before the card is read today, the Net Sales of the orders read.
+  const card = typeof shopTabCards_ === 'function' ? shopTabCards_() : null, aovCard = card && (card.cards || []).find(c => c.key === 'aov');
+  const aov = aovCard && typeof aovCard.values[0] === 'number' && isFinite(aovCard.values[0]) ? Math.round(aovCard.values[0] * 100) / 100 : '';
+  g.cell(r, 7).v = aov !== '' ? aov : ratioOrBlank_(net.total.net, net.total.n, 2);
   return r;
 }
 
