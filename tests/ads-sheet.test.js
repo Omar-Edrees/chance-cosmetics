@@ -300,7 +300,7 @@ test('Today: أداء المنتجات بالقطع والمبيعات و AOV ل
   assert.equal(titles.length, 2);
   const heads = values.filter(r => r[8] === 'PRODUCT');
   assert.equal(heads.length, 2);
-  heads.forEach(h => assert.deepEqual(h.slice(8, 16), ['PRODUCT', 'PIECES', 'ORDERS', 'REVENUE', 'SPEND', 'AOV', 'SHOPIFY ROAS', '']));
+  heads.forEach(h => assert.deepEqual(h.slice(8, 17), ['PRODUCT', 'PIECES', 'ORDERS', 'REVENUE', 'SPEND', 'AOV', 'SHOPIFY ROAS', 'BOUGHT WITH (MOST)', 'BUNDLE']));
   // كل قطعة على منتجها، ومبيعات الأوردر 1001 (750) متقسمة بسعر Lip Oil (300) و Blush (250). أوردر TikTok داخل.
   // AOV المنتج = مبيعاته ÷ الأوردرات اللي فيها، مش الأوردر كله: Lip Oil 829.41 على أوردرين = 414.71.
   const i = values.findIndex(r => r[8] === 'PRODUCT');
@@ -309,6 +309,8 @@ test('Today: أداء المنتجات بالقطع والمبيعات و AOV ل
     ['Blush', 2, '', 470.59, '', 235.29, ''],
     ['TOTAL', 5, 3, 1300, 1100, 433.33, 1.18],
   ]);
+  // بيتطلب مع إيه: كل منتج اتطلب مع التاني في الأوردر 1001، وفي أوردر تاني لوحده. مفيش باندل.
+  assert.deepEqual(values.slice(i + 1, i + 4).map(r => r.slice(15, 17)), [['Blush: 1 · لوحده في 1 من 2', ''], ['Lip Oil: 1 · لوحده في 1 من 2', ''], ['', '']]);
 });
 
 test('ربط الإعلانات بالمنتجات من لينك صفحة المنتج، والكوليكشن مش مربوط طول ما دومين المتجر فاضي', () => {
@@ -1258,6 +1260,9 @@ function fakeShopify(e, orders, opt) {
       if (/graphql\.json$/.test(url) && /nodes\(ids/.test(JSON.parse(p.payload).query) && /currentQuantity/.test(JSON.parse(p.payload).query)) { // أوردرات اتعدلت
         return json(200, { data: { nodes: JSON.parse(p.payload).variables.ids.map(id => ((o.editedNow || {})[id]
           ? { id, cancelledAt: null, lineItems: { nodes: o.editedNow[id], pageInfo: { hasNextPage: false } } } : null)) } });
+      }
+      if (/graphql\.json$/.test(url) && /onlineStoreUrl/.test(JSON.parse(p.payload).query)) { // صفحة الباندل
+        return json(200, { data: { nodes: JSON.parse(p.payload).variables.ids.map(id => (o.productUrls || {})[id] || null) } });
       }
       if (/graphql\.json$/.test(url) && /nodes\(ids/.test(JSON.parse(p.payload).query)) { // عنوان الشحن (المحافظة بس)
         if (o.addrError) return json(403, { errors: 'not approved to access the ShippingAddress' });
@@ -2697,4 +2702,33 @@ test('اسم الكامبين: كامبينات Meta الحقيقية بتاعت
   assert.notEqual(d(['https://chancestoreegy.com/ar/pages/flash-sale'], 'Insta-Ready Sunset Blur Setting Powder | Testing')[0], 'NAME', 'صفحة الفلاش سيل مش المنتج');
   assert.deepEqual(d([], 'Insta-Ready Sunset Blur Setting Powder | Testing'), ['NAME', 'SHEGLAM Insta-Ready Sunset Blur Setting Powder'], 'من غير لينك: الاسم');
   assert.deepEqual(d(['https://fb.com/messenger_doc/'], 'Eye Bundle | Messages | ABO | 16-11'), ['NAME', 'مسجات']);
+});
+
+test('PRODUCT PERFORMANCE: بيتطلب مع إيه أكتر، ولو في باندل شوبيفاي لينك الباندل', () => {
+  const probe = env(), today = probe.c.todayKey_();
+  const B1 = { title: 'Lip liner and gloss compo', productId: 'gid://shopify/Product/777' };
+  const line = (title, v, group) => ({ title, quantity: 1, currentQuantity: 1, variant: { id: 'gid://shopify/ProductVariant/' + v }, lineItemGroup: group || null });
+  const order = (id, lines) => ({ id: 'gid://shopify/Order/' + id, createdAt: today + 'T08:00:00Z', sourceName: 'web',
+    originalTotalPriceSet: { shopMoney: { amount: '500.0' } }, customAttributes: [], lineItems: { nodes: lines }, customerJourneySummary: { lastVisit: null } });
+  const created = [order(1, [line('True Stain Liner', 1, B1), line('Glass Gloss', 2, B1), line('Blush', 3)]),
+    order(2, [line('True Stain Liner', 1, B1), line('Glass Gloss', 2, B1)]), order(3, [line('True Stain Liner', 1)]), order(4, [line('Glass Gloss', 2), line('Blush', 3)])];
+  const e = env({ orderHead: FLOW_HEAD.slice(0, 17), orders: [] });
+  fakeShopify(e, [], { created, productUrls: { 'gid://shopify/Product/777': { id: 'gid://shopify/Product/777', handle: 'lip-compo', onlineStoreUrl: null } } });
+  Object.assign(e.user, { SHOPIFY_TOKEN: 'TOKEN1', SHOPIFY_TOKEN_EXP: String(Date.now() + 3600000) });
+  e.c.setupAll();
+  const st = e.ss.getSheetByName('Settings'), keys = st.getDataRange().getValues().map(r => r[0]);
+  st.getRange(keys.indexOf('business.store_domains') + 1, 2).setValue('chance-cosmetics.com');
+  e.c.liveTick(); e.c.liveTick(); e.c.liveTick();
+  const tab = e.ss.getSheetByName('Shopify Orders').getDataRange().getValues(), BU = tab[0].indexOf('Bundles');
+  assert.equal(tab.find(r => r[0] === 'gid://shopify/Order/1')[BU], '777~Lip liner and gloss compo~True Stain Liner~Glass Gloss');
+  assert.equal(tab.find(r => r[0] === 'gid://shopify/Order/3')[BU], '-');
+  const rg = e.ss.getSheetByName('Today').getDataRange(), v = rg.getValues(), f = rg.getFormulas();
+  const i = v.findIndex(r => /^PRODUCT PERFORMANCE — TODAY/.test(String(r[8])));
+  // لينك الباندل معادلة HYPERLINK (اسم الباندل ولينكه)، من غير لينك لو الصفحة مش معروفة
+  const row = n => { const k = v.findIndex((r, j) => j > i && r[8] === n); return [v[k][15], f[k][16] || v[k][16]]; };
+  assert.deepEqual(row('True Stain Liner'), ['Glass Gloss: 2 (2 باندل) · Blush: 1 · لوحده في 1 من 3',
+    '=HYPERLINK("https://chance-cosmetics.com/products/lip-compo","Lip liner and gloss compo (2 أوردر)")']);
+  assert.deepEqual(row('Glass Gloss'), ['Blush: 2 · True Stain Liner: 2 (2 باندل) · لوحده في 0 من 3',
+    '=HYPERLINK("https://chance-cosmetics.com/products/lip-compo","Lip liner and gloss compo (2 أوردر)")']);
+  assert.deepEqual(row('Blush'), ['Glass Gloss: 2 · True Stain Liner: 1 · لوحده في 0 من 2', ''], 'Blush مش في الباندل');
 });

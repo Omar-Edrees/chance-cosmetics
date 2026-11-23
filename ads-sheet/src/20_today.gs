@@ -335,7 +335,7 @@ function todayOrders_(from, all) {
       const name = productNameOf_(li.title), it = items.find(x => x.name === name);
       if (it) it.qty += li.qty; else items.push({ name: name, qty: li.qty });
     });
-    out.push({ d: d, ad: String(o[14] || ''), key: o[3] === 'META' ? orderAdProduct_(o, idx, catAds) : o[3], total: num_(o[7]),
+    out.push({ id: String(o[0]), d: d, ad: String(o[14] || ''), key: o[3] === 'META' ? orderAdProduct_(o, idx, catAds) : o[3], total: num_(o[7]),
       items: items.length ? items : [{ name: String(o[5] || APP.UNKNOWN_PRODUCT), qty: 1 }] });
   });
   return out;
@@ -362,8 +362,8 @@ function orderedList_(orders, prefer) {
  * pieces, orders, sales, spend (Meta + TikTok), AOV and ROAS. A product's AOV: its share of the sales ÷ the orders that
  * have it (what it brings in an order, not the whole basket, so other products in the order don't count).
  */
-function todayProducts_(g, r, title, from, to, rows, orders) {
-  const S = TODAY, c = S.RIGHT_COL, by = {}, tot = { units: 0, orders: 0, revenue: 0, spend: 0 }, price = {};
+function todayProducts_(g, r, title, from, to, rows, orders, bundles) {
+  const S = TODAY, c = S.RIGHT_COL, by = {}, tot = { units: 0, orders: 0, revenue: 0, spend: 0 }, price = {}, mine = [];
   products_().forEach(p => { if (p.price > 0) price[p.name] = p.price; });
   rows.forEach(x => { if ((x[1] === 'META' || x[1] === 'TIKTOK') && x[0] >= from && x[0] <= to) tot.spend += num_(x[3]); });
   // inOrders: how many orders have the product; its AOV = its sales ÷ those orders
@@ -376,11 +376,13 @@ function todayProducts_(g, r, title, from, to, rows, orders) {
     const units = o.items.reduce((a, i) => a + i.qty, 0);
     tot.units += units; tot.orders++; tot.revenue += o.total;
     if (o.key === APP.CATALOG) { add(APP.CATALOG, units, o.total); return; }
+    mine.push(o);
     const priced = o.items.every(i => price[i.name]), w = i => (priced ? price[i.name] : 1) * i.qty;
     const sum = o.items.reduce((a, i) => a + w(i), 0);
     o.items.forEach(i => add(i.name, i.qty, sum > 0 ? o.total * w(i) / sum : 0));
   });
-  r = todayHead_(g, r, c, 7, title, ['PRODUCT', 'PIECES', 'ORDERS', 'REVENUE', 'SPEND', 'AOV', 'SHOPIFY ROAS']);
+  const along = boughtWith_(mine, bundles || new Map());
+  r = todayHead_(g, r, c, 9, title, ['PRODUCT', 'PIECES', 'ORDERS', 'REVENUE', 'SPEND', 'AOV', 'SHOPIFY ROAS', 'BOUGHT WITH (MOST)', 'BUNDLE']);
   const money = v => Math.round(v * 100) / 100;
   const line = (name, t, style) => {
     const num = (col, v, nf) => g.set(r, col, v, Object.assign({ nf: nf, al: 'right' }, style));
@@ -390,6 +392,7 @@ function todayProducts_(g, r, title, from, to, rows, orders) {
       num(c + 2, t.orders, S.COUNT); num(c + 4, money(t.spend), S.MONEY); num(c + 5, ratioOrBlank_(t.revenue, t.orders, 2), S.MONEY);
       num(c + 6, ratioOrBlank_(t.revenue, t.spend, 2), S.RATIO);
     } else num(c + 5, ratioOrBlank_(t.revenue, t.inOrders, 2), S.MONEY);
+    if (along[name]) { g.set(r, c + 7, along[name].text, style); g.set(r, c + 8, along[name].bundle, style); }
     r++;
   };
   if (by[APP.CATALOG]) line(APP.CATALOG, by[APP.CATALOG], { bg: S.CATALOG, b: 'bold' });
@@ -401,6 +404,43 @@ function todayProducts_(g, r, title, from, to, rows, orders) {
   return r;
 }
 
+/*
+ * Product → { text, bundle } over the orders of its row (catalog orders aren't on a product row): the products most often in
+ * the same orders ("Gloss: 12 (10 باندل)" = in 12 of its orders, 10 of them in one Shopify bundle with it), and how many of its
+ * orders had it alone; bundle = the Shopify bundle it was most often bought in, a link to its page (bundles: orderBundlesMap_).
+ */
+function boughtWith_(orders, bundles) {
+  const per = {}, urls = bundleUrls_(), out = {};
+  orders.forEach(o => {
+    const groups = bundles.get(o.id) || [], names = o.items.map(i => i.name);
+    names.forEach(n => {
+      const t = per[n] = per[n] || { orders: 0, alone: 0, with: {}, inBundle: {}, bundles: {} };
+      t.orders++;
+      if (names.length === 1) t.alone++;
+      const mineB = groups.filter(b => b.items.indexOf(n) >= 0);
+      mineB.forEach(b => { const x = t.bundles[b.id] = t.bundles[b.id] || { title: b.title, n: 0 }; x.n++; });
+      names.forEach(m => {
+        if (m === n) return;
+        t.with[m] = (t.with[m] || 0) + 1;
+        if (mineB.some(b => b.items.indexOf(m) >= 0)) t.inBundle[m] = (t.inBundle[m] || 0) + 1;
+      });
+    });
+  });
+  Object.keys(per).forEach(n => {
+    const t = per[n], top = Object.keys(t.with).sort((a, b) => (t.with[b] - t.with[a]) || (a < b ? -1 : 1)).slice(0, 3);
+    const parts = top.map(m => m + ': ' + t.with[m] + (t.inBundle[m] ? ' (' + t.inBundle[m] + ' باندل)' : ''));
+    parts.push(top.length ? 'لوحده في ' + t.alone + ' من ' + t.orders : 'لوحده دايمًا');
+    const best = Object.keys(t.bundles).sort((a, b) => t.bundles[b].n - t.bundles[a].n)[0];
+    let bundle = '';
+    if (best) {
+      const label = t.bundles[best].title + ' (' + t.bundles[best].n + ' أوردر)', url = urls[best];
+      bundle = url ? '=HYPERLINK("' + url.replace(/"/g, '%22') + '","' + label.replace(/"/g, '""') + '")' : label;
+    }
+    out[n] = { text: parts.join(' · '), bundle: bundle };
+  });
+  return out;
+}
+
 function writeToday_() {
   if (takeIntraday_()) { try { takeIntraAds_(); } catch (e) { console.error('intraday ads: ' + errText_(e)); } }
   const sh = ensureTab_(APP.T.TODAY), today = todayKey_(), rows = dailyRows_(), sum = summarize_(rows, today, today), g = todayGrid_();
@@ -410,9 +450,9 @@ function writeToday_() {
   todayCampaignWarning_(g, todayStockCover_(g, todayBalances_(g, todayClosing_(g, today, sum, rows, gap) + 2, today) + 1, today) + 1);
   let r = todaySlots_(g, 1, today) + 1;
   r = todayBenchmark_(g, r, today, shown) + 1;
-  const orders = todayOrders_(today.slice(0, 8) + '01', true);
-  r = todayProducts_(g, r, 'PRODUCT PERFORMANCE — TODAY | ' + shown, today, today, rows, orders) + 1;
-  todayProducts_(g, r, 'PRODUCT PERFORMANCE — THIS MONTH | ' + month, today.slice(0, 8) + '01', today, rows, orders);
+  const orders = todayOrders_(today.slice(0, 8) + '01', true), bundles = orderBundlesMap_();
+  r = todayProducts_(g, r, 'PRODUCT PERFORMANCE — TODAY | ' + shown, today, today, rows, orders, bundles) + 1;
+  todayProducts_(g, r, 'PRODUCT PERFORMANCE — THIS MONTH | ' + month, today.slice(0, 8) + '01', today, rows, orders, bundles);
   if (cards) todayProblemCells_(g); // the problem cards' numbers, top right of Closing Date (40_today_problems.gs)
   todayMakeRoom_(g);
   const drew = writeGrid_(sh, g);
@@ -421,6 +461,7 @@ function writeToday_() {
   sh.setFrozenRows(0);
   [[1, 150], [2, 210], [3, 120], [4, 130], [5, 130], [6, 130], [7, 130], [8, 24], [9, 300], [10, 260]].forEach(w => sh.setColumnWidth(w[0], w[1]));
   for (let col = 11; col <= TODAY.WIDTH; col++) sh.setColumnWidth(col, 125);
+  sh.setColumnWidth(TODAY.RIGHT_COL + 7, 380); sh.setColumnWidth(TODAY.RIGHT_COL + 8, 240); // BOUGHT WITH and BUNDLE in the product tables
   sh.getRange(8 + gap, 1, 1, 7).setWrap(true);
   sh.getRange(1, 1, 6, 9).setFontSize(10); // the cards were cells here before (1.45): back to normal
   if (cards) todayProblemRows_(sh); else [2, 3].forEach(row => sh.setRowHeight(row, 21));

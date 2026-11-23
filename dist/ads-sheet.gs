@@ -11,7 +11,7 @@
  * Ad accounts and stores are read-only from here: no writes to Meta, TikTok or order sources.
  */
 const APP = {
-  VERSION: '1.77.0',
+  VERSION: '1.78.0',
   T: {
     SETTINGS: 'Settings', ACCOUNTS: 'Accounts', PRODUCTS: 'Products', ADMAP: 'Ad Map',
     ADS: 'Ads Raw', ACC_RAW: 'Account Raw', ORDERS: 'Orders Raw', DAILY: 'Daily Log',
@@ -3396,7 +3396,7 @@ function todayOrders_(from, all) {
       const name = productNameOf_(li.title), it = items.find(x => x.name === name);
       if (it) it.qty += li.qty; else items.push({ name: name, qty: li.qty });
     });
-    out.push({ d: d, ad: String(o[14] || ''), key: o[3] === 'META' ? orderAdProduct_(o, idx, catAds) : o[3], total: num_(o[7]),
+    out.push({ id: String(o[0]), d: d, ad: String(o[14] || ''), key: o[3] === 'META' ? orderAdProduct_(o, idx, catAds) : o[3], total: num_(o[7]),
       items: items.length ? items : [{ name: String(o[5] || APP.UNKNOWN_PRODUCT), qty: 1 }] });
   });
   return out;
@@ -3423,8 +3423,8 @@ function orderedList_(orders, prefer) {
  * pieces, orders, sales, spend (Meta + TikTok), AOV and ROAS. A product's AOV: its share of the sales ÷ the orders that
  * have it (what it brings in an order, not the whole basket, so other products in the order don't count).
  */
-function todayProducts_(g, r, title, from, to, rows, orders) {
-  const S = TODAY, c = S.RIGHT_COL, by = {}, tot = { units: 0, orders: 0, revenue: 0, spend: 0 }, price = {};
+function todayProducts_(g, r, title, from, to, rows, orders, bundles) {
+  const S = TODAY, c = S.RIGHT_COL, by = {}, tot = { units: 0, orders: 0, revenue: 0, spend: 0 }, price = {}, mine = [];
   products_().forEach(p => { if (p.price > 0) price[p.name] = p.price; });
   rows.forEach(x => { if ((x[1] === 'META' || x[1] === 'TIKTOK') && x[0] >= from && x[0] <= to) tot.spend += num_(x[3]); });
   // inOrders: how many orders have the product; its AOV = its sales ÷ those orders
@@ -3437,11 +3437,13 @@ function todayProducts_(g, r, title, from, to, rows, orders) {
     const units = o.items.reduce((a, i) => a + i.qty, 0);
     tot.units += units; tot.orders++; tot.revenue += o.total;
     if (o.key === APP.CATALOG) { add(APP.CATALOG, units, o.total); return; }
+    mine.push(o);
     const priced = o.items.every(i => price[i.name]), w = i => (priced ? price[i.name] : 1) * i.qty;
     const sum = o.items.reduce((a, i) => a + w(i), 0);
     o.items.forEach(i => add(i.name, i.qty, sum > 0 ? o.total * w(i) / sum : 0));
   });
-  r = todayHead_(g, r, c, 7, title, ['PRODUCT', 'PIECES', 'ORDERS', 'REVENUE', 'SPEND', 'AOV', 'SHOPIFY ROAS']);
+  const along = boughtWith_(mine, bundles || new Map());
+  r = todayHead_(g, r, c, 9, title, ['PRODUCT', 'PIECES', 'ORDERS', 'REVENUE', 'SPEND', 'AOV', 'SHOPIFY ROAS', 'BOUGHT WITH (MOST)', 'BUNDLE']);
   const money = v => Math.round(v * 100) / 100;
   const line = (name, t, style) => {
     const num = (col, v, nf) => g.set(r, col, v, Object.assign({ nf: nf, al: 'right' }, style));
@@ -3451,6 +3453,7 @@ function todayProducts_(g, r, title, from, to, rows, orders) {
       num(c + 2, t.orders, S.COUNT); num(c + 4, money(t.spend), S.MONEY); num(c + 5, ratioOrBlank_(t.revenue, t.orders, 2), S.MONEY);
       num(c + 6, ratioOrBlank_(t.revenue, t.spend, 2), S.RATIO);
     } else num(c + 5, ratioOrBlank_(t.revenue, t.inOrders, 2), S.MONEY);
+    if (along[name]) { g.set(r, c + 7, along[name].text, style); g.set(r, c + 8, along[name].bundle, style); }
     r++;
   };
   if (by[APP.CATALOG]) line(APP.CATALOG, by[APP.CATALOG], { bg: S.CATALOG, b: 'bold' });
@@ -3462,6 +3465,43 @@ function todayProducts_(g, r, title, from, to, rows, orders) {
   return r;
 }
 
+/*
+ * Product → { text, bundle } over the orders of its row (catalog orders aren't on a product row): the products most often in
+ * the same orders ("Gloss: 12 (10 باندل)" = in 12 of its orders, 10 of them in one Shopify bundle with it), and how many of its
+ * orders had it alone; bundle = the Shopify bundle it was most often bought in, a link to its page (bundles: orderBundlesMap_).
+ */
+function boughtWith_(orders, bundles) {
+  const per = {}, urls = bundleUrls_(), out = {};
+  orders.forEach(o => {
+    const groups = bundles.get(o.id) || [], names = o.items.map(i => i.name);
+    names.forEach(n => {
+      const t = per[n] = per[n] || { orders: 0, alone: 0, with: {}, inBundle: {}, bundles: {} };
+      t.orders++;
+      if (names.length === 1) t.alone++;
+      const mineB = groups.filter(b => b.items.indexOf(n) >= 0);
+      mineB.forEach(b => { const x = t.bundles[b.id] = t.bundles[b.id] || { title: b.title, n: 0 }; x.n++; });
+      names.forEach(m => {
+        if (m === n) return;
+        t.with[m] = (t.with[m] || 0) + 1;
+        if (mineB.some(b => b.items.indexOf(m) >= 0)) t.inBundle[m] = (t.inBundle[m] || 0) + 1;
+      });
+    });
+  });
+  Object.keys(per).forEach(n => {
+    const t = per[n], top = Object.keys(t.with).sort((a, b) => (t.with[b] - t.with[a]) || (a < b ? -1 : 1)).slice(0, 3);
+    const parts = top.map(m => m + ': ' + t.with[m] + (t.inBundle[m] ? ' (' + t.inBundle[m] + ' باندل)' : ''));
+    parts.push(top.length ? 'لوحده في ' + t.alone + ' من ' + t.orders : 'لوحده دايمًا');
+    const best = Object.keys(t.bundles).sort((a, b) => t.bundles[b].n - t.bundles[a].n)[0];
+    let bundle = '';
+    if (best) {
+      const label = t.bundles[best].title + ' (' + t.bundles[best].n + ' أوردر)', url = urls[best];
+      bundle = url ? '=HYPERLINK("' + url.replace(/"/g, '%22') + '","' + label.replace(/"/g, '""') + '")' : label;
+    }
+    out[n] = { text: parts.join(' · '), bundle: bundle };
+  });
+  return out;
+}
+
 function writeToday_() {
   if (takeIntraday_()) { try { takeIntraAds_(); } catch (e) { console.error('intraday ads: ' + errText_(e)); } }
   const sh = ensureTab_(APP.T.TODAY), today = todayKey_(), rows = dailyRows_(), sum = summarize_(rows, today, today), g = todayGrid_();
@@ -3471,9 +3511,9 @@ function writeToday_() {
   todayCampaignWarning_(g, todayStockCover_(g, todayBalances_(g, todayClosing_(g, today, sum, rows, gap) + 2, today) + 1, today) + 1);
   let r = todaySlots_(g, 1, today) + 1;
   r = todayBenchmark_(g, r, today, shown) + 1;
-  const orders = todayOrders_(today.slice(0, 8) + '01', true);
-  r = todayProducts_(g, r, 'PRODUCT PERFORMANCE — TODAY | ' + shown, today, today, rows, orders) + 1;
-  todayProducts_(g, r, 'PRODUCT PERFORMANCE — THIS MONTH | ' + month, today.slice(0, 8) + '01', today, rows, orders);
+  const orders = todayOrders_(today.slice(0, 8) + '01', true), bundles = orderBundlesMap_();
+  r = todayProducts_(g, r, 'PRODUCT PERFORMANCE — TODAY | ' + shown, today, today, rows, orders, bundles) + 1;
+  todayProducts_(g, r, 'PRODUCT PERFORMANCE — THIS MONTH | ' + month, today.slice(0, 8) + '01', today, rows, orders, bundles);
   if (cards) todayProblemCells_(g); // the problem cards' numbers, top right of Closing Date (40_today_problems.gs)
   todayMakeRoom_(g);
   const drew = writeGrid_(sh, g);
@@ -3482,6 +3522,7 @@ function writeToday_() {
   sh.setFrozenRows(0);
   [[1, 150], [2, 210], [3, 120], [4, 130], [5, 130], [6, 130], [7, 130], [8, 24], [9, 300], [10, 260]].forEach(w => sh.setColumnWidth(w[0], w[1]));
   for (let col = 11; col <= TODAY.WIDTH; col++) sh.setColumnWidth(col, 125);
+  sh.setColumnWidth(TODAY.RIGHT_COL + 7, 380); sh.setColumnWidth(TODAY.RIGHT_COL + 8, 240); // BOUGHT WITH and BUNDLE in the product tables
   sh.getRange(8 + gap, 1, 1, 7).setWrap(true);
   sh.getRange(1, 1, 6, 9).setFontSize(10); // the cards were cells here before (1.45): back to normal
   if (cards) todayProblemRows_(sh); else [2, 3].forEach(row => sh.setRowHeight(row, 21));
@@ -5571,6 +5612,7 @@ function variantStock_() {
  * into the hidden tab "Shopify Orders": one row per order with the columns readOrderSource_ reads (the same names the Flow sheet
  * had), so the rest of the sheet works as before. No customer data: no names, phones, emails or addresses; the governorate only.
  *  - Variants: "variant number x pieces | …" of the pieces in the order now ("-" = none), for the colors running out in Today.
+ *  - Bundles: the Shopify bundles in the order (shopOrderBundlesText_), for "bought with" in Today's product tables.
  *  - The COD form's UTMs, campaign / ad set IDs and "Order Referrer" are the order's own attributes (Attr UTM …).
  *  - A website order's last visit (UTMs, referrer) isn't ready the moment the order is made: every read goes back
  *    SHOP_ORDERS.OVERLAP_H hours, and those orders are written again with what Shopify has now.
@@ -5579,11 +5621,14 @@ function variantStock_() {
  * Shopify shows the last 60 days only (no read_all_orders): older orders stay in the tab as they were read.
  */
 const SHOP_ORDERS = {
-  TAB: 'Shopify Orders', FIRST_FROM: '2026-10-13T09:00:00Z', PAGES: 25, OVERLAP_H: 6, TAIL: 1500, VARIANT_DAYS: 7,
+  TAB: 'Shopify Orders', FIRST_FROM: '2026-10-13T09:00:00Z', PAGES: 25, OVERLAP_H: 6, TAIL: 1500, VARIANT_DAYS: 7, BUNDLE_DAYS: 40,
+  BUNDLE_URLS: 'SHOP_BUNDLE_URLS',
+  // The page of each bundle product (Shopify Bundles: the order has the bundle's products as lines, each with the bundle as its group).
+  PRODUCT_URL_QUERY: 'query($ids:[ID!]!){nodes(ids:$ids){... on Product{id handle onlineStoreUrl}}}',
   SINCE: 'SHOP_ORDERS_SINCE', READY: 'SHOP_ORDERS_READY', AT: 'SHOP_ORDERS_AT', NO_ADDR: 'SHOP_ORDERS_NO_ADDR',
   HEADERS: ['Order ID', 'Created At', 'Total Price', 'Products', 'UTM Source', 'UTM Campaign', 'UTM Content', 'UTM ID', 'UTM Term',
     'Attr UTM Source', 'Attr UTM Campaign', 'Attr UTM Content', 'Attr UTM ID', 'Attr UTM Term', 'Order Referrer', 'Source Name', 'City', 'Gross Sales', 'Net Sales',
-    'Variants'],
+    'Variants', 'Bundles'],
   // Gross sales of an order when it was made: its products at their price before any discount, no shipping, from the
   // order's first sales agreement (reason ORDER), so later edits and cancellations don't change it. Net sales: the same
   // products after their discounts (gross − discounts), still without shipping. 10 orders a call.
@@ -5591,12 +5636,12 @@ const SHOP_ORDERS = {
     'totalAmount{shopMoney{amount}} totalDiscountAmountBeforeTaxes{shopMoney{amount}}}}}}}}}',
   QUERY: 'query($q:String!,$after:String){orders(first:20,after:$after,sortKey:CREATED_AT,query:$q){pageInfo{hasNextPage endCursor} ' +
     'nodes{id createdAt cancelledAt sourceName originalTotalPriceSet{shopMoney{amount}} customAttributes{key value} ' +
-    'lineItems(first:30){pageInfo{hasNextPage endCursor} nodes{title quantity currentQuantity variant{id}}} customerJourneySummary{lastVisit{referrerUrl utmParameters{source campaign content term}}}}}}',
+    'lineItems(first:30){pageInfo{hasNextPage endCursor} nodes{title quantity currentQuantity variant{id} lineItemGroup{title productId}}} customerJourneySummary{lastVisit{referrerUrl utmParameters{source campaign content term}}}}}}',
   // The shipping address's governorate only (the same field the fixed file 24_order_gov.gs was read from).
   // An order with more than 30 lines: the rest, 100 at a time.
-  ITEMS_QUERY: 'query($id:ID!,$after:String){order(id:$id){lineItems(first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{title quantity currentQuantity variant{id}}}}}',
+  ITEMS_QUERY: 'query($id:ID!,$after:String){order(id:$id){lineItems(first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{title quantity currentQuantity variant{id} lineItemGroup{title productId}}}}}',
   // Orders edited after they were read (a piece removed, a color swapped): their lines now, 10 orders a call.
-  EDITED_QUERY: 'query($ids:[ID!]!){nodes(ids:$ids){... on Order{id cancelledAt lineItems(first:50){pageInfo{hasNextPage endCursor} nodes{title quantity currentQuantity variant{id}}}}}}',
+  EDITED_QUERY: 'query($ids:[ID!]!){nodes(ids:$ids){... on Order{id cancelledAt lineItems(first:50){pageInfo{hasNextPage endCursor} nodes{title quantity currentQuantity variant{id} lineItemGroup{title productId}}}}}}',
   EDITED: 'SHOP_ORDERS_EDITED',
   ADDR_QUERY: 'query($ids:[ID!]!){nodes(ids:$ids){... on Order{id shippingAddress{province}}}}',
   COUNT_QUERY: 'query($a:String!,$b:String!){a:ordersCount(query:$a,limit:null){count} b:ordersCount(query:$b,limit:null){count}}'
@@ -5619,7 +5664,8 @@ function shopOrderRow_(o, province) {
   return [o.id, o.createdAt, num_(((o.originalTotalPriceSet || {}).shopMoney || {}).amount), items,
     u.source || '', u.campaign || '', u.content || '', '', u.term || '',
     attr.utm_source || '', attr.utm_campaign || '', attr.utm_content || '', attr.utm_id || '', attr.utm_term || '',
-    attr['order referrer'] || visit.referrerUrl || '', o.sourceName || '', province || (gov ? attr[gov] : ''), '', '', shopOrderVariantsText_(o, lines)];
+    attr['order referrer'] || visit.referrerUrl || '', o.sourceName || '', province || (gov ? attr[gov] : ''), '', '', shopOrderVariantsText_(o, lines),
+    shopOrderBundlesText_(o, lines)];
 }
 
 /*
@@ -5632,7 +5678,8 @@ function shopOrderItemsText_(o, lines) {
 }
 function shopOrderLinesNow_(o, lines) {
   const now = o.cancelledAt ? [] : lines.filter(li => li.currentQuantity === undefined || li.currentQuantity === null || Number(li.currentQuantity) > 0)
-    .map(li => ({ title: li.title, variant: li.variant, quantity: li.currentQuantity === undefined || li.currentQuantity === null ? li.quantity : li.currentQuantity }));
+    .map(li => ({ title: li.title, variant: li.variant, lineItemGroup: li.lineItemGroup,
+      quantity: li.currentQuantity === undefined || li.currentQuantity === null ? li.quantity : li.currentQuantity }));
   return now.length ? now : lines;
 }
 /* "123 x2 | 456 x1": the same pieces by variant number. A line without a variant (deleted, custom item) is left out; none = "-". */
@@ -5640,6 +5687,38 @@ function shopOrderVariantsText_(o, lines) {
   const out = shopOrderLinesNow_(o, lines).filter(li => li.variant && li.variant.id)
     .map(li => String(li.variant.id).split('/').pop() + ' x' + (li.quantity || 1)).join(' | ');
   return out || '-';
+}
+
+/*
+ * "product number~bundle title~product~product | …": each Shopify bundle in the order (its lines share the bundle as their
+ * lineItemGroup) and the products in it. None = "-".
+ */
+function shopOrderBundlesText_(o, lines) {
+  const by = new Map(), clean = v => String(v || '').replace(/~|\s\|\s/g, ' ').trim();
+  shopOrderLinesNow_(o, lines).forEach(li => {
+    const g = li.lineItemGroup;
+    if (!g || !g.productId) return;
+    const id = String(g.productId).split('/').pop(), b = by.get(id) || { title: clean(g.title), items: [] };
+    const t = clean(li.title);
+    if (b.items.indexOf(t) < 0) b.items.push(t);
+    by.set(id, b);
+  });
+  return Array.from(by.entries()).map(e => [e[0], e[1].title].concat(e[1].items).join('~')).join(' | ') || '-';
+}
+/* Order ID → [{ id, title, items: [product names] }] from the tab's Bundles column (orders read before it: none). */
+function orderBundlesMap_() {
+  const out = new Map(), B = SHOP_ORDERS.HEADERS.indexOf('Bundles');
+  if (!ss_().getSheetByName(SHOP_ORDERS.TAB)) return out;
+  rawRows_(SHOP_ORDERS.TAB, SHOP_ORDERS.HEADERS.length).forEach(r => {
+    const v = String(r[B] || '');
+    if (!v || v === '-') return;
+    out.set(String(r[0]), v.split(' | ').map(g => { const x = g.split('~'); return { id: x[0], title: x[1] || '', items: x.slice(2).map(productNameOf_) }; }));
+  });
+  return out;
+}
+/* Bundle product number → its page on the store ('' = not known yet or not on the store). */
+function bundleUrls_() {
+  try { return JSON.parse(PropertiesService.getDocumentProperties().getProperty(SHOP_ORDERS.BUNDLE_URLS) || '{}'); } catch (e) { return {}; }
 }
 
 /* Every line of an order: the first 30 come with the order; the rest are read on their own (rare). */
@@ -5849,7 +5928,7 @@ function fixEditedOrders_() {
       (shopifyGql_(SHOP_ORDERS.EDITED_QUERY, { ids: chunk }).nodes || []).forEach(o => {
         if (!o || !o.id || !o.lineItems) return;
         const lines = shopOrderItems_(o);
-        items[o.id] = [shopOrderItemsText_(o, lines), shopOrderVariantsText_(o, lines)];
+        items[o.id] = [shopOrderItemsText_(o, lines), shopOrderVariantsText_(o, lines), shopOrderBundlesText_(o, lines)];
       });
       chunk.forEach(id => done.push(id)); // an order Shopify doesn't show any more (older than 60 days) stays as it is
     }
@@ -5857,13 +5936,14 @@ function fixEditedOrders_() {
   let changed = 0;
   if (Object.keys(items).length) withLock_(() => {
     const ids = sh.getRange(2, 1, sh.getLastRow() - 1, 1).getValues(), P = SHOP_ORDERS.HEADERS.indexOf('Products') + 1;
-    const V = SHOP_ORDERS.HEADERS.indexOf('Variants') + 1;
+    const V = SHOP_ORDERS.HEADERS.indexOf('Variants') + 1, BU = SHOP_ORDERS.HEADERS.indexOf('Bundles') + 1;
     ids.forEach((r, i) => {
       const t = items[String(r[0])];
       if (t === undefined) return;
       const cell = sh.getRange(i + 2, P);
       if (String(cell.getValue()) !== t[0]) { cell.setValue(t[0]); changed++; }
       if (sh.getMaxColumns() >= V) sh.getRange(i + 2, V).setValue(t[1]);
+      if (sh.getMaxColumns() >= BU) sh.getRange(i + 2, BU).setValue(t[2]);
     });
   });
   const left = q.filter(id => done.indexOf(id) < 0);
@@ -5906,6 +5986,56 @@ function fillOrderVariants_() {
     dropRaw_(SHOP_ORDERS.TAB);
   });
   setStatus_('SHOP_VARIANTS', '✓ ' + n + ' أوردر' + (need.length > n ? '، والباقي في التحديث الجاي' : ''));
+  return n;
+}
+
+/*
+ * EXT.live: the Bundles column of the orders made in the last SHOP_ORDERS.BUNDLE_DAYS days that don't have it yet (orders read
+ * before the column existed), newest first, up to 300 a run, 10 a call; an order Shopify doesn't show gets "-". Then the
+ * page of every bundle in the column that isn't known yet (once per bundle, kept in SHOP_ORDERS.BUNDLE_URLS).
+ */
+function fillOrderBundles_() {
+  const sh = ss_().getSheetByName(SHOP_ORDERS.TAB);
+  if (!shopifyProps_().getProperty('SHOPIFY_TOKEN') || !sh || sh.getLastRow() < 2) return 0;
+  const B = SHOP_ORDERS.HEADERS.indexOf('Bundles') + 1, L = sh.getLastRow();
+  if (sh.getMaxColumns() < B) sh.insertColumnsAfter(sh.getMaxColumns(), B - sh.getMaxColumns());
+  if (String(sh.getRange(1, B).getValue()) !== 'Bundles') sh.getRange(1, B).setValue('Bundles');
+  const cut = new Date(Date.now() - SHOP_ORDERS.BUNDLE_DAYS * 86400000).toISOString();
+  const ids = sh.getRange(2, 1, L - 1, 2).getValues(), col = sh.getRange(2, B, L - 1, 1).getValues(), need = [];
+  for (let i = ids.length - 1; i >= 0 && need.length < 300 && String(ids[i][1]) >= cut; i--) {
+    if (col[i][0] === '' && ids[i][0]) need.push(String(ids[i][0]));
+  }
+  const got = {};
+  try {
+    for (let i = 0; i < need.length && timeLeft_(); i += 10) {
+      const chunk = need.slice(i, i + 10), nodes = shopifyGql_(SHOP_ORDERS.EDITED_QUERY, { ids: chunk }).nodes || [];
+      chunk.forEach((id, n) => { const o = nodes[n]; got[id] = o && o.lineItems ? shopOrderBundlesText_(o, shopOrderItems_(o)) : '-'; });
+    }
+  } catch (e) { setStatus_('SHOP_BUNDLES', '✗ ' + errText_(e)); }
+  const n = Object.keys(got).length;
+  if (n) withLock_(() => {
+    // Rows may have moved if new orders came in meanwhile: write by order ID. A cell filled meanwhile keeps what it has.
+    const now = sh.getRange(2, 1, sh.getLastRow() - 1, 1).getValues(), out = sh.getRange(2, B, now.length, 1).getValues();
+    now.forEach((r, i) => { const t = got[String(r[0])]; if (t !== undefined && out[i][0] === '') out[i][0] = t; });
+    sh.getRange(2, B, out.length, 1).setNumberFormat('@').setValues(out);
+    dropRaw_(SHOP_ORDERS.TAB);
+  });
+  const known = bundleUrls_(), ask = [];
+  orderBundlesMap_().forEach(list => list.forEach(b => { if (b.id && !(b.id in known) && ask.indexOf(b.id) < 0) ask.push(b.id); }));
+  if (ask.length) {
+    const domain = cfgList_('business.store_domains').map(storeHost_).filter(Boolean)[0];
+    try {
+      for (let i = 0; i < ask.length && timeLeft_(); i += 50) {
+        const chunk = ask.slice(i, i + 50), nodes = shopifyGql_(SHOP_ORDERS.PRODUCT_URL_QUERY, { ids: chunk.map(id => 'gid://shopify/Product/' + id) }).nodes || [];
+        chunk.forEach((id, k) => {
+          const p = nodes[k] || {};
+          known[id] = p.onlineStoreUrl || (p.handle && domain ? 'https://' + domain + '/products/' + p.handle : '');
+        });
+      }
+      PropertiesService.getDocumentProperties().setProperty(SHOP_ORDERS.BUNDLE_URLS, JSON.stringify(known));
+    } catch (e) { setStatus_('SHOP_BUNDLES', '✗ لينك الباندل: ' + errText_(e)); }
+  }
+  if (n) setStatus_('SHOP_BUNDLES', '✓ ' + n + ' أوردر' + (need.length > n ? '، والباقي في التحديث الجاي' : ''));
   return n;
 }
 
@@ -9102,7 +9232,7 @@ const EXT = {
   views: [slow => chanceViews_(slow), () => writeShopTab_(), () => writeMetaCamps_(), () => writeDupTab_(), () => time_('Actions & Analysis', () => writeAnalysisTab_())],
   edit: [(name, a1) => chanceEdit_(name, a1), (name, a1) => campaignMapEdit_(name, a1), (name, a1) => dupEdit_(name, a1), (name, a1) => anaEdit_(name, a1)],
   setup: [() => chanceSetup_()],
-  live: [() => syncShopifyStatus_(), () => fillGrossSales_(), () => fillOrderVariants_(), () => checkShopifyOrders_(), () => syncShopifyStock_(false), () => syncShopifyCollections_(), () => refreshAccountNames_(), () => discoverAccounts_(), () => chanceLive_(), () => refreshTodayFunnel_(), () => refreshFunnel_(false),
+  live: [() => syncShopifyStatus_(), () => fillGrossSales_(), () => fillOrderVariants_(), () => fillOrderBundles_(), () => checkShopifyOrders_(), () => syncShopifyStock_(false), () => syncShopifyCollections_(), () => refreshAccountNames_(), () => discoverAccounts_(), () => chanceLive_(), () => refreshTodayFunnel_(), () => refreshFunnel_(false),
     () => refreshShopTab_(false), () => refreshShopNet_(), () => refreshMetaCamps_(false)],
   today: [() => refreshTodayFunnel_(), () => refreshBalances_(), () => refreshShopCards_(), () => refreshShopNet_()],
   menu: [['📦 تحديث المنتجات والستوك وتوب 100', 'refreshProductsNow'], ['📈 تحديث Daily Account Funnel و Actual ROAS', 'refreshFunnelNow'], ['📊 تحديث Meta Campaigns', 'refreshMetaCampsNow'],
