@@ -58,7 +58,7 @@ const SETTINGS_SPEC = [
   ['attribution.meta_markers', 'fb,facebook,ig,instagram,meta', 'كلمات في الـUTM تعني Meta'],
   ['attribution.other_utm_platform', 'META', 'UTM موجود بس مش معروف: META | UNKNOWN'],
   ['attribution.manual_account', '1354948596094660', 'الأكاونت اللي أوردرات المانيول (المسيجات) بتتحسب عليه في Daily Account Funnel و Actual ROAS'],
-  ['accounts.messages_only', '1354948596094660', 'حسابات Meta اللي شغالة على كامبينات مسجات بس (Chance 26)، مفصولة بفاصلة، و - = مفيش: مش بيتحكم عليها بالفانل ولا بالرؤاس ولا بالبنشمارك، ومش داخلة في بنشمارك البيزنس ولا فانل البيزنس، ومكانها 💬. صرفها لسه داخل في الصرف كله (Closing و Today)'],
+  ['accounts.messages_only', '1354948596094660', 'حسابات Meta اللي شغالة على كامبينات مسجات بس (Chance 26)، مفصولة بفاصلة، و - = مفيش: مفيش عنها أي مشكلة ولا أكشن (فانل ولا رؤاس ولا بنشمارك)، ومكانها 💬، ومفيش أوردرات مانيول ولا DIRECT عليها لحد ما أوردرات المسجات تتتبع. باقي الأرقام زي ما هي'],
   ['meta.api_version', 'v26.0', 'نسخة Graph API'],
   ['meta.purchase_actions', 'offsite_conversion.fb_pixel_purchase,purchase,omni_purchase', 'أول نوع موجود بس بيتحسب'],
   ['tiktok.method', 'none', 'none | connector_tab | csv_tab — لو TikTok متربط من المنيو (الإعدادات ← ربط TikTok) بيتقري من الـ API ومش بيبص على ده'],
@@ -129,9 +129,10 @@ function accounts_(platform) {
 
 /*
  * Meta accounts that run messages campaigns only (accounts.messages_only, Chance 26): their ads bring chats, not website
- * orders, so a low funnel or Shopify ROAS there is expected. They are not judged (Actions, Analysis, Meta Campaigns, the
- * benchmark in Today, تعادل الحسابات) and are left out of the business's funnel and benchmark; their spend still counts
- * as spend (Closing, Daily Log, Today's totals).
+ * orders, and those aren't tracked yet, so a low funnel or Shopify ROAS there is expected. They are never shown as a problem
+ * or an action (Actions, Analysis, Meta Campaigns, the colors in Today's benchmark and the Daily Account Funnel, تعادل
+ * الحسابات), and no MANUAL or DIRECT order is put on them (17_account_funnel.gs). Every other number stays as it was:
+ * their spend, and the business's totals, funnel and benchmark with them.
  */
 function msgAccounts_() { return new Set(cfgList_('accounts.messages_only').map(x => x.replace(/^act_/i, '').trim()).filter(x => /^\d+$/.test(x))); }
 function isMsgAccount_(id) { return msgAccounts_().has(String(id || '').replace(/^act_/i, '').trim()); }

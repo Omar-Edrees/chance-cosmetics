@@ -11,7 +11,7 @@ const TODAY = {
   GRAND: '#00ff00', LABEL: '#f3f4f6', METRIC: '#e8f0fe', AVG: '#e8eefc', SPECIAL: '#fde8e8', TOTAL: '#e8eefc',
   GREEN: '#d9ead3', RED: '#f4cccc', OTHER: '#f3f4f6', CATALOG: '#fff2cc',
   MONEY: '#,##0.00', COUNT: '0', RATIO: '0.00', PCT: '0.00%',
-  FUNNEL_KEY: 'TODAY_FUNNEL', BEST_KEY: 'TODAY_FUNNEL_BEST', BEST_MONTHS: 3, BEST_VERSION: 2,
+  FUNNEL_KEY: 'TODAY_FUNNEL', BEST_KEY: 'TODAY_FUNNEL_BEST', BEST_MONTHS: 3, BEST_VERSION: 3,
   FIELDS: 'spend,impressions,clicks,inline_link_clicks,actions,action_values,video_thruplay_watched_actions',
   /* [Metric, numerator, denominator, times, format (money | pct | ratio), lower is better?, blank when the numerator is 0?].
    * ROAS, AOV and CVR first; then the funnel in order: the ad (cost, clicks, video), the site step by step. */
@@ -77,8 +77,7 @@ function refreshTodayFunnel_() {
     const row = { id: acc.id, name: acc.name || acc.id };
     try {
       row.raw = funnelRaw_(metaAll_('act_' + acc.id + '/insights', { level: 'account', time_range: range(today, today), fields: TODAY.FIELDS }));
-      // The benchmark is the website funnel: a messages-only account (accounts.messages_only) stays out of it.
-      if (needBest && !isMsgAccount_(acc.id)) metaAll_('act_' + acc.id + '/insights', { level: 'account', time_range: range(from, to), time_increment: 'monthly', fields: TODAY.FIELDS })
+      if (needBest) metaAll_('act_' + acc.id + '/insights', { level: 'account', time_range: range(from, to), time_increment: 'monthly', fields: TODAY.FIELDS })
         .forEach(m => { const ym = String(m.date_start).slice(0, 7); months[ym] = funnelAdd_(months[ym] || {}, funnelRaw_([m])); });
     } catch (e) { row.error = errText_(e); bestOk = false; }
     out.accounts.push(row);

@@ -17,8 +17,8 @@
  *  - Shopify: today against yesterday until the same hour (sessions, conversion, bounce, sales, orders against the spend).
  *  - Products, governorates and the catalog: what sells better, where it's delivered best, what the catalog sells.
  * A messages-only account (accounts.messages_only, isMsgAccount_) isn't judged in any part: no account, funnel, benchmark,
- * campaign, cancellation or duplication finding, and it's left out of the business's funnel. Its spend stays in the
- * business's numbers (as Closing).
+ * campaign, cancellation or duplication finding, and it's left out of the business's funnel finding (its chats would pull
+ * it down). Every other number stays as it was (its spend is in the business's, as Closing).
  */
 const ANA = {
   TAB: 'Actions', TAB2: 'Analysis', OLD_TAB: 'Analysis & Actions', SNAP: 'Intraday Ads', GROUPS: 'ANA_GROUPS',

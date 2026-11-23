@@ -2362,7 +2362,7 @@ test('الأرقام موحدة: رؤاس البيزنس في Daily Account Funn
   assert.equal(todayRow(e, 'GRAND TOTAL')[6], 333.33);
 });
 
-test('حساب المسجات (Chance 26، accounts.messages_only): مش بيتحكم عليه في Meta Campaigns ولا Actions ولا البنشمارك ولا الفانل ولا التعادل، وصرفه لسه في الصرف كله', () => {
+test('حساب المسجات (Chance 26، accounts.messages_only): مش بيطلع في المشاكل ولا الأكشنز، ومفيش أوردرات مانيول عليه، وباقي الأرقام زي ما هي', () => {
   const probe = env(), today = probe.c.todayKey_(), d = n => probe.c.shiftKey_(today, -n), B = '(blank)';
   const ad = (n, camp, adId, spend) => Object.assign(adRow(d(n), adId, spend), { campaign_id: camp, campaign_name: 'Camp ' + camp,
     adset_id: 'S' + camp, adset_name: 'Set ' + camp, ad_name: 'Ad ' + adId, impressions: '1000', inline_link_clicks: '20', v3: 300 });
@@ -2377,6 +2377,8 @@ test('حساب المسجات (Chance 26، accounts.messages_only): مش بيت�
   const p = today.split('-').map(Number), last = new Date(Date.UTC(p[0], p[1] - 2, 10)).toISOString().slice(0, 10);
   msgRows.push(Object.assign(ad(0, 'M1', '1300000000111', 900), { date_start: last }));
   webRows.push(Object.assign(ad(0, 'W1', '1400000000111', 300), { date_start: last }));
+  // أوردر درافت (مانيول) النهارده: مش بيتحط على حساب المسجات لحد ما التراكنج يشتغل
+  orders.push(['gid://shopify/Order/999', ' #999', ' N', B, 700, ' ' + today + 'T12:00:00+03:00', B, B, B, B, B, '', '', '', '', 'Lip Oil x1', 'shopify_draft_order']);
   const e = env({ msg: true, orderHead: FLOW_HEAD.slice(0, 17), ads: { [A1]: msgRows, [A2]: webRows }, orders,
     activeAds: { [A1]: ['1300000000111'], [A2]: ['1400000000111'] }, stock: [['P1', 'V1', 'Lip Oil', 'Default Title', 'LO', 'lip-oil', 40, 300]] });
   e.c.setupAll();
@@ -2392,7 +2394,7 @@ test('حساب المسجات (Chance 26، accounts.messages_only): مش بيت�
   assert.equal(camp('Camp M1')[0], '💬 مسجات');
   assert.match(camp('Camp M1')[13], /حساب مسجات/);
   assert.match(camp('Camp W1')[0], /^🟢/);
-  assert.ok(mc.some(r => r[0] === 'كل الحسابات (من غير المسجات)'));
+  assert.ok(mc.some(r => r[0] === 'كل الحسابات'), 'كارت كل الحسابات زي ما هو، بالحسابين');
   assert.equal(mc.find(r => r[0] === 'Chance 26')[1], '💬 مسجات');
 
   // Actions و Analysis: مفيش أي حاجة عن الكامبين ولا الحساب
@@ -2407,14 +2409,16 @@ test('حساب المسجات (Chance 26، accounts.messages_only): مش بيت�
   const cpm = tv.findIndex(r => r[8] === 'CPM');
   assert.equal(e.ss.getSheetByName('Today').attr(cpm + 1, col + 1).bg, null, 'من غير أحمر ولا أخضر');
 
-  // Daily Account Funnel: قسم الحساب مكتوب عليه مسجات ومن غير ألوان، والبيزنس كله من غيره
+  // Daily Account Funnel: البيزنس كله زي ما هو بالحسابين، وقسم المسجات مكتوب عليه ومن غير ألوان ومن غير أوردرات
   const f = e.ss.getSheetByName('Daily Account Funnel'), fv = f.getDataRange().getValues();
-  const biz = fv.findIndex(r => r[0] === 'كل الحسابات (البيزنس كله، من غير المسجات)');
+  const biz = fv.findIndex(r => r[0] === 'كل الحسابات (البيزنس كله)');
   assert.ok(biz > 0);
   const inMonth = [...Array(18).keys()].filter(n => d(n).slice(0, 7) === today.slice(0, 7)).length;
-  assert.equal(fv[biz + 1][1], 100 * inMonth, 'صرف الشهر في البيزنس كله من حساب الموقع بس');
+  assert.equal(fv[biz + 1][1], 600 * inMonth, 'صرف الشهر في البيزنس كله من الحسابين زي الأول');
+  assert.equal(fv[biz + 1][2], inMonth + 1, 'البيزنس كله فيه كل الأوردرات، والدرافت معاهم');
   const sec = fv.findIndex(r => /^Chance 26 .*💬 مسجات بس/.test(String(r[0])));
   assert.ok(sec > biz);
+  assert.ok(!(fv[sec + 1][2] > 0), 'مفيش أوردرات (ولا الدرافت) على حساب المسجات');
   const colors = [e.c.funnelColor_(1, 1, true, 0.2), e.c.funnelColor_(1.1, 1, true, 0.2), e.c.funnelColor_(2, 1, true, 0.2)], next = fv.findIndex((r, i) => i > sec && r[0] !== '' && fv[i][1] === '' && i > sec + 1);
   let colored = 0, checked = 0;
   for (let r = sec + 2; r <= (next > 0 ? next : fv.length); r++) for (let c = 3; c <= fv[0].length; c++) { checked++; if (colors.indexOf(f.attr(r, c).bg) >= 0) colored++; }

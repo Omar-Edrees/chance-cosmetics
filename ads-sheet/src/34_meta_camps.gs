@@ -383,9 +383,7 @@ function writeMetaCamps_() {
     g.merge(r, 15, 1, 6);
     r++;
   };
-  // Every account but the messages-only ones (their chats' orders aren't tracked yet).
-  const web = tree.camps.filter(c => !msg.has(String(c.acc)));
-  if (Object.keys(byAcc).length > 1 && web.length) card(web.length < tree.camps.length ? 'كل الحسابات (من غير المسجات)' : 'كل الحسابات', web);
+  if (Object.keys(byAcc).length > 1) card('كل الحسابات', tree.camps);
   Object.keys(byAcc).sort((a, b) => accName(a).localeCompare(accName(b))).forEach(id => card(accName(id), byAcc[id]));
   if (!tree.camps.length) { g.set(r, 1, 'مفيش كامبينات Meta صرفت في آخر 17 يوم، أو لسه ماتقريتش من Meta', { fc: '#6b7280' }); r++; }
   r++;

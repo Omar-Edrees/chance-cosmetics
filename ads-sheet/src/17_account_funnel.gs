@@ -6,7 +6,8 @@
  * says the earlier event isn't tracked, so it gets no color.
  * SHOPIFY ORDERS = store orders from the account's ads (UTM → ad → account, or the last 4 digits of the UTM's IDs), plus
  * DIRECT orders on the account spending on what they bought (orderProductAccount_) and MANUAL orders (from messages) on
- * attribution.manual_account (the business row: every store order, from any
+ * attribution.manual_account; a messages-only account (accounts.messages_only) gets neither until its orders are tracked
+ * (the business row: every store order, from any
  * source, but those from an ad account not in the sheet, like GRAND TOTAL in Today). CPP, AOV and ROAS come from them
  * and their sales, against the spend of the days the orders sheet
  * covers (from 1 Jul 2026 with the archive of older orders; before that they're blank). META ORDERS = Meta's pixel
@@ -115,7 +116,7 @@ function funnelShop_(from, each) {
     [a[4], a[6], a[8]].forEach(x => { if (x) tailAcc[String(x).slice(-4)] = acc; });
     s[d] = (s[d] || 0) + num_(a[10]);
   });
-  const known = metaIdsOf_(), byProduct = orderProductAccount_(from);
+  const known = metaIdsOf_(), byProduct = orderProductAccount_(from), msg = msgAccounts_();
   recentRows_(APP.T.ORDERS, ORDERS_HEADERS.length, 2, sortKey_, from).forEach(o => {
     const d = asKey_(o[2]);
     if (!d || d < from || outsideMeta_(o, known)) return;
@@ -124,7 +125,9 @@ function funnelShop_(from, each) {
     const arch = o[3] === 'META' ? archiveAccOf_(o[0]) : '', ids = [o[11], o[12], o[13], o[16], o[17]].join(' ').match(/\d{15,}/g) || [];
     let acc = o[3] !== 'META' ? '' : adAcc[String(o[14] || '')] || (arch === 'OUT' ? '' : arch) ||
       (ids.map(x => tailAcc[x.slice(-4)]).filter(Boolean)[0] || '');
-    if (!acc && o[3] === APP.MANUAL) acc = cfgStr_('attribution.manual_account'); // orders from messages
+    // MANUAL (draft) orders: on attribution.manual_account, but not while it's a messages-only account (accounts.messages_only):
+    // the chats' orders aren't tracked yet, and not every draft order comes from them.
+    if (!acc && o[3] === APP.MANUAL && !msg.has(cfgStr_('attribution.manual_account'))) acc = cfgStr_('attribution.manual_account');
     if (!acc && (o[3] === 'META' || o[3] === APP.DIRECT) && arch !== 'OUT') acc = byProduct(o, d);
     if (acc) add(out.acc[acc] = out.acc[acc] || {}, d, num_(o[7]));
     if (each) each(o, d, acc);
@@ -151,6 +154,9 @@ function orderProductAccount_(from) {
   });
   if (ss_().getSheetByName(APP.T.CATALOG)) recentRows_(APP.T.CATALOG, CATALOG_HEADERS.length, 1, asKey_, since)
     .forEach(r => put(catalogProduct_(r[4]), asKey_(r[0]), String(r[2]), num_(r[5])));
+  // A messages-only account never gets a DIRECT order: its ads bring chats, so the order goes to the next account on the product.
+  const msg = msgAccounts_();
+  Object.keys(spend).forEach(p => Object.keys(spend[p]).forEach(d => msg.forEach(id => { delete spend[p][d][id]; })));
   const top = m => Object.keys(m || {}).sort((a, b) => m[b] - m[a])[0] || '';
   const best = (p, d) => {
     const x = spend[p];
@@ -218,8 +224,7 @@ function writeFunnel_(data) {
   // The benchmark: each column's best month of the 3 before this one, the whole business (all accounts' month totals, not an
   // average; SHOPIFY ORDERS = every store order but those from an ad account not in the sheet). Lower is better for costs;
   // a step rate over 100% (an event not fully tracked) is used only if no month is at or under 100%.
-  // A messages-only account (accounts.messages_only) is left out of the business's funnel and benchmark: its ads bring chats.
-  const pastRaws = past.map(ym => bizShop(funnelShopAdd_(funnelSum_(data.accounts.filter(a => !a.error && !isMsgAccount_(a.id)).map(a => a.months[ym] || {})),
+  const pastRaws = past.map(ym => bizShop(funnelShopAdd_(funnelSum_(data.accounts.filter(a => !a.error).map(a => a.months[ym] || {})),
     shop.all, allSpend, shop, ym + '-01', monthEnd(ym), true), ym + '-01', monthEnd(ym)));
   const auto = {}, bench = F.METRICS.map(m => {
     let vals = pastRaws.map(raw => metricOf(raw, m)).filter(v => typeof v === 'number' && isFinite(v) && v > 0);
@@ -240,7 +245,7 @@ function writeFunnel_(data) {
   const pct = Math.round(yellow * 100) + '%';
   g.set(2, 3, '🟢 أحسن من البنشمارك أو زيه   🟡 أسوأ لحد ' + pct + '   🔴 أسوأ بأكتر من ' + pct +
     ' — البنشمارك = أحسن شهر في ' + range3 + ' لكل عمود، للبيزنس كله (مجموع الشهر مش متوسط؛ أقل تكلفة وأعلى نسبة وأكتر أوردرات)' +
-    '. SHOPIFY ORDERS = أوردرات المتجر من إعلانات الحساب (UTM)، وأوردرات DIRECT على الحساب اللي بيصرف على المنتج اللي اتشرى، والمانيول على أكاونت المسيجات (attribution.manual_account في Settings)؛ وفي البيزنس كله: كل أوردرات شوبيفاي من أي مصدر ماعدا الأكاونت اللي مش معانا. وعليها CPP و AOV و SHOPIFY ROAS (في البيزنس كله على صرف Meta + TikTok زي Closing و Actual ROAS، فالرؤاس هو هو في التلات تابات). META ORDERS = مشتريات البيكسل.' +
+    '. SHOPIFY ORDERS = أوردرات المتجر من إعلانات الحساب (UTM)، وأوردرات DIRECT على الحساب اللي بيصرف على المنتج اللي اتشرى، والمانيول على attribution.manual_account في Settings (إلا لو هو حساب المسجات: مفيش أوردرات عليه لحد ما التراكنج يشتغل)؛ وفي البيزنس كله: كل أوردرات شوبيفاي من أي مصدر ماعدا الأكاونت اللي مش معانا. وعليها CPP و AOV و SHOPIFY ROAS (في البيزنس كله على صرف Meta + TikTok زي Closing و Actual ROAS، فالرؤاس هو هو في التلات تابات). META ORDERS = مشتريات البيكسل.' +
     ' صفوف الشهور: الصرف والأوردرات مجموع الشهر، والنسب من مجموع الأرقام.' +
     ' نسبة خطوة فوق 100% (زي Pur/Chk) رمادي من غير لون: الخطوة اللي قبلها مش بتتسجل كلها (فورم الكاش مابيبعتش Checkout).');
   g.merge(2, 3, 1, W - 2);
@@ -263,7 +268,7 @@ function writeFunnel_(data) {
   // A section: name bar, totals of this month and the 3 before it, those 3 together, then the days.
   const section = (name, months, days, error, shopDays, spendDays, biz, msg) => {
     const add = (raw, from, to) => (biz ? bizShop(raw, from, to) : raw);
-    g.set(r, 1, name + (msg ? '   ' + MSG_TAG + ' بس: من غير ألوان، ومش داخل في البيزنس كله ولا البنشمارك' : '') + (error ? '   ⚠️ ماقدرتش أقرا الحساب: ' + error : ''), { bg: F.BAND, fc: '#ffffff', b: 'bold' });
+    g.set(r, 1, name + (msg ? '   ' + MSG_TAG + ' بس: من غير ألوان لحد ما أوردرات المسجات تتتبع' : '') + (error ? '   ⚠️ ماقدرتش أقرا الحساب: ' + error : ''), { bg: F.BAND, fc: '#ffffff', b: 'bold' });
     g.fill(r, 2, W - 1, { bg: F.BAND });
     g.merge(r, 1, 1, W);
     r++;
@@ -282,11 +287,10 @@ function writeFunnel_(data) {
       line(Utilities.formatDate(new Date(Date.UTC(p[0], p[1] - 1, p[2], 12)), 'UTC', 'EEE dd-MMM'), raw, {}, msg);
     });
   };
-  const ok = data.accounts.filter(a => !a.error && !isMsgAccount_(a.id)), allMonths = {}, allDays = {};
+  const ok = data.accounts.filter(a => !a.error), allMonths = {}, allDays = {};
   data.months.forEach(ym => { allMonths[ym] = funnelSum_(ok.map(a => a.months[ym] || {})); });
   ok.forEach(a => a.days.forEach(d => { allDays[d.date] = funnelSum_([allDays[d.date] || {}, d.raw]); }));
-  if (ok.length > 1 || (ok.length && ok.length < data.accounts.filter(a => !a.error).length)) section('كل الحسابات (البيزنس كله' +
-    (ok.length < data.accounts.filter(a => !a.error).length ? '، من غير المسجات)' : ')'), allMonths,
+  if (ok.length > 1) section('كل الحسابات (البيزنس كله)', allMonths,
     Object.keys(allDays).sort().reverse().map(d => ({ date: d, raw: allDays[d] })), '', shop.all, allSpend, true);
   data.accounts.forEach(a => section(a.name, a.months, a.days, a.error, shop.acc[a.id] || {}, shop.spend[a.id] || {}, false, isMsgAccount_(a.id)));
   if (!data.accounts.length) g.set(r, 1, 'مفيش حساب Meta صرف في الفترة دي', { fc: '#6b7280' });
