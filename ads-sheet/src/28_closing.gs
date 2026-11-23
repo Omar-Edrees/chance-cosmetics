@@ -8,9 +8,10 @@
  * can be (re)archived from the menu.
  *
  * Columns: TOTAL SPEND (Meta + TikTok, Daily Log), TOTAL ORDERS (every store order but the outside account's, as GRAND TOTAL
- * in Today), ROAS (the orders' totals as made, after discounts with shipping, ÷ spend = Shopify ROAS), ACTUAL ROAS (delivered sales ÷ spend), AOV (like Shopify's: NET SALES ÷ the orders read for it, so no shipping),
- * GROSS SALES (the orders' products at their price before discounts, no shipping, as made: 32_shopify_orders.gs),
- * NET SALES (the same products after their discounts, no shipping, as made), REVENUE (delivered orders only, what was
+ * in Today), ROAS (the orders' totals as made, after discounts with shipping, ÷ spend = Shopify ROAS), ACTUAL ROAS (delivered sales ÷ spend), AOV (like Shopify's: the orders' products after their
+ * discounts, no shipping, as made ÷ the orders read for it), GROSS SALES (the orders' products at their price before discounts,
+ * no shipping, as made: 32_shopify_orders.gs), NET SALES (the Total sales card without shipping: Shopify's total_sales of the
+ * day − its shipping_charges, refreshShopNet_ in 30_shopify_tab.gs; every store order, after that day's returns), REVENUE (delivered orders only, what was
  * collected), TOTAL UNITS, UPO (units ÷ orders), TOTAL ORDERS again (next to the status columns), CONFIRMED (shipped),
  * IN SHIPPING (shipped, not delivered or back yet), DELIVERED, CPL (spend ÷ orders), CPO (spend ÷ delivered), CROSS-SELL REVENUE (what was added to delivered orders after they were placed).
  * Where each order stands comes from 19_order_status.gs (read from Shopify up to ORDER_STATUS_AT): later days show those
@@ -28,10 +29,11 @@ const CLOSING = {
     ['TOTAL ORDERS', t => t.orders, '#,##0', false],
     ['ROAS', t => ratioOrBlank_(t.sales, t.spend, 2), '0.00"x"', false],
     ['ACTUAL ROAS', t => (t.known ? ratioOrBlank_(t.revenue, t.knownSpend, 2) : ''), '0.00"x"', true],
-    ['AOV', t => (t.netN > 0 ? ratioOrBlank_(t.net, t.netN, 0) : ''), '#,##0', false], // like Shopify's: NET SALES ÷ the orders that have it
+    ['AOV', t => (t.netN > 0 ? ratioOrBlank_(t.net, t.netN, 0) : ''), '#,##0', false], // like Shopify's: products after discounts ÷ the orders that have it
     // Every order of the day has it (read from Shopify), else empty rather than too small.
     ['GROSS SALES', t => (t.orders > 0 && t.grossN === t.orders ? round2_(t.gross) : ''), '#,##0', false],
-    ['NET SALES', t => (t.orders > 0 && t.netN === t.orders ? round2_(t.net) : ''), '#,##0', false],
+    // Total sales − shipping from Shopify, for every day counted, else empty rather than too small.
+    ['NET SALES', t => (t.shopN > 0 && !t.shopMiss ? round2_(t.shop) : ''), '#,##0', false],
     ['REVENUE', t => (t.known ? round2_(t.revenue) : ''), '#,##0', true],
     ['TOTAL UNITS', t => t.units, '#,##0', false],
     ['UPO', t => ratioOrBlank_(t.units, t.orders, 2), '0.00', false],
@@ -54,7 +56,7 @@ function closingMonthName_(month) {
 }
 function closingArchiveName_(month) { return closingMonthName_(month) + CLOSING.ARCHIVE_SUFFIX; }
 function closingZero_() {
-  return { spend: 0, knownSpend: 0, orders: 0, sales: 0, gross: 0, grossN: 0, net: 0, netN: 0, units: 0, cancelled: 0, confirmed: 0, returned: 0,
+  return { spend: 0, knownSpend: 0, orders: 0, sales: 0, gross: 0, grossN: 0, net: 0, netN: 0, shop: 0, shopN: 0, shopMiss: 0, units: 0, cancelled: 0, confirmed: 0, returned: 0,
     shipping: 0, delivered: 0, revenue: 0, cross: 0, known: false };
 }
 function closingAdd_(into, x) { Object.keys(into).forEach(k => { if (k === 'known') into.known = into.known || x.known; else into[k] += x[k]; }); return into; }
@@ -95,7 +97,7 @@ function closingWeeks_(month) { return [[1, 7], [8, 14], [15, 21], [22, closingD
 
 /* Draws a month (Closing or an archive) on grid g. today: days after it stay empty (the current month). */
 function closingGrid_(month, title, note, today, updated) {
-  const C = CLOSING, g = todayGrid_(), W = 1 + C.COLS.length, data = closingData_(month), all = closingZero_();
+  const C = CLOSING, g = todayGrid_(), W = 1 + C.COLS.length, data = closingData_(month), all = closingZero_(), shop = shopNetDays_();
   g.width = W;
   const band = (r, text, bg, fc) => { g.set(r, 1, text, { bg: bg, fc: fc, b: 'bold', al: 'center' }); g.fill(r, 2, W - 1, { bg: bg }); g.merge(r, 1, 1, W); };
   band(1, title, C.DARK, '#ffffff');
@@ -108,8 +110,9 @@ function closingGrid_(month, title, note, today, updated) {
   g.set(2, 7, note, { fc: C.SOFT });
   g.merge(2, 7, 1, W - 6);
   g.set(3, 1, 'TOTAL ORDERS = كل أوردرات شوبيفاي (ماعدا الأكاونت اللي مش معانا)، ومتكرر قبل CONFIRMED عشان المقارنة. ' +
-    'ROAS = إجمالي كل الأوردرات وقت ما اتعملت (بعد الخصم ومعاه الشحن) ÷ الصرف، و AOV زي شوبيفاي = NET SALES (المنتجات بعد الخصم ومن غير الشحن) ÷ الأوردرات اللي اتقرت. ' +
-    'GROSS SALES = المنتجات بسعرها قبل الخصم ومن غير الشحن، و NET SALES = نفس المنتجات بعد الخصم ومن غير الشحن، وقت ما الأوردر اتعمل (فاضيين لحد ما يتقروا من شوبيفاي). ' +
+    'ROAS = إجمالي كل الأوردرات وقت ما اتعملت (بعد الخصم ومعاه الشحن) ÷ الصرف، و AOV زي شوبيفاي = المنتجات بعد الخصم ومن غير الشحن ÷ الأوردرات اللي اتقرت. ' +
+    'GROSS SALES = المنتجات بسعرها قبل الخصم ومن غير الشحن، وقت ما الأوردر اتعمل (فاضي لحد ما يتقري من شوبيفاي). ' +
+    'NET SALES = Total sales بتاع شوبيفاي (زي الكارت في Today) من غير الشحن: كل أوردرات المتجر، ومتشال منها المرتجعات والإلغاء اللي اتسجلوا في اليوم ده. ' +
     'CONFIRMED = اتشحن. IN SHIPPING = اتشحن ولسه في الشحن (مااتسلمش ومارجعش). DELIVERED = اتسلم واتحصّل. REVENUE = مبيعات المتسلم بس، و ACTUAL ROAS = REVENUE ÷ الصرف. ' +
     'UPO = القطع ÷ الأوردرات. CPL = الصرف ÷ كل الأوردرات. CPO = الصرف ÷ المتسلم. CROSS-SELL REVENUE = اللي اتزود على الأوردرات المتسلمة بعد ما اتعملت (جوه REVENUE). ' +
     'حالة الأوردرات من شوبيفاي لحد ' + orderStatusAt_() + '، والأيام اللي بعدها أعمدة الحالة فيها فاضية لحد التحديث الجاي.', { fc: C.SOFT });
@@ -131,6 +134,7 @@ function closingGrid_(month, title, note, today, updated) {
       if (today && k > today) { line(label, null, { fc: '#9ca3af' }, false); continue; }
       const t = data[k] || closingZero_();
       if (k <= orderStatusDay_()) t.known = true;
+      if (typeof shop[k] === 'number') { t.shop = shop[k]; t.shopN = 1; } else t.shopMiss = 1;
       closingAdd_(sum, t);
       line(label, t, today && k === today ? { bg: C.TODAY, b: 'bold' } : {}, true);
     }

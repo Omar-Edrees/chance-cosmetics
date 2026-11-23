@@ -22,7 +22,7 @@
  * day, kept in document properties. Drawn with the views (after Daily Log), only in a run that read Shopify.
  */
 const SHOPTAB = {
-  TAB: 'Shopify', DATA: 'Shopify Data', SLOW_KEY: 'SHOPTAB_SLOW', CHARTS_KEY: 'SHOPTAB_CHARTS', TC_KEY: 'TODAY_CARD_CHARTS', CARDS_KEY: 'SHOPTAB_CARDS', SPEND_KEY: 'SHOPTAB_SPEND_PAST', LAYOUT_KEY: 'SHOPTAB_LAYOUT', LAYOUT: 2,
+  TAB: 'Shopify', DATA: 'Shopify Data', SLOW_KEY: 'SHOPTAB_SLOW', CHARTS_KEY: 'SHOPTAB_CHARTS', TC_KEY: 'TODAY_CARD_CHARTS', CARDS_KEY: 'SHOPTAB_CARDS', SPEND_KEY: 'SHOPTAB_SPEND_PAST', NET_KEY: 'SHOPTAB_NET_DAYS', LAYOUT_KEY: 'SHOPTAB_LAYOUT', LAYOUT: 2,
   MONTH_KEY: 'SHOPTAB_MONTH_HOURS', EVERY_MS: 3 * 3600000, PART: 8000, V: 3,
   /* People only, as Shopify's own pages show sessions: bot sessions (most of them land, bounce and never buy) are left out. */
   HUMAN: "human_or_bot_session = 'human'",
@@ -359,6 +359,36 @@ function shopTabCards_() {
 function refreshShopCards_() {
   if (!shopifyProps_().getProperty('SHOPIFY_TOKEN')) return;
   try { shopTabSaveCards_(shopTabFetchFast_(true)); } catch (e) { setStatus_('SHOPTAB', '✗ الكروت: ' + errText_(e)); }
+}
+
+/*
+ * NET SALES in Closing = the Total sales card without shipping: Shopify's total_sales of the day − its shipping_charges. So it
+ * is every store order like the card (the outside account's too), after the returns and cancellations recorded that day.
+ * Day by day from the first day of the month SHOPTAB.MONTHS months ago until today (Closing and the archives Actual ROAS
+ * shows), read with every update and ⚡, kept in SHOPTAB.NET_KEY as {day: net}; older days stay as they were last read
+ * (up to SHOPTAB.MONTHS months more). A day with no sales comes back 0.
+ */
+function refreshShopNet_() {
+  if (!shopifyProps_().getProperty('SHOPIFY_TOKEN')) return false;
+  try {
+    const today = todayKey_(), p = today.split('-').map(Number);
+    const from = new Date(Date.UTC(p[0], p[1] - 1 - SHOPTAB.MONTHS, 1)).toISOString().slice(0, 10);
+    const keepFrom = new Date(Date.UTC(p[0], p[1] - 1 - 2 * SHOPTAB.MONTHS, 1)).toISOString().slice(0, 10);
+    const kept = shopNetDays_(), out = {};
+    Object.keys(kept).forEach(k => { if (k >= keepFrom && k < from) out[k] = kept[k]; });
+    for (let k = from; k <= today; k = shiftKey_(k, 1)) out[k] = 0;
+    shopTabQl_('FROM sales SHOW total_sales, shipping_charges TIMESERIES day SINCE ' + from + ' UNTIL ' + today + ' LIMIT 1000').forEach(r => {
+      const k = String(r.day || '').slice(0, 10);
+      if (k >= from && k <= today) out[k] = round2_(out[k] + num_(r.total_sales) - num_(r.shipping_charges));
+    });
+    PropertiesService.getDocumentProperties().setProperty(SHOPTAB.NET_KEY, JSON.stringify(out));
+    setStatus_('SHOP_NET', '✓ من ' + from + ' لحد النهارده');
+    return true;
+  } catch (e) { setStatus_('SHOP_NET', '✗ ' + errText_(e)); return false; }
+}
+/* {day: Total sales − shipping} as last read (refreshShopNet_); {} before the first read. */
+function shopNetDays_() {
+  try { return JSON.parse(PropertiesService.getDocumentProperties().getProperty(SHOPTAB.NET_KEY) || '{}') || {}; } catch (e) { return {}; }
 }
 
 /*

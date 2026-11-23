@@ -1682,7 +1682,7 @@ test('تاب Shopify: بيتقري من شوبيفاي مع التحديث وي�
   assert.ok(!v.some(r => /^النهارده لحد/.test(String(r[0]))), 'مفيش عنوان فوق الكروت');
   const n = queries.length;
   e.c.liveTick();
-  assert.equal(queries.length - n, 5, 'التحديث الجاي بيقرا النهارده بس، والباقي كل 3 ساعات');
+  assert.equal(queries.length - n, 6, 'التحديث الجاي بيقرا النهارده بس (و Total sales والشحن يوم بيوم لـ NET SALES في Closing)، والباقي كل 3 ساعات');
   assert.equal(sh.getCharts()[0], charts[0], 'الرسوم مااتعملتش تاني: الداتا تحتها بتتحدث لوحدها');
   const later = api.slice(1).reduce((a, x) => a.concat(x), []);
   assert.ok(later.every(r => r.updateChartSpec), 'التحديث بيغير أرقام الكروت بس، مكانها وحجمها زي ما هم');
@@ -1883,7 +1883,7 @@ test('Campaign Map: لينك الصفحة بأي شكل هو نفس الصفحة
   assert.equal(e.c.syncShopifyCollections_(), 0, 'مرة في اليوم');
 });
 
-test('Closing: GROSS SALES (المنتجات قبل الخصم ومن غير الشحن، وقت الأوردر) و NET SALES (بعد الخصم ومن غير الشحن) قبل REVENUE', () => {
+test('Closing: GROSS SALES (المنتجات قبل الخصم ومن غير الشحن، وقت الأوردر) و NET SALES (Total sales بتاع شوبيفاي من غير الشحن) قبل REVENUE', () => {
   const probe = env(), today = probe.c.todayKey_();
   const order = (id, hm, total) => ({ id: 'gid://shopify/Order/' + id, createdAt: today + 'T' + hm + ':00Z', sourceName: 'web', cancelledAt: null,
     originalTotalPriceSet: { shopMoney: { amount: String(total) } }, customAttributes: [], lineItems: { nodes: [{ title: 'Lip Oil', quantity: 2, currentQuantity: 2 }] },
@@ -1893,6 +1893,13 @@ test('Closing: GROSS SALES (المنتجات قبل الخصم ومن غير ا�
   const opt = { created: [order(1, '06:00', 734), order(2, '07:00', 534)],
     gross: { 'gid://shopify/Order/1': [['PRODUCT', 324.5, 24.5], ['PRODUCT', 324.5, 24.5], ['SHIPPING', 85, 0]],
       'gid://shopify/Order/2': [['PRODUCT', 449, 0], ['SHIPPING', 85, 0]] } };
+  // Total sales بتاع شوبيفاي النهارده 1268 (الأوردرين بالشحن)، ومرتجع 200 من أوردر قديم اتسجل النهارده: 1068، والشحن 170
+  const qls = [];
+  opt.ql = q => {
+    qls.push(q);
+    return /^FROM sales SHOW total_sales, shipping_charges TIMESERIES day/.test(q)
+      ? { columns: ['day', 'total_sales', 'shipping_charges'], rows: [[today, '1068', '170']] } : null;
+  };
   fakeShopify(e, [], opt);
   Object.assign(e.user, { SHOPIFY_TOKEN: 'TOKEN1', SHOPIFY_TOKEN_EXP: String(Date.now() + 3600000) });
   e.c.setupAll();
@@ -1903,8 +1910,13 @@ test('Closing: GROSS SALES (المنتجات قبل الخصم ومن غير ا�
   assert.equal(tab[0][18], 'Net Sales');
   assert.deepEqual(tab.slice(1).map(r => r[18]), [649, 449]);
   const day = closingRow(e.ss.getSheetByName('Closing'), dayLabel(e.c, today));
-  // AOV زي شوبيفاي: NET SALES (من غير الشحن) ÷ الأوردرات = 1098 ÷ 2
-  assert.deepEqual([day['GROSS SALES'], day['NET SALES'], day.ROAS, day.AOV], [1147, 1098, '', 549]);
+  // NET SALES = Total sales من غير الشحن = 1068 − 170. و AOV زي شوبيفاي: المنتجات بعد الخصم من غير الشحن ÷ الأوردرات = 1098 ÷ 2
+  assert.deepEqual([day['GROSS SALES'], day['NET SALES'], day.ROAS, day.AOV], [1147, 898, '', 549]);
+  const p = today.split('-').map(Number), from = new Date(Date.UTC(p[0], p[1] - 4, 1)).toISOString().slice(0, 10);
+  assert.ok(qls.includes('FROM sales SHOW total_sales, shipping_charges TIMESERIES day SINCE ' + from + ' UNTIL ' + today + ' LIMIT 1000'), 'من أول الشهر من 3 شهور');
+  const month = closingRow(e.ss.getSheetByName('Closing'), 'MONTH TOTAL');
+  assert.equal(month['NET SALES'], 898, 'الأيام اللي فاتت من الشهر رقمها 0 من شوبيفاي');
+  assert.match(e.ss.getSheetByName('Health').getDataRange().getValues().map(r => r.join(' ')).join('\n'), /NET SALES في Closing .*✓/);
   assert.match(e.ss.getSheetByName('Health').getDataRange().getValues().map(r => r.join(' ')).join('\n'), /الجروس سيلز من شوبيفاي .*✓ 2 أوردر/);
   // أوردر جديد لسه ماتقراش الجروس بتاعه: اليوم يبان فاضي مش ناقص
   opt.created.push(order(3, '08:00', 300));
@@ -1912,7 +1924,7 @@ test('Closing: GROSS SALES (المنتجات قبل الخصم ومن غير ا�
   e.c.resetCaches_();
   e.c.writeClosing_();
   const late = closingRow(e.ss.getSheetByName('Closing'), dayLabel(e.c, today));
-  assert.deepEqual([late['GROSS SALES'], late['NET SALES']], ['', '']);
+  assert.deepEqual([late['GROSS SALES'], late['NET SALES']], ['', 898], 'NET SALES من شوبيفاي نفسه، مش من الأوردرات اللي اتقرت');
 });
 
 test('Meta Campaigns: الكامبين وتحتها الأد سيتس وتحتها الإعلانات، والقرار بـ Shopify ROAS لآخر 3 أيام قدام الـ 7 والـ 14، والمترك الواقع، واللي مفتوح بيفضل مفتوح', () => {

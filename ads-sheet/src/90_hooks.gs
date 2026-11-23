@@ -55,8 +55,8 @@ const EXT = {
   edit: [(name, a1) => chanceEdit_(name, a1), (name, a1) => campaignMapEdit_(name, a1), (name, a1) => dupEdit_(name, a1), (name, a1) => anaEdit_(name, a1)],
   setup: [() => chanceSetup_()],
   live: [() => syncShopifyStatus_(), () => fillGrossSales_(), () => fillOrderVariants_(), () => checkShopifyOrders_(), () => syncShopifyStock_(false), () => syncShopifyCollections_(), () => refreshAccountNames_(), () => discoverAccounts_(), () => chanceLive_(), () => refreshTodayFunnel_(), () => refreshFunnel_(false),
-    () => refreshShopTab_(false), () => refreshMetaCamps_(false)],
-  today: [() => refreshTodayFunnel_(), () => refreshBalances_(), () => refreshShopCards_()],
+    () => refreshShopTab_(false), () => refreshShopNet_(), () => refreshMetaCamps_(false)],
+  today: [() => refreshTodayFunnel_(), () => refreshBalances_(), () => refreshShopCards_(), () => refreshShopNet_()],
   menu: [['📦 تحديث المنتجات والستوك وتوب 100', 'refreshProductsNow'], ['📈 تحديث Daily Account Funnel و Actual ROAS', 'refreshFunnelNow'], ['📊 تحديث Meta Campaigns', 'refreshMetaCampsNow'],
     ['🗄 أرشيف Closing لشهر خلص', 'archiveClosingMonth'], ['🛍 تحديث تاب Shopify', 'refreshShopTabNow'], ['🔑 ربط أبليكيشن شوبيفاي', 'shopifyConnect'], ['🧭 تحديث تاب Actions و Analysis', 'refreshAnalysisNow']]
 };
