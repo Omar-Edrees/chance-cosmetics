@@ -303,7 +303,7 @@ function anaDrawAnalysis_(sh, F, P, M, ctx, errors) {
     b++;
   });
   // 6) What goes well.
-  c = box(r, 13, 'الحاجات الكويسة (' + M.good.length + ')', ['', 'الحاجة الكويسة', 'القسم']);
+  c = box(r, 13, 'فرص التكبير (' + M.good.length + ')', ['', 'الفرصة', 'القسم']);
   if (!M.good.length) { g.set(c, 13, 'مفيش حاجة طالعة بوضوح دلوقتي', { fc: ANA.GREY }); g.merge(c, 13, 1, 3); c++; }
   M.good.slice(0, ANA.TOP_LIST).forEach(f => {
     g.set(c, 13, '🟢', { bg: ANA.PRI_BG[4], al: 'center' });
