@@ -2616,3 +2616,84 @@ test('ربط الكامبينات من الاسم: الشهر ده بس، وال
   const am2 = e.ss.getSheetByName('Ad Map').getDataRange().getValues();
   assert.equal(am2.find(x => String(x[0]) === '506')[col('Final product')], 'SHEGLAM Boldline Gel Liner Sharpener');
 });
+
+test('اسم الكامبين: كامبينات Meta الحقيقية بتاعت نوفمبر قدام منتجات المتجر الحقيقية', () => {
+  const titles = ['SHEGLAM Camera On Smooth And Blur Primer|sheglam-camera-on-smooth', 'SHEGLAM Camera On Blurring Waterproof Setting Spray 60ml|sheglam-camera-on-blurring-waterproof-setting-spray-60ml',
+    'SHEGLAM Camera On Blurring Setting Powder Balm|sheglam-camera-on-blurring-setting-powder-balm', 'Sheglam Camera On Primer & Setting Spray|sheglam-camera-on-primer-setting-spray',
+    'Sheglam Camera On Primer & Setting Spray & Powder|sheglam-camera-on-primer-setting-spray-powder', 'باندل لوك يومي جاهز | 6 قطع|bundle-daily-look',
+    'SHEGLAM Insta-Party Glitter Liner|sheglam-insta-party-glitter-liner', 'SHEGLAM Insta-Ready Face Powder DUO|sheglam-insta-ready-face-powder-duo',
+    'Insta Ready Powder Puff 3 Pieces|insta-ready-powder-puff-3-pieces', 'SHEGLAM Insta-Ready Ultra Setting powder|sheglam-insta-ready-ultra',
+    'SHEGLAM Insta-Ready Sunset Blur Setting Powder|sheglam-insta-ready-sunset-blur-setting-powder', 'SHEGLAM All-In-One 24k Multi-Effect Mascara|sheglam-all-in-one-24k-multi-effect-mascara-1',
+    'SHEGLAM All-In-One Volume and Length Mascara-Washable Black 2 In 1|sheglam-all-in-one-volume-length-mascara-2', 'Bio Balance Gold and Peptide 24k Super Serum 30ml|bio-balance-gold-and-peptide-24k-super-serum-30ml',
+    'SHEGLAM True Stain Liquid Lip Liner|sheglam-true-stain-liquid-lip-liner', 'SHEGLAM Glass Lock Air Gloss|sheglam-glass-lock-air-gloss',
+    'Sheglam Glazed Truffle Please 8-Pan Palette|sheglam-glazed-truffle-please-8-pan-palette', 'Sheglam Glazed & Locked Glossy Lip Tint|sheglam-glazed-locked-glossy-lip-tint',
+    'Dr.Melaxin Peel Shot Exfoliant Black Rice Ampoule - 80ml|dr-melaxin-peel-shot-exfoliant-black-rice-ampoule-80ml',
+    'Dr. Melaxin Peel Shot Exfoliating White Rice Ampoule 80ml|dr-melaxin-peel-shot-exfoliating-white-rice-ampoule-80ml',
+    'Shein Muge Leen Thanks For The Love Lip Set 12 Pcs|shein-muge-leen-thanks-for-the-love-lip-set-12-pcs', 'Sheglam Air Plush Lip and Cheek Cream|sheglam-air-plush-lip-and-cheek-cream-1',
+    'Sheglam Marshmallow Puff Lip Blur Pen|sheglam-marshmallow-puff-lip-blur-pen-1', 'Sheglam Marshmallow Puff Lip Blur Pen bundle|sheglam-marshmallow-puff-lip-blur-pen-bundle',
+    'EVA RECIPE SHOWER CREAM MARSHMALLOW 370ML|eva-recipe-shower-cream-marshmallow-370ml', 'ItS SKIN Secret Solution Wedding Dress Pure Cream 100ml|it-s-skin-secret-solution-wedding-dress-pure-cream-100ml',
+    'Tola Hair Oil Replacement 150ml (Offer 1+1)|tola-hair-oil-replacement-150ml-offer-1-1', 'KIKO MILANO Lumiverse infinite retouches flashes mascara|kiko-milano-lumiverse-infinite-retouches-flashes-mascara',
+    'Sheglam Cutie Paw Blush Stamp|sheglam-cutie-paw-blush-stamp', 'SHEGLAM Buttery Bliss Blush Stick|sheglam-buttery-bliss-blush-stick',
+    'Sheglam Buttery Bliss Blush Stick Set|sheglam-buttery-bliss-blush-stick-set', 'SHEGLAM Pore No More Primer|sheglam-pore-no-more-primer',
+    'Sheglam Boldline Longwear Multi-Function Gel Liner Set|sheglam-boldline-longwear-multi-function-gel-liner-set', 'sheglam Boldline Eyeliner Gel|sheglam-boldline-eyeliner-gel',
+    'SHEGLAM Boldline Gel Liner Sharpener|sheglam-boldline-gel-liner-sharpener'];
+  const e = env();
+  e.c.setupAll();
+  const sh = e.ss.insertSheet('Shopify Stock');
+  sh.getRange(1, 1, 1, 7).setValues([['Variant ID', 'Handle', 'Product', 'Stock', 'Read', 'Price', 'Variant']]);
+  sh.getRange(2, 1, titles.length, 7).setValues(titles.map((x, i) => ['v' + i, x.split('|').pop(), x.split('|').slice(0, -1).join('|'), 5, '1', 100, 'Default Title']));
+  e.c.resetCaches_();
+  const t = n => { const x = e.c.campaignTarget_(n); return x.kind === 'PRODUCT' ? x.title : x.kind === 'MANY' ? 'MANY: ' + x.many.join(' / ') : x.kind; };
+  const cases = [
+    ['LAB v3 | Marshmallow | MB proven videos | Broad | Purchase', ''],
+    ['Catalog | All Product | Black Friday', ''],
+    ['Scaling | Catalog | Sheglam page | CBO | 10/9', ''],
+    ['Scailing | Black F Wedding Offers | CBO | 10/10', ''],
+    ['Camera on powder | Catalog | CBO | 30\\9', ''],
+    ['Scaling | Sheglam Air Plush Lip and Cheek Cream | CBO | 2/6', 'Sheglam Air Plush Lip and Cheek Cream'],
+    ['Insta-Ready Sunset Blur Setting Powder | Testing | ABO | 4-11-2026', 'SHEGLAM Insta-Ready Sunset Blur Setting Powder'],
+    ['Sheglam Camera On Blurring Setting Powder Balm | ABO | 30/10', 'SHEGLAM Camera On Blurring Setting Powder Balm'],
+    ['Flash Sale | Testing | ABO | 9-11', ''],
+    ['LAB PB | Camera On Powder Balm | AR | Arab creators | Broad | Purchase', 'SHEGLAM Camera On Blurring Setting Powder Balm'],
+    ['All-In-One 24k Multi-Effect Mascara | Testing | ABO | 4-11-2026', 'SHEGLAM All-In-One 24k Multi-Effect Mascara'],
+    ['Sheglam True Stain Liquid Lip Liner | Testing | CBO | 4-11-2026', 'SHEGLAM True Stain Liquid Lip Liner'],
+    ['Boldline Longwear Gel Liner Set  | ABO  | 30-10', 'Sheglam Boldline Longwear Multi-Function Gel Liner Set'], // كلمات الاسم كلها في المنتج
+    ['Scaling | SHEGLAM Glass Lock Air Gloss | Scaling  | ABO | 30-10', 'SHEGLAM Glass Lock Air Gloss'],
+    ['Dr. Melaxin Peel Shot Exfoliating White Rice Ampoule 80ml | Testing | Sales | ABO | 20/10/2026', 'Dr. Melaxin Peel Shot Exfoliating White Rice Ampoule 80ml'],
+    ['Life Time - 30 Nov | Catalog | Sheglam page | CBO | 15/11', ''],
+    ['Bundles Offer | Sales | ABO | 17-11', ''],
+    ['Korean Product | Testing | Catalog | ABO | 15-11', ''],
+    ['Clothes | Catalog | ABO | 15-11', ''],
+    ['Home Wear | Testing | CBO | 11-11', ''],
+    ['Sheglam Cutie Paw Blush Stamp | Testing | Messages | ABO | 20/10/2026', 'MSG'],
+    ['Shein Muge Leen Thanks For The Love Lip Set 12 Pcs | Testing | Sales | ABO | 18/10/2026 - Copy', 'Shein Muge Leen Thanks For The Love Lip Set 12 Pcs'],
+    ['Home Wear |Testing  ABO | 20/10/2026', ''],
+    ['Flash Sale | Live Time | End 15 Nov', ''],
+    ['Sheglam Glazed &amp; Locked Glossy Lip Tint | Testing | ABO | 8-11', 'Sheglam Glazed & Locked Glossy Lip Tint'],
+    ['Bundles Offer | Sales | ABO | 20-11', ''],
+    ['lingerie | Testing | ABO | 15-11', ''],
+    ['Moisturizing Bundle  | Messages | ABO | 17-11', 'MSG'],
+    ['Eye Bundle | Messages | ABO | 16-11', 'MSG'],
+    ['SHEGLAM Pore No More Primer | Testing | Messages | ABO | 19/11/2026', 'MSG'],
+    ['Sheglam Buttery Bliss Blush Stick Set | Testing |Messages | ABO | 19/11/2026', 'MSG'],
+    ['Flash Sale | Retargeting | ABO | 9-11', ''],
+    ['Instagram | Profile Vidits', ''],
+    ['Routine Bundle | Messages | ABO |17-11', 'MSG'],
+    ['lingerie | Testing | ABO | 15-11 - Copy', ''],
+    ['Bundle Offer  | Messages | ABO |17-11 - Copy', 'MSG']];
+  const wrong = cases.filter(c => t(c[0]) !== c[1]).map(c => c[0] + ' → ' + t(c[0]) + ' (المفروض ' + (c[1] || 'ولا حاجة') + ')');
+  assert.deepEqual(wrong, []);
+  // اللينك: صفحة منتج هي اللي بتكسب، وصفحة تانية في المتجر هي الصفحة مهما الاسم قال
+  const st = e.ss.getSheetByName('Settings'), keys = st.getDataRange().getValues().map(r => r[0]);
+  st.getRange(keys.indexOf('business.store_domains') + 1, 2).setValue('chancestoreegy.com');
+  e.c.resetCaches_();
+  e.c.addCatalogProducts_(['Scaling | Sheglam Air Plush Lip and Cheek Cream | CBO | 2/6', 'Insta-Ready Sunset Blur Setting Powder | Testing'].map(n => e.c.campaignTarget_(n)));
+  const d = (links, name) => { const x = e.c.decideProduct_(links, name, '', '', '', true); return [x.source, x.product]; };
+  assert.deepEqual(d(['https://chancestoreegy.com/products/sheglam-air-plush-lip-and-cheek-cream-1'], 'Scaling | Sheglam Air Plush Lip and Cheek Cream | CBO | 2/6'),
+    ['LINK', 'Sheglam Air Plush Lip and Cheek Cream']);
+  assert.deepEqual(d(['https://chancestoreegy.com/products/sheglam-air-plush-lip-and-cheek-cream-1'], 'Insta-Ready Sunset Blur Setting Powder | Testing'),
+    ['CONFLICT', 'Sheglam Air Plush Lip and Cheek Cream']);
+  assert.notEqual(d(['https://chancestoreegy.com/ar/pages/flash-sale'], 'Insta-Ready Sunset Blur Setting Powder | Testing')[0], 'NAME', 'صفحة الفلاش سيل مش المنتج');
+  assert.deepEqual(d([], 'Insta-Ready Sunset Blur Setting Powder | Testing'), ['NAME', 'SHEGLAM Insta-Ready Sunset Blur Setting Powder'], 'من غير لينك: الاسم');
+  assert.deepEqual(d(['https://fb.com/messenger_doc/'], 'Eye Bundle | Messages | ABO | 16-11'), ['NAME', 'مسجات']);
+});

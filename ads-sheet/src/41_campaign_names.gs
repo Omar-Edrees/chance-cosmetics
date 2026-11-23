@@ -6,11 +6,16 @@
  *  - A product: matched against every product in the store (the "Shopify Stock" tab, read from the app; else the Products tab):
  *    1) a product's whole title written in the name (as whole words); when several are, the longest (the one that holds the others);
  *    2) else a part of the name (between the |) of 2 words or more that's inside a product's title: one product only, or one
- *       that every other one holds (the others are its bundles: "2 x … + free …").
+ *       that every other one holds (the others are its bundles: "2 x … + free …");
+ *    3) else a part whose words are all in one product's title, in any order or with words between ("Camera On Powder Balm"
+ *       = "SHEGLAM Camera On Blurring Setting Powder Balm"), with the same rule for bundles.
  *    Several products and none of them the base one: no decision (the campaign stays for you, with the names it could be).
+ *    Meta writes & as &amp;: both are dropped, so "Glazed &amp; Locked" = "Glazed & Locked".
  * A product found by name that isn't in the Products tab yet is added to it (title, page, price), so it's in the choices and
- * its spend has a home. The ad's link still counts: a product page link wins, and when it says another product than the name,
- * the ad is ⚠️ (Ad Map source CONFLICT) until you choose in the Campaign Map.
+ * its spend has a home. The ad's link comes first: a product page link wins (and when it says another product than the name,
+ * the ad is ⚠️, Ad Map source CONFLICT, until you choose in the Campaign Map); a link to another store page (a collection,
+ * the flash sale, the home page) is that page, whatever the name says. The name decides only when the ad has no store link
+ * (TikTok without a link, a post, messages).
  */
 const CNAME = {
   MSG: 'مسجات', AWARE: 'Awareness', CATALOG_RX: /catalog|كتالوج/i,
@@ -19,17 +24,19 @@ const CNAME = {
   MIN_LEN: 8
 };
 
+/* A name or title for matching: norm_, with &amp; / & dropped. */
+function cnorm_(s) { return norm_(String(s || '').replace(/&amp;/gi, '&')).replace(/&/g, ' ').replace(/\s+/g, ' ').trim(); }
 /* Every store product once: [{title, n (normalized), handle, price}]. From the Shopify Stock tab, else from Products. */
 let SHOP_CATALOG_ = null;
 function shopCatalog_() {
   if (SHOP_CATALOG_) return SHOP_CATALOG_;
   const out = new Map();
   if (ss_().getSheetByName(STOCK_APP.TAB)) rawRows_(STOCK_APP.TAB, STOCK_APP.HEADERS.length).forEach(r => {
-    const title = String(r[2] || '').trim(), n = norm_(title);
+    const title = String(r[2] || '').trim(), n = cnorm_(title);
     if (!n || out.has(n)) return;
     out.set(n, { title: title, n: n, handle: String(r[1] || '').toLowerCase(), price: r[5] === '' ? '' : num_(r[5]) });
   });
-  products_().forEach(p => { const n = norm_(p.name); if (n && !out.has(n)) out.set(n, { title: p.name, n: n, handle: p.slugs[0] || '', price: p.price || '' }); });
+  products_().forEach(p => { const n = cnorm_(p.name); if (n && !out.has(n)) out.set(n, { title: p.name, n: n, handle: p.slugs[0] || '', price: p.price || '' }); });
   const list = Array.from(out.values()), index = {};
   list.forEach((x, i) => Array.from(new Set(x.n.split(' '))).forEach(w => { (index[w] = index[w] || []).push(i); }));
   SHOP_CATALOG_ = { list: list, index: index };
@@ -57,7 +64,7 @@ function campaignTarget_(name) {
   return out;
 }
 function campaignTargetOf_(raw) {
-  const text = norm_(raw);
+  const text = cnorm_(raw);
   if (CNAME.MSG_RX.test(raw) || CNAME.MSG_RX.test(text)) return { kind: 'MSG', title: CNAME.MSG };
   if (CNAME.AWARE_RX.test(raw) || CNAME.AWARE_RX.test(text)) return { kind: 'AWARE', title: CNAME.AWARE };
   if (CNAME.CATALOG_RX.test(raw)) return { kind: '' }; // the catalog's own rules (Meta splits its spend)
@@ -71,30 +78,34 @@ function campaignTargetOf_(raw) {
   if (top.length === 1) return { kind: 'PRODUCT', title: top[0].title, handle: top[0].handle, price: top[0].price };
   if (top.length > 1) return { kind: 'MANY', many: top.map(x => x.title) };
   // 2) a part of the name inside one title (the base one when the others are its bundles).
-  const parts = raw.split(/\s[|\/–—-]\s|\|/).map(norm_).filter(p => p.length >= CNAME.MIN_LEN && p.indexOf(' ') > 0 && !/^[\d\s]+$/.test(p));
+  const parts = raw.replace(/&amp;/gi, '&').split(/\s[|\/–—-]\s|\|/).map(cnorm_).filter(p => p.length >= CNAME.MIN_LEN && p.indexOf(' ') > 0 && !/^[\d\s]+$/.test(p));
+  const holds = (y, x) => { const w = new Set(y.n.split(' ')); return x.n.split(' ').every(t => w.has(t)); };
   let many = [];
-  for (const p of parts) {
-    const hits = catalogWith_(p.split(' ')).filter(x => hasToken_(x.n, p));
-    if (!hits.length) continue;
-    const base = hits.filter(x => hits.every(y => y === x || hasToken_(y.n, x.n)));
-    if (base.length === 1) return { kind: 'PRODUCT', title: base[0].title, handle: base[0].handle, price: base[0].price };
-    many = many.concat(hits.map(x => x.title));
+  // 2) the part as it is, inside a title; 3) the part's words, all in a title.
+  for (const strict of [true, false]) {
+    for (const p of parts) {
+      const hits = catalogWith_(p.split(' ')).filter(x => !strict || hasToken_(x.n, p));
+      if (!hits.length) continue;
+      const base = hits.filter(x => hits.every(y => y === x || (strict ? hasToken_(y.n, x.n) : holds(y, x))));
+      if (base.length === 1) return { kind: 'PRODUCT', title: base[0].title, handle: base[0].handle, price: base[0].price };
+      if (strict || !many.length) many = many.concat(hits.map(x => x.title));
+    }
   }
   return many.length ? { kind: 'MANY', many: Array.from(new Set(many)).slice(0, 5) } : { kind: '' };
 }
 
 /* The Products tab's name for a store product (by its page, else its title), or '' when it isn't there. */
 function productOfCatalog_(t) {
-  const prods = products_(), n = norm_(t.title || '');
-  const p = (t.handle && prods.find(x => x.slugs.indexOf(t.handle) >= 0)) || prods.find(x => norm_(x.name) === n);
+  const prods = products_();
+  const p = (t.handle && prods.find(x => x.slugs.indexOf(t.handle) >= 0)) || prods.find(x => cnorm_(x.name) === cnorm_(t.title || ''));
   return p ? p.name : '';
 }
 /* Store products found by name (or chosen in the Campaign Map) that aren't in the Products tab yet → added to it. */
 function addCatalogProducts_(targets) {
   const add = [], have = new Set();
   targets.forEach(t => {
-    if (!t || !t.title || productOfCatalog_(t) || have.has(norm_(t.title))) return;
-    have.add(norm_(t.title));
+    if (!t || !t.title || productOfCatalog_(t) || have.has(cnorm_(t.title))) return;
+    have.add(cnorm_(t.title));
     add.push([t.title, '', t.handle || '', '', t.title, t.price === undefined ? '' : t.price, '', '', '', '', '', true]);
   });
   if (!add.length) return 0;
@@ -105,7 +116,7 @@ function addCatalogProducts_(targets) {
 }
 /* A store product whose title is exactly this text (a choice typed or picked in the Campaign Map), or null. */
 function catalogByTitle_(text) {
-  const n = norm_(text);
+  const n = cnorm_(text);
   return n ? shopCatalog_().list.find(x => x.n === n) || null : null;
 }
 /* The names for the Campaign Map's choices: every store product (the hidden tab CNAME's list reads them, no 500 limit). */

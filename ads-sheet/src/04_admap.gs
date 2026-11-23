@@ -97,8 +97,9 @@ function decideProduct_(links, camp, set, ad, adText, fresh) {
   // The product page link (or a code you gave the product) is the harder evidence: it stays, and a different name is flagged.
   if ((d.source === 'LINK' || d.source === 'CODE') && d.product !== byName)
     return { product: d.product, source: 'CONFLICT', note: (d.source === 'LINK' ? 'اللينك رايح لـ ' : 'الكود بيقول ') + d.product + '، واسم الكامبين بيقول ' + byName };
-  if (d.source === 'LINK' || d.source === 'PAGE' || d.source === 'CODE') return d;
-  return { product: byName, source: 'NAME', note: 'من اسم الكامبين' + (d.source === 'MULTI' ? ' (اللينك صفحة فيها كذا منتج)' : '') };
+  // A link to another store page (a collection, the flash sale, the home page) is that page, whatever the name says.
+  if (d.source === 'LINK' || d.source === 'PAGE' || d.source === 'CODE' || parseStoreLinks_(links).store || links.some(l => pageKeyOf_(l))) return d;
+  return { product: byName, source: 'NAME', note: 'من اسم الكامبين' };
 }
 function decideProductOf_(links, camp, set, ad, adText) {
   const named = pageNames_(), keys = Array.from(new Set(links.map(pageKeyOf_).filter(Boolean)));
