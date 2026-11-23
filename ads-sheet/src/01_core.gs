@@ -205,4 +205,4 @@ function errText_(e) {
   ['META_TOKEN', 'TIKTOK_TOKEN', 'TIKTOK_APP_SECRET'].forEach(k => { const tok = props.getProperty(k); if (tok) t = t.split(tok).join('[مخفي]'); });
   return t;
 }
-function resetCaches_() { CFG_ = null; PRODUCTS_ = null; KNOWN_PRODUCTS_ = null; RAW_ = {}; PAGE_NAMES_ = null; }
+function resetCaches_() { CFG_ = null; PRODUCTS_ = null; KNOWN_PRODUCTS_ = null; RAW_ = {}; PAGE_NAMES_ = null; SHOP_CATALOG_ = null; CAMP_TARGET_ = {}; }

@@ -12,10 +12,13 @@
  * that name (Ad Map source PAGE), so a new campaign to the same page needs nothing. A page that isn't there: paste its
  * link in the first empty row with its name. The names are kept in the document properties (PAGE_NAMES).
  * The choices offer every Shopify collection's name too (read once a day from the app: SHOP_COLLECTIONS).
- * Typing in a choice cell filters the list (Google Sheets' own search in a dropdown).
+ * Typing in a choice cell filters the list (Google Sheets' own search in a dropdown). The list has every product in the store
+ * too (from the hidden tab CMAP.LIST, so it isn't cut at 500); one that isn't in Products yet is added there when picked.
+ * Most campaigns need nothing: the campaign's name says what it's for (41_campaign_names.gs), and a name that says one thing
+ * while the link goes to another product is ⚠️ here until you choose.
  */
 const CMAP = {
-  TAB: 'Campaign Map', HEAD_ROW: 4, CATALOG_WORD: 'كتالوج', CHOICE_COL: 9, ID_COL: 10, HOME: 'الصفحة الرئيسية',
+  TAB: 'Campaign Map', HEAD_ROW: 4, LIST: 'Campaign Choices', LIST_KEY: 'CMAP_LIST_SIG', CATALOG_WORD: 'كتالوج', CHOICE_COL: 9, ID_COL: 10, HOME: 'الصفحة الرئيسية',
   PAGE_COL: 12, PAGE_HEADERS: ['الصفحة (اللينك)', 'اسمها (اكتب أو اختار)', 'اسمها في شوبيفاي', 'كامبينات الشهر ده', 'صرف الشهر'],
   COLLECTIONS: 'SHOP_COLLECTIONS', COLLECTIONS_DAY: 'SHOP_COLLECTIONS_DAY',
   COLLECTIONS_QUERY: 'query($after:String){collections(first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{handle title}}}',
@@ -158,6 +161,7 @@ function campaignMapRows_() {
       own = ovr && (prodNames.has(ovr) || ovr === 'MULTI') ? (ovr === 'MULTI' ? APP.MULTI : ovr)
         : r[AM.SRC] === 'MULTI' ? APP.MULTI : r[AM.AUTO] || APP.UNMAPPED;
       if (r[AM.CHOICE] && !c.stored) c.stored = String(r[AM.CHOICE]);
+      if (r[AM.SRC] === 'CONFLICT') c.conflict = String(r[AM.NOTE] || '').replace(/^من Campaign Map — /, '');
       links = String(r[AM.LINKS] || '').split(',').map(x => x.trim()).filter(x => x && x !== '-');
       text = String(r[AM.TEXT] || '');
     }
@@ -176,12 +180,12 @@ function campaignMapRows_() {
   const out = Array.from(camps.values()).map(c => {
     const choice = picked.has(c.key) ? picked.get(c.key) : c.stored, chosen = campChoice_(choice);
     const seen = top(c.seen), where = top(c.where);
-    const status = chosen ? '✅' : c.seen[APP.UNMAPPED] ? '❌' : c.seen[APP.MULTI] ? '⚠️' : '✅';
+    const status = chosen ? '✅' : c.seen[APP.UNMAPPED] ? '❌' : c.seen[APP.MULTI] || c.conflict ? '⚠️' : '✅';
     const pct = n => (seen.length > 1 ? ' (' + Math.round(100 * c.seen[n] / c.month) + '%)' : '');
-    return { key: c.key, platform: c.platform, id: c.id, name: c.name, account: c.account, active: running[c.id] || 0,
+    return { key: c.key, platform: c.platform, id: c.id, name: c.name, account: c.account, active: running[c.id] || 0, conflict: !!c.conflict && !chosen,
       today: round2_(c.today), month: round2_(c.month), status: status, choice: choice,
       landing: where.length ? where[0] + (where.length > 1 ? ' +' + (where.length - 1) : '') : '',
-      seen: seen.slice(0, 3).map(n => label(n) + pct(n)).join(' + ') + (seen.length > 3 ? ' + …' : '') };
+      seen: seen.slice(0, 3).map(n => label(n) + pct(n)).join(' + ') + (seen.length > 3 ? ' + …' : '') + (c.conflict && !chosen ? '  ⚠️ ' + c.conflict : '') };
   });
   const order = { '❌': 0, '⚠️': 1, '✅': 2 };
   out.sort((a, b) => (order[a.status] - order[b.status]) || ((b.active > 0) - (a.active > 0)) || (b.today - a.today) || (b.month - a.month));
@@ -198,9 +202,11 @@ function writeCampaignMap_() {
   const n = s => rows.filter(x => x.status === s).length;
   const top = [
     ['ربط الكامبينات — ' + month + ' (الكامبينات اللي صرفت الشهر ده بس)'].concat(new Array(W - 1).fill('')),
-    ['❌ أو ⚠️ = محتاجة منك: اختار في العمود الأصفر المنتج، أو "' + CMAP.CATALOG_WORD + '"، أو اكتب اسم الصفحة أو الكاتيجوري اللي الكامبين رايحة لها (زي Home Wear). ' +
+    ['الكامبينات بتتربط لوحدها من اسمها: اسم منتج من المتجر = المنتج ده (ولو مش في Products بيتضاف)، و Messages أو Msg = ' + CNAME.MSG + '، و Awareness = ' + CNAME.AWARE +
+      '، ولو اللينك رايح لمنتج تاني غير اللي في الاسم = ⚠️. ' +
+      '❌ أو ⚠️ = محتاجة منك: اختار في العمود الأصفر المنتج (فيه كل منتجات المتجر)، أو "' + CMAP.CATALOG_WORD + '"، أو اكتب اسم الصفحة أو الكاتيجوري اللي الكامبين رايحة لها (زي Home Wear). ' +
       'الاختيار بيتطبق على كل إعلانات الكامبين، والأيام اللي فاتت كمان، في التحديث الجاي.'].concat(new Array(W - 1).fill('')),
-    ['❌ ' + n('❌') + ' مش معروفة   ⚠️ ' + n('⚠️') + ' محتاجة اسم   ✅ ' + n('✅') + ' مربوطة'].concat(new Array(W - 1).fill('')),
+    ['❌ ' + n('❌') + ' مش معروفة   ⚠️ ' + n('⚠️') + ' محتاجة مراجعة (صفحة فيها كذا منتج، أو الاسم واللينك مختلفين)   ✅ ' + n('✅') + ' مربوطة'].concat(new Array(W - 1).fill('')),
     CMAP.HEADERS.slice()];
   const body = rows.map(x => [x.status, x.name, x.account, x.active || '', x.today || '', x.month, x.landing, x.seen,
     x.choice, x.key]);
@@ -221,11 +227,14 @@ function writeCampaignMap_() {
   const groups = Object.keys(named).map(k => named[k]).concat(rows.map(x => campChoice_(x.choice)))
     .filter(c => c && c !== APP.CATALOG && prodList.indexOf(c) < 0);
   const titles = Object.keys(coll).map(h => coll[h]).filter(Boolean).sort((a, b) => a.localeCompare(b));
-  const list = Array.from(new Set([CMAP.CATALOG_WORD].concat(groups.sort((a, b) => a.localeCompare(b)), titles, prodList))).slice(0, 500);
+  const list = Array.from(new Set([CMAP.CATALOG_WORD, CNAME.MSG, CNAME.AWARE].concat(groups.sort((a, b) => a.localeCompare(b)), titles, prodList))).slice(0, 500);
+  // The campaigns' list: the same names, then every store product (from a hidden tab: a list in a rule stops at 500).
+  const store = catalogTitles_().filter(t => list.indexOf(t) < 0).sort((a, b) => a.localeCompare(b));
+  const listRange = campChoiceRange_(list.concat(store));
   if (body.length) {
     const choice = sh.getRange(CMAP.HEAD_ROW + 1, CMAP.CHOICE_COL, body.length, 1);
-    choice.setBackground('#fff2cc').setDataValidation(SpreadsheetApp.newDataValidation()
-      .requireValueInList(list, true).setAllowInvalid(true).build());
+    choice.setBackground('#fff2cc').setDataValidation(listRange ? SpreadsheetApp.newDataValidation().requireValueInRange(listRange, true).setAllowInvalid(true).build()
+      : SpreadsheetApp.newDataValidation().requireValueInList(list, true).setAllowInvalid(true).build());
     sh.getRange(CMAP.HEAD_ROW + 1, CMAP.ID_COL, body.length, 1).setFontColor('#9ca3af');
     const st = sh.getRange(CMAP.HEAD_ROW + 1, 1, body.length, 1);
     sh.setConditionalFormatRules([
@@ -240,6 +249,23 @@ function writeCampaignMap_() {
   // The engine's ad-by-ad tab: hidden once (you can show it again; it stays as you leave it).
   const props = PropertiesService.getDocumentProperties(), am = ss_().getSheetByName(APP.T.ADMAP);
   if (am && !props.getProperty('ADMAP_HIDDEN_V1')) { try { am.hideSheet(); } catch (e) { /* مش مهم */ } props.setProperty('ADMAP_HIDDEN_V1', '1'); }
+}
+
+/* The hidden tab CMAP.LIST with the choices in column A (written only when they change) → its range, or null if it can't be made. */
+function campChoiceRange_(names) {
+  try {
+    const props = PropertiesService.getDocumentProperties(), sig = sha_(JSON.stringify(names));
+    let sh = ss_().getSheetByName(CMAP.LIST);
+    if (!sh || props.getProperty(CMAP.LIST_KEY) !== sig || sh.getLastRow() !== names.length) {
+      sh = sh || ss_().insertSheet(CMAP.LIST);
+      if (sh.getMaxRows() < names.length) sh.insertRowsAfter(sh.getMaxRows(), names.length - sh.getMaxRows());
+      sh.getRange(1, 1, sh.getMaxRows(), 1).clearContent();
+      sh.getRange(1, 1, names.length, 1).setNumberFormat('@').setValues(names.map(n => [n]));
+      try { sh.hideSheet(); } catch (e) { /* مش مهم */ }
+      props.setProperty(CMAP.LIST_KEY, sig);
+    }
+    return sh.getRange(1, 1, names.length, 1);
+  } catch (e) { console.error('campaign choices: ' + errText_(e)); return null; }
 }
 
 /*
@@ -300,7 +326,7 @@ function todayCampaignWarning_(g, r) {
   g.merge(r, 1, 1, 6);
   r++;
   bad.slice(0, 5).forEach(x => {
-    g.set(r, 1, (x.status === '❌' ? '❌ مش معروفة: ' : '⚠️ محتاجة اسم: ') + x.name + (x.landing ? '  ←  ' + x.landing : ''), { bg: '#fde8e8' });
+    g.set(r, 1, (x.status === '❌' ? '❌ مش معروفة: ' : x.conflict ? '⚠️ الاسم واللينك مختلفين: ' : '⚠️ محتاجة اسم: ') + x.name + (x.landing ? '  ←  ' + x.landing : ''), { bg: '#fde8e8' });
     g.fill(r, 2, 5, { bg: '#fde8e8' });
     g.merge(r, 1, 1, 6);
     r++;

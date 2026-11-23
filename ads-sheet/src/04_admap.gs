@@ -4,6 +4,9 @@
  * PAGE (a page you named in the Campaign Map's pages table: every store link of the ad goes to it) comes first.
  * > TEXT (the product's full name in the ad's own text, when the link can't be read: ads made from a page post)
  * > KEYWORD (suggestion, ⚠️) > NONE (❌, spend stays unmapped). Never a default product.
+ * NAME (41_campaign_names.gs, ads that spent this month only): the campaign's name says messages, awareness or a store product.
+ * Messages / awareness come first; a product by name comes after a product page link (when the two differ: CONFLICT, ⚠️)
+ * and before CODE / TEXT / KEYWORD.
  * The campaign's choice in the Campaign Map tab (33_campaign_map.gs) goes to all its ads and wins over all of these;
  * only an ad's own Override wins over it.
  * Orders never move spend.
@@ -84,7 +87,20 @@ function parseStoreLinks_(links) {
   return res;
 }
 
-function decideProduct_(links, camp, set, ad, adText) {
+function decideProduct_(links, camp, set, ad, adText, fresh) {
+  const nm = fresh ? campaignTarget_(camp) : { kind: '' };
+  if (nm.kind === 'MSG' || nm.kind === 'AWARE') return { product: nm.title, source: 'NAME', note: 'من اسم الكامبين (' + nm.title + ')' };
+  const byName = nm.kind === 'PRODUCT' ? productOfCatalog_(nm) : '';
+  const nameNote = nm.kind === 'MANY' ? 'اسم الكامبين ممكن يكون: ' + nm.many.join(' / ') : '';
+  const d = decideProductOf_(links, camp, set, ad, adText);
+  if (!byName) return nameNote && d.source !== 'LINK' && d.source !== 'PAGE' ? Object.assign(d, { note: [d.note, nameNote].filter(Boolean).join(' — ') }) : d;
+  // The product page link (or a code you gave the product) is the harder evidence: it stays, and a different name is flagged.
+  if ((d.source === 'LINK' || d.source === 'CODE') && d.product !== byName)
+    return { product: d.product, source: 'CONFLICT', note: (d.source === 'LINK' ? 'اللينك رايح لـ ' : 'الكود بيقول ') + d.product + '، واسم الكامبين بيقول ' + byName };
+  if (d.source === 'LINK' || d.source === 'PAGE' || d.source === 'CODE') return d;
+  return { product: byName, source: 'NAME', note: 'من اسم الكامبين' + (d.source === 'MULTI' ? ' (اللينك صفحة فيها كذا منتج)' : '') };
+}
+function decideProductOf_(links, camp, set, ad, adText) {
   const named = pageNames_(), keys = Array.from(new Set(links.map(pageKeyOf_).filter(Boolean)));
   if (keys.length && keys.every(k => named[k]) && new Set(keys.map(k => named[k])).size === 1)
     return { product: named[keys[0]], source: 'PAGE', note: 'من اسم الصفحة في ' + CMAP.TAB };
@@ -251,11 +267,17 @@ function refreshAdMap_(freshAds, tiktokLinks, recheckAll, links) {
   byKey.forEach(r => parseStoreLinks_(String(r[AM.LINKS] || '').split(',').map(x => x.trim()).filter(x => x && x !== '-'))
     .slugs.forEach(s => { if (!known.has(s)) newSlugs.add(s); }));
   if (newSlugs.size) addProductsFromLinks_(Array.from(newSlugs));
+  // Store products named by this month's campaigns, or picked in the Campaign Map, that aren't in Products yet: added.
+  const month0 = todayKey_().slice(0, 8) + '01', fresh = r => !!r[AM.LAST] && asKey_(r[AM.LAST]) >= month0;
+  const byNames = [];
+  byKey.forEach(r => { if (fresh(r)) { const t = campaignTarget_(r[AM.CAMP]); if (t.kind === 'PRODUCT') byNames.push(t); } });
+  picked.forEach(v => { const t = catalogByTitle_(v); if (t) byNames.push(t); });
+  if (byNames.length && addCatalogProducts_(byNames)) { CAMP_TARGET_ = {}; SHOP_CATALOG_ = null; }
 
   const unassigned = new Set(), valid = new Set(products_().map(p => p.name).concat(['MULTI']));
   byKey.forEach((r, key) => {
     const links = String(r[AM.LINKS] || '').split(',').map(x => x.trim()).filter(x => x && x !== '-');
-    const d = decideProduct_(links, r[AM.CAMP], r[AM.SET], r[AM.AD], r[AM.TEXT]);
+    const d = decideProduct_(links, r[AM.CAMP], r[AM.SET], r[AM.AD], r[AM.TEXT], fresh(r));
     (d.unknown || []).forEach(s => unassigned.add(s));
     r[AM.AUTO] = d.product; r[AM.SRC] = d.source;
     r[AM.NOTE] = [d.note, r._err || ''].filter(Boolean).join(' — ');
@@ -265,7 +287,7 @@ function refreshAdMap_(freshAds, tiktokLinks, recheckAll, links) {
     // A new or changed Override is a confirmation: remember the link it was confirmed against.
     if (ovr && ovr !== String(r[AM.CONF_VAL] || '')) { r[AM.CONF_VAL] = ovr; r[AM.CONF_AT] = nowText_(); r[AM.MAPPED] = linkSig; }
     if (!ovr && r[AM.CONF_VAL]) { r[AM.CONF_VAL] = ''; r[AM.CONF_AT] = ''; }
-    if (!r[AM.MAPPED] && (ovr || ['LINK', 'CODE', 'TEXT', 'PAGE'].indexOf(d.source) >= 0)) r[AM.MAPPED] = linkSig;
+    if (!r[AM.MAPPED] && (ovr || ['LINK', 'CODE', 'TEXT', 'PAGE', 'NAME'].indexOf(d.source) >= 0)) r[AM.MAPPED] = linkSig;
     const changed = !!r[AM.MAPPED] && !!linkSig && r[AM.MAPPED] !== linkSig;
     r[AM.CHANGED] = changed;
     const useOvr = ovr && valid.has(ovr), camp = useOvr ? null : campChoice_(r[AM.CHOICE]);
@@ -273,8 +295,8 @@ function refreshAdMap_(freshAds, tiktokLinks, recheckAll, links) {
     r[AM.FINAL] = useOvr ? (ovr === 'MULTI' ? APP.MULTI : ovr) : camp ? camp
       : d.source === 'MULTI' ? APP.MULTI : d.product || APP.UNMAPPED;
     if (camp) r[AM.NOTE] = 'من Campaign Map' + (r[AM.NOTE] ? ' — ' + r[AM.NOTE] : '');
-    r[AM.STATUS] = changed ? '⚠️' : useOvr || camp ? '✅' : ['LINK', 'CODE', 'TEXT', 'PAGE'].indexOf(d.source) >= 0 ? '✅'
-      : (d.source === 'KEYWORD' || d.source === 'MULTI') ? '⚠️' : '❌';
+    r[AM.STATUS] = changed ? '⚠️' : useOvr || camp ? '✅' : ['LINK', 'CODE', 'TEXT', 'PAGE', 'NAME'].indexOf(d.source) >= 0 ? '✅'
+      : (d.source === 'KEYWORD' || d.source === 'MULTI' || d.source === 'CONFLICT') ? '⚠️' : '❌';
     r[AM.SPEND] = round2_(spend[key] || 0);
   });
   PropertiesService.getDocumentProperties().setProperty('UNASSIGNED_SLUGS', Array.from(unassigned).join(', '));

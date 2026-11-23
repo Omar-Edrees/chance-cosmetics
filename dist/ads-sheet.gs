@@ -11,7 +11,7 @@
  * Ad accounts and stores are read-only from here: no writes to Meta, TikTok or order sources.
  */
 const APP = {
-  VERSION: '1.73.0',
+  VERSION: '1.74.0',
   T: {
     SETTINGS: 'Settings', ACCOUNTS: 'Accounts', PRODUCTS: 'Products', ADMAP: 'Ad Map',
     ADS: 'Ads Raw', ACC_RAW: 'Account Raw', ORDERS: 'Orders Raw', DAILY: 'Daily Log',
@@ -441,7 +441,7 @@ function errText_(e) {
   ['META_TOKEN', 'TIKTOK_TOKEN', 'TIKTOK_APP_SECRET'].forEach(k => { const tok = props.getProperty(k); if (tok) t = t.split(tok).join('[مخفي]'); });
   return t;
 }
-function resetCaches_() { CFG_ = null; PRODUCTS_ = null; KNOWN_PRODUCTS_ = null; RAW_ = {}; PAGE_NAMES_ = null; }
+function resetCaches_() { CFG_ = null; PRODUCTS_ = null; KNOWN_PRODUCTS_ = null; RAW_ = {}; PAGE_NAMES_ = null; SHOP_CATALOG_ = null; CAMP_TARGET_ = {}; }
 
 /* ======== 02_meta.gs ======== */
 /* Meta Graph API, read-only. Token is pasted once from the menu and kept in User Properties. */
@@ -709,6 +709,9 @@ function syncAds_(since, until, quick) {
  * PAGE (a page you named in the Campaign Map's pages table: every store link of the ad goes to it) comes first.
  * > TEXT (the product's full name in the ad's own text, when the link can't be read: ads made from a page post)
  * > KEYWORD (suggestion, ⚠️) > NONE (❌, spend stays unmapped). Never a default product.
+ * NAME (41_campaign_names.gs, ads that spent this month only): the campaign's name says messages, awareness or a store product.
+ * Messages / awareness come first; a product by name comes after a product page link (when the two differ: CONFLICT, ⚠️)
+ * and before CODE / TEXT / KEYWORD.
  * The campaign's choice in the Campaign Map tab (33_campaign_map.gs) goes to all its ads and wins over all of these;
  * only an ad's own Override wins over it.
  * Orders never move spend.
@@ -789,7 +792,20 @@ function parseStoreLinks_(links) {
   return res;
 }
 
-function decideProduct_(links, camp, set, ad, adText) {
+function decideProduct_(links, camp, set, ad, adText, fresh) {
+  const nm = fresh ? campaignTarget_(camp) : { kind: '' };
+  if (nm.kind === 'MSG' || nm.kind === 'AWARE') return { product: nm.title, source: 'NAME', note: 'من اسم الكامبين (' + nm.title + ')' };
+  const byName = nm.kind === 'PRODUCT' ? productOfCatalog_(nm) : '';
+  const nameNote = nm.kind === 'MANY' ? 'اسم الكامبين ممكن يكون: ' + nm.many.join(' / ') : '';
+  const d = decideProductOf_(links, camp, set, ad, adText);
+  if (!byName) return nameNote && d.source !== 'LINK' && d.source !== 'PAGE' ? Object.assign(d, { note: [d.note, nameNote].filter(Boolean).join(' — ') }) : d;
+  // The product page link (or a code you gave the product) is the harder evidence: it stays, and a different name is flagged.
+  if ((d.source === 'LINK' || d.source === 'CODE') && d.product !== byName)
+    return { product: d.product, source: 'CONFLICT', note: (d.source === 'LINK' ? 'اللينك رايح لـ ' : 'الكود بيقول ') + d.product + '، واسم الكامبين بيقول ' + byName };
+  if (d.source === 'LINK' || d.source === 'PAGE' || d.source === 'CODE') return d;
+  return { product: byName, source: 'NAME', note: 'من اسم الكامبين' + (d.source === 'MULTI' ? ' (اللينك صفحة فيها كذا منتج)' : '') };
+}
+function decideProductOf_(links, camp, set, ad, adText) {
   const named = pageNames_(), keys = Array.from(new Set(links.map(pageKeyOf_).filter(Boolean)));
   if (keys.length && keys.every(k => named[k]) && new Set(keys.map(k => named[k])).size === 1)
     return { product: named[keys[0]], source: 'PAGE', note: 'من اسم الصفحة في ' + CMAP.TAB };
@@ -956,11 +972,17 @@ function refreshAdMap_(freshAds, tiktokLinks, recheckAll, links) {
   byKey.forEach(r => parseStoreLinks_(String(r[AM.LINKS] || '').split(',').map(x => x.trim()).filter(x => x && x !== '-'))
     .slugs.forEach(s => { if (!known.has(s)) newSlugs.add(s); }));
   if (newSlugs.size) addProductsFromLinks_(Array.from(newSlugs));
+  // Store products named by this month's campaigns, or picked in the Campaign Map, that aren't in Products yet: added.
+  const month0 = todayKey_().slice(0, 8) + '01', fresh = r => !!r[AM.LAST] && asKey_(r[AM.LAST]) >= month0;
+  const byNames = [];
+  byKey.forEach(r => { if (fresh(r)) { const t = campaignTarget_(r[AM.CAMP]); if (t.kind === 'PRODUCT') byNames.push(t); } });
+  picked.forEach(v => { const t = catalogByTitle_(v); if (t) byNames.push(t); });
+  if (byNames.length && addCatalogProducts_(byNames)) { CAMP_TARGET_ = {}; SHOP_CATALOG_ = null; }
 
   const unassigned = new Set(), valid = new Set(products_().map(p => p.name).concat(['MULTI']));
   byKey.forEach((r, key) => {
     const links = String(r[AM.LINKS] || '').split(',').map(x => x.trim()).filter(x => x && x !== '-');
-    const d = decideProduct_(links, r[AM.CAMP], r[AM.SET], r[AM.AD], r[AM.TEXT]);
+    const d = decideProduct_(links, r[AM.CAMP], r[AM.SET], r[AM.AD], r[AM.TEXT], fresh(r));
     (d.unknown || []).forEach(s => unassigned.add(s));
     r[AM.AUTO] = d.product; r[AM.SRC] = d.source;
     r[AM.NOTE] = [d.note, r._err || ''].filter(Boolean).join(' — ');
@@ -970,7 +992,7 @@ function refreshAdMap_(freshAds, tiktokLinks, recheckAll, links) {
     // A new or changed Override is a confirmation: remember the link it was confirmed against.
     if (ovr && ovr !== String(r[AM.CONF_VAL] || '')) { r[AM.CONF_VAL] = ovr; r[AM.CONF_AT] = nowText_(); r[AM.MAPPED] = linkSig; }
     if (!ovr && r[AM.CONF_VAL]) { r[AM.CONF_VAL] = ''; r[AM.CONF_AT] = ''; }
-    if (!r[AM.MAPPED] && (ovr || ['LINK', 'CODE', 'TEXT', 'PAGE'].indexOf(d.source) >= 0)) r[AM.MAPPED] = linkSig;
+    if (!r[AM.MAPPED] && (ovr || ['LINK', 'CODE', 'TEXT', 'PAGE', 'NAME'].indexOf(d.source) >= 0)) r[AM.MAPPED] = linkSig;
     const changed = !!r[AM.MAPPED] && !!linkSig && r[AM.MAPPED] !== linkSig;
     r[AM.CHANGED] = changed;
     const useOvr = ovr && valid.has(ovr), camp = useOvr ? null : campChoice_(r[AM.CHOICE]);
@@ -978,8 +1000,8 @@ function refreshAdMap_(freshAds, tiktokLinks, recheckAll, links) {
     r[AM.FINAL] = useOvr ? (ovr === 'MULTI' ? APP.MULTI : ovr) : camp ? camp
       : d.source === 'MULTI' ? APP.MULTI : d.product || APP.UNMAPPED;
     if (camp) r[AM.NOTE] = 'من Campaign Map' + (r[AM.NOTE] ? ' — ' + r[AM.NOTE] : '');
-    r[AM.STATUS] = changed ? '⚠️' : useOvr || camp ? '✅' : ['LINK', 'CODE', 'TEXT', 'PAGE'].indexOf(d.source) >= 0 ? '✅'
-      : (d.source === 'KEYWORD' || d.source === 'MULTI') ? '⚠️' : '❌';
+    r[AM.STATUS] = changed ? '⚠️' : useOvr || camp ? '✅' : ['LINK', 'CODE', 'TEXT', 'PAGE', 'NAME'].indexOf(d.source) >= 0 ? '✅'
+      : (d.source === 'KEYWORD' || d.source === 'MULTI' || d.source === 'CONFLICT') ? '⚠️' : '❌';
     r[AM.SPEND] = round2_(spend[key] || 0);
   });
   PropertiesService.getDocumentProperties().setProperty('UNASSIGNED_SLUGS', Array.from(unassigned).join(', '));
@@ -5896,10 +5918,13 @@ function fillOrderVariants_() {
  * that name (Ad Map source PAGE), so a new campaign to the same page needs nothing. A page that isn't there: paste its
  * link in the first empty row with its name. The names are kept in the document properties (PAGE_NAMES).
  * The choices offer every Shopify collection's name too (read once a day from the app: SHOP_COLLECTIONS).
- * Typing in a choice cell filters the list (Google Sheets' own search in a dropdown).
+ * Typing in a choice cell filters the list (Google Sheets' own search in a dropdown). The list has every product in the store
+ * too (from the hidden tab CMAP.LIST, so it isn't cut at 500); one that isn't in Products yet is added there when picked.
+ * Most campaigns need nothing: the campaign's name says what it's for (41_campaign_names.gs), and a name that says one thing
+ * while the link goes to another product is ⚠️ here until you choose.
  */
 const CMAP = {
-  TAB: 'Campaign Map', HEAD_ROW: 4, CATALOG_WORD: 'كتالوج', CHOICE_COL: 9, ID_COL: 10, HOME: 'الصفحة الرئيسية',
+  TAB: 'Campaign Map', HEAD_ROW: 4, LIST: 'Campaign Choices', LIST_KEY: 'CMAP_LIST_SIG', CATALOG_WORD: 'كتالوج', CHOICE_COL: 9, ID_COL: 10, HOME: 'الصفحة الرئيسية',
   PAGE_COL: 12, PAGE_HEADERS: ['الصفحة (اللينك)', 'اسمها (اكتب أو اختار)', 'اسمها في شوبيفاي', 'كامبينات الشهر ده', 'صرف الشهر'],
   COLLECTIONS: 'SHOP_COLLECTIONS', COLLECTIONS_DAY: 'SHOP_COLLECTIONS_DAY',
   COLLECTIONS_QUERY: 'query($after:String){collections(first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{handle title}}}',
@@ -6042,6 +6067,7 @@ function campaignMapRows_() {
       own = ovr && (prodNames.has(ovr) || ovr === 'MULTI') ? (ovr === 'MULTI' ? APP.MULTI : ovr)
         : r[AM.SRC] === 'MULTI' ? APP.MULTI : r[AM.AUTO] || APP.UNMAPPED;
       if (r[AM.CHOICE] && !c.stored) c.stored = String(r[AM.CHOICE]);
+      if (r[AM.SRC] === 'CONFLICT') c.conflict = String(r[AM.NOTE] || '').replace(/^من Campaign Map — /, '');
       links = String(r[AM.LINKS] || '').split(',').map(x => x.trim()).filter(x => x && x !== '-');
       text = String(r[AM.TEXT] || '');
     }
@@ -6060,12 +6086,12 @@ function campaignMapRows_() {
   const out = Array.from(camps.values()).map(c => {
     const choice = picked.has(c.key) ? picked.get(c.key) : c.stored, chosen = campChoice_(choice);
     const seen = top(c.seen), where = top(c.where);
-    const status = chosen ? '✅' : c.seen[APP.UNMAPPED] ? '❌' : c.seen[APP.MULTI] ? '⚠️' : '✅';
+    const status = chosen ? '✅' : c.seen[APP.UNMAPPED] ? '❌' : c.seen[APP.MULTI] || c.conflict ? '⚠️' : '✅';
     const pct = n => (seen.length > 1 ? ' (' + Math.round(100 * c.seen[n] / c.month) + '%)' : '');
-    return { key: c.key, platform: c.platform, id: c.id, name: c.name, account: c.account, active: running[c.id] || 0,
+    return { key: c.key, platform: c.platform, id: c.id, name: c.name, account: c.account, active: running[c.id] || 0, conflict: !!c.conflict && !chosen,
       today: round2_(c.today), month: round2_(c.month), status: status, choice: choice,
       landing: where.length ? where[0] + (where.length > 1 ? ' +' + (where.length - 1) : '') : '',
-      seen: seen.slice(0, 3).map(n => label(n) + pct(n)).join(' + ') + (seen.length > 3 ? ' + …' : '') };
+      seen: seen.slice(0, 3).map(n => label(n) + pct(n)).join(' + ') + (seen.length > 3 ? ' + …' : '') + (c.conflict && !chosen ? '  ⚠️ ' + c.conflict : '') };
   });
   const order = { '❌': 0, '⚠️': 1, '✅': 2 };
   out.sort((a, b) => (order[a.status] - order[b.status]) || ((b.active > 0) - (a.active > 0)) || (b.today - a.today) || (b.month - a.month));
@@ -6082,9 +6108,11 @@ function writeCampaignMap_() {
   const n = s => rows.filter(x => x.status === s).length;
   const top = [
     ['ربط الكامبينات — ' + month + ' (الكامبينات اللي صرفت الشهر ده بس)'].concat(new Array(W - 1).fill('')),
-    ['❌ أو ⚠️ = محتاجة منك: اختار في العمود الأصفر المنتج، أو "' + CMAP.CATALOG_WORD + '"، أو اكتب اسم الصفحة أو الكاتيجوري اللي الكامبين رايحة لها (زي Home Wear). ' +
+    ['الكامبينات بتتربط لوحدها من اسمها: اسم منتج من المتجر = المنتج ده (ولو مش في Products بيتضاف)، و Messages أو Msg = ' + CNAME.MSG + '، و Awareness = ' + CNAME.AWARE +
+      '، ولو اللينك رايح لمنتج تاني غير اللي في الاسم = ⚠️. ' +
+      '❌ أو ⚠️ = محتاجة منك: اختار في العمود الأصفر المنتج (فيه كل منتجات المتجر)، أو "' + CMAP.CATALOG_WORD + '"، أو اكتب اسم الصفحة أو الكاتيجوري اللي الكامبين رايحة لها (زي Home Wear). ' +
       'الاختيار بيتطبق على كل إعلانات الكامبين، والأيام اللي فاتت كمان، في التحديث الجاي.'].concat(new Array(W - 1).fill('')),
-    ['❌ ' + n('❌') + ' مش معروفة   ⚠️ ' + n('⚠️') + ' محتاجة اسم   ✅ ' + n('✅') + ' مربوطة'].concat(new Array(W - 1).fill('')),
+    ['❌ ' + n('❌') + ' مش معروفة   ⚠️ ' + n('⚠️') + ' محتاجة مراجعة (صفحة فيها كذا منتج، أو الاسم واللينك مختلفين)   ✅ ' + n('✅') + ' مربوطة'].concat(new Array(W - 1).fill('')),
     CMAP.HEADERS.slice()];
   const body = rows.map(x => [x.status, x.name, x.account, x.active || '', x.today || '', x.month, x.landing, x.seen,
     x.choice, x.key]);
@@ -6105,11 +6133,14 @@ function writeCampaignMap_() {
   const groups = Object.keys(named).map(k => named[k]).concat(rows.map(x => campChoice_(x.choice)))
     .filter(c => c && c !== APP.CATALOG && prodList.indexOf(c) < 0);
   const titles = Object.keys(coll).map(h => coll[h]).filter(Boolean).sort((a, b) => a.localeCompare(b));
-  const list = Array.from(new Set([CMAP.CATALOG_WORD].concat(groups.sort((a, b) => a.localeCompare(b)), titles, prodList))).slice(0, 500);
+  const list = Array.from(new Set([CMAP.CATALOG_WORD, CNAME.MSG, CNAME.AWARE].concat(groups.sort((a, b) => a.localeCompare(b)), titles, prodList))).slice(0, 500);
+  // The campaigns' list: the same names, then every store product (from a hidden tab: a list in a rule stops at 500).
+  const store = catalogTitles_().filter(t => list.indexOf(t) < 0).sort((a, b) => a.localeCompare(b));
+  const listRange = campChoiceRange_(list.concat(store));
   if (body.length) {
     const choice = sh.getRange(CMAP.HEAD_ROW + 1, CMAP.CHOICE_COL, body.length, 1);
-    choice.setBackground('#fff2cc').setDataValidation(SpreadsheetApp.newDataValidation()
-      .requireValueInList(list, true).setAllowInvalid(true).build());
+    choice.setBackground('#fff2cc').setDataValidation(listRange ? SpreadsheetApp.newDataValidation().requireValueInRange(listRange, true).setAllowInvalid(true).build()
+      : SpreadsheetApp.newDataValidation().requireValueInList(list, true).setAllowInvalid(true).build());
     sh.getRange(CMAP.HEAD_ROW + 1, CMAP.ID_COL, body.length, 1).setFontColor('#9ca3af');
     const st = sh.getRange(CMAP.HEAD_ROW + 1, 1, body.length, 1);
     sh.setConditionalFormatRules([
@@ -6124,6 +6155,23 @@ function writeCampaignMap_() {
   // The engine's ad-by-ad tab: hidden once (you can show it again; it stays as you leave it).
   const props = PropertiesService.getDocumentProperties(), am = ss_().getSheetByName(APP.T.ADMAP);
   if (am && !props.getProperty('ADMAP_HIDDEN_V1')) { try { am.hideSheet(); } catch (e) { /* مش مهم */ } props.setProperty('ADMAP_HIDDEN_V1', '1'); }
+}
+
+/* The hidden tab CMAP.LIST with the choices in column A (written only when they change) → its range, or null if it can't be made. */
+function campChoiceRange_(names) {
+  try {
+    const props = PropertiesService.getDocumentProperties(), sig = sha_(JSON.stringify(names));
+    let sh = ss_().getSheetByName(CMAP.LIST);
+    if (!sh || props.getProperty(CMAP.LIST_KEY) !== sig || sh.getLastRow() !== names.length) {
+      sh = sh || ss_().insertSheet(CMAP.LIST);
+      if (sh.getMaxRows() < names.length) sh.insertRowsAfter(sh.getMaxRows(), names.length - sh.getMaxRows());
+      sh.getRange(1, 1, sh.getMaxRows(), 1).clearContent();
+      sh.getRange(1, 1, names.length, 1).setNumberFormat('@').setValues(names.map(n => [n]));
+      try { sh.hideSheet(); } catch (e) { /* مش مهم */ }
+      props.setProperty(CMAP.LIST_KEY, sig);
+    }
+    return sh.getRange(1, 1, names.length, 1);
+  } catch (e) { console.error('campaign choices: ' + errText_(e)); return null; }
 }
 
 /*
@@ -6184,7 +6232,7 @@ function todayCampaignWarning_(g, r) {
   g.merge(r, 1, 1, 6);
   r++;
   bad.slice(0, 5).forEach(x => {
-    g.set(r, 1, (x.status === '❌' ? '❌ مش معروفة: ' : '⚠️ محتاجة اسم: ') + x.name + (x.landing ? '  ←  ' + x.landing : ''), { bg: '#fde8e8' });
+    g.set(r, 1, (x.status === '❌' ? '❌ مش معروفة: ' : x.conflict ? '⚠️ الاسم واللينك مختلفين: ' : '⚠️ محتاجة اسم: ') + x.name + (x.landing ? '  ←  ' + x.landing : ''), { bg: '#fde8e8' });
     g.fill(r, 2, 5, { bg: '#fde8e8' });
     g.merge(r, 1, 1, 6);
     r++;
@@ -8865,6 +8913,120 @@ function todayProblemsRefresh_(M) {
   sh.getRange(first[0], first[1], 2, TPROB.PER_ROW).setValues(vals);
   todayProblemCharts_(sh);
 }
+
+/* ======== 41_campaign_names.gs ======== */
+/*
+ * What a campaign is for, from its name (the campaigns are named after what they sell: "Sheglam Boldline Eyeliner Gel | ABO | 19-11").
+ * Only for ads that spent this month (Ad Map, decideProduct_): earlier months stay as they were.
+ *  - Messages: "Messages", "Message", "Msg", "Msgs", "مسجات", "رسايل" … in the name → CNAME.MSG (its chats aren't store orders).
+ *  - Awareness: "Awareness", "أويرنس" → CNAME.AWARE (not for the website).
+ *  - A product: matched against every product in the store (the "Shopify Stock" tab, read from the app; else the Products tab):
+ *    1) a product's whole title written in the name (as whole words); when several are, the longest (the one that holds the others);
+ *    2) else a part of the name (between the |) of 2 words or more that's inside a product's title: one product only, or one
+ *       that every other one holds (the others are its bundles: "2 x … + free …").
+ *    Several products and none of them the base one: no decision (the campaign stays for you, with the names it could be).
+ * A product found by name that isn't in the Products tab yet is added to it (title, page, price), so it's in the choices and
+ * its spend has a home. The ad's link still counts: a product page link wins, and when it says another product than the name,
+ * the ad is ⚠️ (Ad Map source CONFLICT) until you choose in the Campaign Map.
+ */
+const CNAME = {
+  MSG: 'مسجات', AWARE: 'Awareness', CATALOG_RX: /catalog|كتالوج/i,
+  MSG_RX: /(^|[^a-z0-9])(messages?|msgs?|mssgs?|mesg|messenger|whats ?app)([^a-z0-9]|$)|مسجات|(^|[\s|_\-])مسج($|[\s|_\-])|رسايل|رسائل|رساله|رسالة|ماسنجر|واتساب|واتس/i,
+  AWARE_RX: /(^|[^a-z0-9])(awareness)([^a-z0-9]|$)|اويرنس|أويرنس/i,
+  MIN_LEN: 8
+};
+
+/* Every store product once: [{title, n (normalized), handle, price}]. From the Shopify Stock tab, else from Products. */
+let SHOP_CATALOG_ = null;
+function shopCatalog_() {
+  if (SHOP_CATALOG_) return SHOP_CATALOG_;
+  const out = new Map();
+  if (ss_().getSheetByName(STOCK_APP.TAB)) rawRows_(STOCK_APP.TAB, STOCK_APP.HEADERS.length).forEach(r => {
+    const title = String(r[2] || '').trim(), n = norm_(title);
+    if (!n || out.has(n)) return;
+    out.set(n, { title: title, n: n, handle: String(r[1] || '').toLowerCase(), price: r[5] === '' ? '' : num_(r[5]) });
+  });
+  products_().forEach(p => { const n = norm_(p.name); if (n && !out.has(n)) out.set(n, { title: p.name, n: n, handle: p.slugs[0] || '', price: p.price || '' }); });
+  const list = Array.from(out.values()), index = {};
+  list.forEach((x, i) => Array.from(new Set(x.n.split(' '))).forEach(w => { (index[w] = index[w] || []).push(i); }));
+  SHOP_CATALOG_ = { list: list, index: index };
+  return SHOP_CATALOG_;
+}
+/* Titles holding all these words (the inverted index): the candidates to test. */
+function catalogWith_(words) {
+  const C = shopCatalog_(), lists = words.map(w => C.index[w] || []);
+  if (lists.some(l => !l.length)) return [];
+  lists.sort((a, b) => a.length - b.length);
+  const rest = lists.slice(1).map(l => new Set(l));
+  return lists[0].filter(i => rest.every(s => s.has(i))).map(i => C.list[i]);
+}
+
+/*
+ * A campaign's name → {kind: 'MSG' | 'AWARE' | 'PRODUCT' | 'MANY' | '', title, handle, many: [titles]}.
+ * Memoized for the run (a campaign has many ads).
+ */
+let CAMP_TARGET_ = {};
+function campaignTarget_(name) {
+  const raw = String(name || '').trim();
+  if (!raw) return { kind: '' };
+  if (CAMP_TARGET_[raw]) return CAMP_TARGET_[raw];
+  const out = CAMP_TARGET_[raw] = campaignTargetOf_(raw);
+  return out;
+}
+function campaignTargetOf_(raw) {
+  const text = norm_(raw);
+  if (CNAME.MSG_RX.test(raw) || CNAME.MSG_RX.test(text)) return { kind: 'MSG', title: CNAME.MSG };
+  if (CNAME.AWARE_RX.test(raw) || CNAME.AWARE_RX.test(text)) return { kind: 'AWARE', title: CNAME.AWARE };
+  if (CNAME.CATALOG_RX.test(raw)) return { kind: '' }; // the catalog's own rules (Meta splits its spend)
+  const long = x => x.n.length >= CNAME.MIN_LEN && x.n.indexOf(' ') > 0;
+  // 1) whole titles in the name.
+  const words = Array.from(new Set(text.split(' ')));
+  const seen = new Map();
+  words.forEach(w => (shopCatalog_().index[w] || []).forEach(i => { const x = shopCatalog_().list[i]; if (!seen.has(x.n)) seen.set(x.n, x); }));
+  const inName = Array.from(seen.values()).filter(x => long(x) && hasToken_(text, x.n));
+  const top = inName.filter(x => !inName.some(y => y !== x && y.n.length > x.n.length && hasToken_(y.n, x.n)));
+  if (top.length === 1) return { kind: 'PRODUCT', title: top[0].title, handle: top[0].handle, price: top[0].price };
+  if (top.length > 1) return { kind: 'MANY', many: top.map(x => x.title) };
+  // 2) a part of the name inside one title (the base one when the others are its bundles).
+  const parts = raw.split(/\s[|\/–—-]\s|\|/).map(norm_).filter(p => p.length >= CNAME.MIN_LEN && p.indexOf(' ') > 0 && !/^[\d\s]+$/.test(p));
+  let many = [];
+  for (const p of parts) {
+    const hits = catalogWith_(p.split(' ')).filter(x => hasToken_(x.n, p));
+    if (!hits.length) continue;
+    const base = hits.filter(x => hits.every(y => y === x || hasToken_(y.n, x.n)));
+    if (base.length === 1) return { kind: 'PRODUCT', title: base[0].title, handle: base[0].handle, price: base[0].price };
+    many = many.concat(hits.map(x => x.title));
+  }
+  return many.length ? { kind: 'MANY', many: Array.from(new Set(many)).slice(0, 5) } : { kind: '' };
+}
+
+/* The Products tab's name for a store product (by its page, else its title), or '' when it isn't there. */
+function productOfCatalog_(t) {
+  const prods = products_(), n = norm_(t.title || '');
+  const p = (t.handle && prods.find(x => x.slugs.indexOf(t.handle) >= 0)) || prods.find(x => norm_(x.name) === n);
+  return p ? p.name : '';
+}
+/* Store products found by name (or chosen in the Campaign Map) that aren't in the Products tab yet → added to it. */
+function addCatalogProducts_(targets) {
+  const add = [], have = new Set();
+  targets.forEach(t => {
+    if (!t || !t.title || productOfCatalog_(t) || have.has(norm_(t.title))) return;
+    have.add(norm_(t.title));
+    add.push([t.title, '', t.handle || '', '', t.title, t.price === undefined ? '' : t.price, '', '', '', '', '', true]);
+  });
+  if (!add.length) return 0;
+  const sh = ensureTab_(APP.T.PRODUCTS, PRODUCT_HEADERS);
+  sh.getRange(sh.getLastRow() + 1, 1, add.length, PRODUCT_HEADERS.length).setValues(add);
+  PRODUCTS_ = null; KNOWN_PRODUCTS_ = null;
+  return add.length;
+}
+/* A store product whose title is exactly this text (a choice typed or picked in the Campaign Map), or null. */
+function catalogByTitle_(text) {
+  const n = norm_(text);
+  return n ? shopCatalog_().list.find(x => x.n === n) || null : null;
+}
+/* The names for the Campaign Map's choices: every store product (the hidden tab CNAME's list reads them, no 500 limit). */
+function catalogTitles_() { return shopCatalog_().list.map(x => x.title); }
 
 /* ======== 90_hooks.gs ======== */
 /*

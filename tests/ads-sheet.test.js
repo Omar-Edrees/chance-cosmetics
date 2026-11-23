@@ -2519,3 +2519,100 @@ test('Today: كروت المشاكل فوق (C2:G3): عدد المشاكل من 
   e.c.liveTick();
   assert.equal(e.ss.getSheetByName('Today').charts.length, n);
 });
+
+/* تاب Shopify Stock زي اللي الأبليكيشن بيكتبه: [handle, title, price] لكل منتج (منتجات حقيقية من متجر Chance) */
+const REAL_CATALOG = [
+  ['sheglam-boldline-eyeliner-gel', 'sheglam Boldline Eyeliner Gel', 250],
+  ['sheglam-boldline-longwear-multi-function-gel-liner-set', 'Sheglam Boldline Longwear Multi-Function Gel Liner Set', 600],
+  ['sheglam-boldline-gel-liner-sharpener', 'SHEGLAM Boldline Gel Liner Sharpener', 120],
+  ['2-sheglam-boldline-eyeliner-gel-free-sheglam-boldline-gel-liner-sharpener', '2 sheglam Boldline Eyeliner Gel + free Sheglam Boldline Gel Liner Sharpener', 450],
+  ['2-sheglam-marshmallow-puff-lip-blur-pen-1-boldline-eyeliner-gel-bundle', '2 Sheglam Marshmallow Puff Lip Blur Pen + 1 Boldline Eyeliner Gel bundle', 700],
+  ['sheglam-pore-no-more-primer', 'SHEGLAM Pore No More Primer', 380],
+  ['elizavecca-witch-piggy-hell-pore-control-hyaluronic-acid-97-50ml', 'Elizavecca Witch Piggy Hell Pore Control Hyaluronic Acid 97% 50Ml', 300],
+  ['sheglam-camera-on-smooth', 'SHEGLAM Camera On Smooth And Blur Primer', 400],
+  ['sheglam-snatch-n-glow-stick', 'SHEGLAM Snatch n Glow Stick', 330],
+  ['bundle-m3-full-eye-look', 'نظرة ساحرة', 900],
+  ['bundle-daily-look', 'باندل لوك يومي جاهز | 6 قطع', 1200]
+];
+function withCatalog(e) {
+  const sh = e.ss.insertSheet('Shopify Stock');
+  sh.getRange(1, 1, 1, 7).setValues([['Variant ID', 'Handle', 'Product', 'Stock', 'Read', 'Price', 'Variant']]);
+  sh.getRange(2, 1, REAL_CATALOG.length, 7).setValues(REAL_CATALOG.map((x, i) => ['gid://shopify/ProductVariant/' + (i + 1), x[0], x[1], 10, '1', x[2], 'Default Title']));
+  e.c.resetCaches_();
+}
+
+test('اسم الكامبين: المنتج من أسامي منتجات المتجر، والمسجات والأويرنس من الكلمة، والكتالوج مالوش دعوة', () => {
+  const e = env();
+  e.c.setupAll();
+  withCatalog(e);
+  const t = n => { const x = e.c.campaignTarget_(n); return x.kind === 'PRODUCT' ? x.title : x.kind === 'MANY' ? 'MANY' : x.kind; };
+  assert.equal(t('Sheglam Boldline Eyeliner Gel | ABO | 19-11'), 'sheglam Boldline Eyeliner Gel', 'الاسم كله في الكامبين، والباندلز اللي فيها نفس الاسم مش هي');
+  assert.equal(t('Sheglam Pore no More | ABO | 19 -11'), 'SHEGLAM Pore No More Primer', 'جزء من اسم المنتج (من غير Primer)');
+  assert.equal(t('2 sheglam Boldline Eyeliner Gel + free Sheglam Boldline Gel Liner Sharpener | CBO'), '2 sheglam Boldline Eyeliner Gel + free Sheglam Boldline Gel Liner Sharpener',
+    'الباندل نفسه: الاسم الأطول اللي فيه الباقي');
+  assert.equal(t('نظرة ساحرة | ABO'), 'نظرة ساحرة', 'اسم عربي');
+  assert.equal(t('Sheglam Boldline | ABO'), 'MANY', 'كذا منتج ومفيش واحد أساسي: مايتحكمش');
+  assert.equal(t('Lip Oil | Messages | 20-11'), 'MSG');
+  assert.equal(t('MSG - Sheglam Boldline Eyeliner Gel'), 'MSG', 'المسجات قبل المنتج');
+  assert.equal(t('Sheglam Pore no More | msgs'), 'MSG');
+  assert.equal(t('كامبين مسجات | Blush'), 'MSG');
+  assert.equal(t('Brand Awareness | Nov'), 'AWARE');
+  assert.equal(t('Catalog | All Product | Black Friday'), '', 'الكتالوج بقواعده');
+  assert.equal(t('Message Bottle Gift | ABO'), 'MSG', 'كلمة Message لوحدها = مسجات');
+  assert.equal(t('Sale 19-11 | ABO'), '', 'مفيش منتج');
+  // الشهور اللي فاتت: من غير اسم الكامبين
+  e.c.addCatalogProducts_([e.c.campaignTarget_('Sheglam Pore no More | ABO')]); // الشيت بيضيفه لـ Products قبل ما يقرر
+  assert.equal(e.c.decideProduct_([], 'Sheglam Pore no More | ABO', '', '', '', false).source, 'NONE');
+  assert.deepEqual([e.c.decideProduct_([], 'Sheglam Pore no More | ABO', '', '', '', true).source, e.c.decideProduct_([], 'Sheglam Pore no More | ABO', '', '', '', true).product],
+    ['NAME', 'SHEGLAM Pore No More Primer']);
+});
+
+test('ربط الكامبينات من الاسم: الشهر ده بس، والمنتج بيتضاف لـ Products، والمسجات والأويرنس، واللينك لو قال حاجة تانية ⚠️', () => {
+  const probe = env(), today = probe.c.todayKey_();
+  const ad = (adId, camp, spend) => Object.assign(adRow(today, adId, spend), { campaign_id: 'C' + adId, campaign_name: camp, adset_id: 'S' + adId, ad_name: 'Ad ' + adId });
+  const e = env({ ads: { [A1]: [ad('501', 'Sheglam Boldline Eyeliner Gel | ABO | 19-11', 300), ad('502', 'Sheglam Pore no More | ABO | 19 -11', 200),
+    ad('503', 'Lip Oil | Messages', 150), ad('504', 'Awareness | Brand', 100), ad('505', 'SHEGLAM Pore No More Primer | CBO', 120), ad('506', 'Sheglam Boldline | ABO', 90)] },
+    creatives: { 505: 'https://chance-cosmetics.com/products/sheglam-boldline-eyeliner-gel' } });
+  e.c.setupAll();
+  const st = e.ss.getSheetByName('Settings'), keys = st.getDataRange().getValues().map(r => r[0]);
+  st.getRange(keys.indexOf('business.store_domains') + 1, 2).setValue('chance-cosmetics.com');
+  withCatalog(e);
+  e.c.liveTick();
+  e.c.liveTick();
+  const am = e.ss.getSheetByName('Ad Map').getDataRange().getValues(), H = am[0], row = id => am.find(r => String(r[0]) === id);
+  const col = h => H.indexOf(h), got = id => [row(id)[col('Final product')], row(id)[col('Source')], row(id)[col('Status')]];
+  assert.deepEqual(got('501'), ['sheglam Boldline Eyeliner Gel', 'NAME', '✅']);
+  assert.deepEqual(got('502'), ['SHEGLAM Pore No More Primer', 'NAME', '✅']);
+  assert.deepEqual(got('503'), ['مسجات', 'NAME', '✅']);
+  assert.deepEqual(got('504'), ['Awareness', 'NAME', '✅']);
+  assert.deepEqual(got('505'), ['sheglam Boldline Eyeliner Gel', 'CONFLICT', '⚠️'], 'اللينك بيكسب، بس ⚠️');
+  assert.match(row('505')[col('Note')], /اسم الكامبين بيقول SHEGLAM Pore No More Primer/);
+  assert.equal(got('506')[2], '❌', 'كذا منتج: محتاجة منك');
+  assert.match(row('506')[col('Note')], /ممكن يكون/);
+  // المنتجين اتضافوا لتاب Products بصفحتهم وسعرهم
+  const prods = e.ss.getSheetByName('Products').getDataRange().getValues();
+  const p = n => prods.find(r => r[0] === n);
+  assert.deepEqual([p('sheglam Boldline Eyeliner Gel')[2], p('sheglam Boldline Eyeliner Gel')[5]], ['sheglam-boldline-eyeliner-gel', 250]);
+  assert.ok(p('SHEGLAM Pore No More Primer'));
+  assert.ok(!p('SHEGLAM Snatch n Glow Stick'), 'المنتجات اللي مالهاش كامبين مابتتضافش');
+  // Campaign Map
+  const cm = e.ss.getSheetByName('Campaign Map').getDataRange().getValues(), c = n => cm.find(r => r[1] === n);
+  assert.equal(c('Sheglam Boldline Eyeliner Gel | ABO | 19-11')[0], '✅');
+  assert.equal(c('Sheglam Pore no More | ABO | 19 -11')[7], 'SHEGLAM Pore No More Primer');
+  assert.equal(c('Lip Oil | Messages')[7], 'مسجات');
+  assert.equal(c('SHEGLAM Pore No More Primer | CBO')[0], '⚠️');
+  assert.match(c('SHEGLAM Pore No More Primer | CBO')[7], /⚠️ اللينك رايح لـ sheglam Boldline Eyeliner Gel/);
+  assert.equal(c('Sheglam Boldline | ABO')[0], '❌');
+  // الاختيارات: كل منتجات المتجر من تاب مخفي
+  const list = e.ss.getSheetByName('Campaign Choices');
+  assert.ok(list && list.hidden);
+  assert.ok(list.getDataRange().getValues().map(r => r[0]).indexOf('SHEGLAM Snatch n Glow Stick') >= 0);
+  // اختيار منتج من المتجر مش في Products: بيتضاف ويتطبق
+  const r = cm.findIndex(x => x[1] === 'Sheglam Boldline | ABO') + 1;
+  e.ss.getSheetByName('Campaign Map').getRange(r, 9).setValue('SHEGLAM Boldline Gel Liner Sharpener');
+  e.c.resetCaches_();
+  e.c.liveTick();
+  assert.ok(e.ss.getSheetByName('Products').getDataRange().getValues().some(x => x[0] === 'SHEGLAM Boldline Gel Liner Sharpener'));
+  const am2 = e.ss.getSheetByName('Ad Map').getDataRange().getValues();
+  assert.equal(am2.find(x => String(x[0]) === '506')[col('Final product')], 'SHEGLAM Boldline Gel Liner Sharpener');
+});
