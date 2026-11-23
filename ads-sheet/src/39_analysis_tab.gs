@@ -114,6 +114,7 @@ function writeAnalysisTab_() {
   const M = { bad: finds.filter(f => f.kind === 'bad' && f.pri <= 2), good: finds.filter(f => f.kind === 'good'), watch: finds.filter(f => f.pri === 3) };
   if (errors.length) console.error('Analysis: ' + errors.join(' | '));
   anaDrawActions_(sh, today, manual, F, M, errors);
+  try { todayProblemsRefresh_(M); } catch (e) { setStatus_('TODAY_CARDS', '✗ كروت المشاكل: ' + errText_(e)); } // the cards in Today
   anaDrawAnalysis_(ensureTab_(ANA.TAB2), F, P, M, ctx, errors);
   return true;
 }

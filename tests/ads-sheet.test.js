@@ -1611,10 +1611,12 @@ test('تاب Shopify: بيتقري من شوبيفاي مع التحديث وي�
     ? { getResponseCode: () => 200, getContentText: () => JSON.stringify({ data: reqs[i].url.indexOf('act_' + A1) >= 0
       ? [{ date_start: today, outbound_clicks: [{ action_type: 'outbound_click', value: '400' }] }] : [] }) } : r));
   Object.assign(e.user, { SHOPIFY_TOKEN: 'TOKEN1', SHOPIFY_TOKEN_EXP: String(Date.now() + 3600000) });
-  const api = [];
+  const api = [], probApi = [];
   let chartId = 500;
   e.c.Sheets = { Spreadsheets: { batchUpdate: (body, id) => { // Sheets API (الخدمة المتقدمة): كروت Scorecard في Today
-    api.push(body.requests);
+    // كروت المشاكل (40_today_problems.gs، ليها لون خلفية) في probApi، وكروت شوبيفاي في api
+    const isProb = r => !!(((r.addChart && r.addChart.chart.spec) || (r.updateChartSpec && r.updateChartSpec.spec) || {}).backgroundColorStyle);
+    (body.requests.some(isProb) ? probApi : api).push(body.requests);
     const today = e.ss.getSheetByName('Today');
     return { replies: body.requests.map(r => {
       if (!r.addChart) return {};
@@ -2443,4 +2445,77 @@ test('حساب المسجات (Chance 26، accounts.messages_only): مش بيط�
   st.getRange(keys.indexOf('accounts.messages_only') + 1, 2).setValue('-');
   e.c.resetCaches_();
   assert.equal(e.c.msgAccounts_().size, 0);
+});
+
+test('Today: كروت المشاكل فوق (C2:G3): عدد المشاكل من تاب Actions لكل نوع بالأحمر الباهت، والفاضي رمادي، و Scaling بالأخضر', () => {
+  const probe = env(), today = probe.c.todayKey_(), d = n => probe.c.shiftKey_(today, -n), B = '(blank)';
+  const ad = (n, camp, adId, spend) => Object.assign(adRow(d(n), adId, spend), { campaign_id: camp, campaign_name: 'Camp ' + camp,
+    adset_id: 'S' + camp, adset_name: 'Set ' + camp, ad_name: 'Ad ' + adId, impressions: '1000', inline_link_clicks: '20', v3: 300 });
+  const flow = (id, n, adId) => ['gid://shopify/Order/' + id, ' #' + id, ' N', B, 400, ' ' + d(n) + 'T10:00:00+03:00',
+    B, B, B, B, B, 'facebook', 'x', adId, 'Facebook', 'Lip Oil x1', '4655075'];
+  const rows = [], orders = [];
+  for (let n = 1; n <= 17; n++) {
+    rows.push(ad(n, 'C1', '1200000000111', 100)); orders.push(flow(n, n, '1200000000111')); // كسبانة: رؤاس 4
+    rows.push(ad(n, 'C4', '1200000000411', 200)); // بتصرف من غير أوردرات: وقّفها
+  }
+  const e = env({ orderHead: FLOW_HEAD.slice(0, 17), ads: { [A1]: rows }, orders, activeAds: { [A1]: ['1200000000111', '1200000000411'] },
+    stock: [['P1', 'V1', 'Lip Oil', 'Default Title', 'LO', 'lip-oil', 40, 300]] });
+  fakeShopify(e, [], {});
+  Object.assign(e.user, { SHOPIFY_TOKEN: 'TOKEN1', SHOPIFY_TOKEN_EXP: String(Date.now() + 3600000) });
+  const api = [];
+  let chartId = 900;
+  e.c.Sheets = { Spreadsheets: { batchUpdate: body => {
+    api.push(body.requests);
+    const t = e.ss.getSheetByName('Today');
+    return { replies: body.requests.map(r => {
+      if (!r.addChart) return {};
+      const ch = { getChartId: () => ch.id, id: ++chartId, spec: r.addChart.chart.spec, pos: r.addChart.chart.position };
+      (t.charts = t.charts || []).push(ch);
+      return { addChart: { chart: { chartId: ch.id } } };
+    }) };
+  } } };
+  e.c.setupAll();
+  const st = e.ss.getSheetByName('Settings'), keys = st.getDataRange().getValues().map(r => r[0]);
+  st.getRange(keys.indexOf('be.roas') + 1, 2).setValue(2);
+  e.c.liveTick(); e.c.liveTick();
+
+  const saved = e.c.todayProblems_();
+  assert.ok(saved, 'العدد اتحسب مع تاب Actions');
+  const acts = e.ss.getSheetByName('Actions').getDataRange().getValues();
+  const campRows = acts.filter(r => r[3] === 'الكامبينات' && /^(🔴|🟠)/.test(String(r[0])));
+  assert.ok(campRows.length >= 1, 'فيه كامبين توقفها في Actions');
+  assert.equal(saved.cards.camps.n, campRows.length, 'كارت الكامبينات = مشاكل الكامبينات اللي في Actions');
+  assert.ok(saved.cards.camps.urgent >= 1);
+  assert.ok(saved.cards.scale.n >= 1, 'C1 كسبانة: فرصة');
+  // الأرقام في الخلايا تحت الكروت: C2:G2 و C2:G3، أبيض على أبيض
+  const tv = e.ss.getSheetByName('Today').getDataRange().getValues();
+  const keysOrder = ['camps', 'acc', 'hours', 'funnel', 'stock', 'cancel', 'dup', 'prod', 'site', 'scale'];
+  assert.deepEqual(tv[1].slice(2, 7).concat(tv[2].slice(2, 7)), keysOrder.map(k => saved.cards[k].n));
+  assert.equal(e.ss.getSheetByName('Today').attr(2, 3).fc, '#ffffff');
+  // الكروت: 10 scorecards فوق، 5 في الصف، من C2
+  const charts = e.ss.getSheetByName('Today').charts.filter(ch => ch.spec.backgroundColorStyle);
+  assert.equal(charts.length, 10);
+  assert.deepEqual(Array.from(charts.map(ch => ch.spec.title)), ['الكامبينات', 'الحسابات', 'الـ 3 ساعات', 'الفانل والبنشمارك', 'الستوك',
+    'الإلغاء والمحافظات', 'الدوبليكيشن', 'المنتجات والكتالوج', 'الموقع (شوبيفاي)', '🟢 Scaling']);
+  const pos = charts.map(ch => ch.pos.overlayPosition);
+  assert.deepEqual([pos[0].anchorCell.rowIndex, pos[0].anchorCell.columnIndex, pos[4].offsetXPixels, pos[5].offsetXPixels, pos[5].offsetYPixels > pos[0].offsetYPixels],
+    [1, 2, 4 * (124 + 5), 0, true]);
+  const src = charts[0].spec.scorecardChart.keyValueData.sourceRange.sources[0];
+  assert.deepEqual([src.startRowIndex, src.startColumnIndex], [1, 2], 'كارت الكامبينات بيقرا C2');
+  const last = api[api.length - 1], spec = k => last.map(r => (r.updateChartSpec || {}).spec || (r.addChart || {}).chart && r.addChart.chart.spec)
+    .filter(Boolean).find(s => s.title === k || s.title === '🟢 ' + k);
+  const bg = s => s.backgroundColorStyle.rgbColor;
+  assert.deepEqual(bg(spec('الكامبينات')), e.c.shopTabRgb_('#fde2e2'), 'فيه مشاكل: أحمر باهت');
+  assert.match(spec('الكامبينات').subtitle, /عاجل/);
+  assert.deepEqual(bg(spec('Scaling')), e.c.shopTabRgb_('#c9ecd2'), 'Scaling أخضر');
+  const zero = keysOrder.findIndex(k => k !== 'scale' && saved.cards[k].n === 0), zt = charts[zero].spec.title;
+  assert.ok(zero >= 0, 'فيه نوع من غير مشاكل');
+  assert.deepEqual(bg(spec(zt)), e.c.shopTabRgb_('#f3f4f6'), 'مفيش مشاكل: رمادي');
+  assert.match(spec(zt).subtitle, /مفيش/);
+  const red = keysOrder.filter(k => k !== 'scale' && saved.cards[k].n > 0).map(k => charts[keysOrder.indexOf(k)].spec.title);
+  red.forEach(t => assert.deepEqual(bg(spec(t)), e.c.shopTabRgb_('#fde2e2'), t + ': أحمر باهت'));
+  // التحديث الجاي: الكروت بتتحدث بس، مابتتعملش تاني
+  const n = e.ss.getSheetByName('Today').charts.length;
+  e.c.liveTick();
+  assert.equal(e.ss.getSheetByName('Today').charts.length, n);
 });

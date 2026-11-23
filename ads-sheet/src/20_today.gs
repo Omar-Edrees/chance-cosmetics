@@ -408,6 +408,7 @@ function writeToday_() {
   const orders = todayOrders_(today.slice(0, 8) + '01', true);
   r = todayProducts_(g, r, 'PRODUCT PERFORMANCE — TODAY | ' + shown, today, today, rows, orders) + 1;
   todayProducts_(g, r, 'PRODUCT PERFORMANCE — THIS MONTH | ' + month, today.slice(0, 8) + '01', today, rows, orders);
+  if (cards) todayProblemCells_(g); // the problem cards' numbers, top right of Closing Date (40_today_problems.gs)
   todayMakeRoom_(g);
   const drew = writeGrid_(sh, g);
   try { todayStockGroups_(sh, g); } catch (e) { console.error('today groups: ' + errText_(e)); }
@@ -417,6 +418,6 @@ function writeToday_() {
   for (let col = 11; col <= TODAY.WIDTH; col++) sh.setColumnWidth(col, 125);
   sh.getRange(8 + gap, 1, 1, 7).setWrap(true);
   sh.getRange(1, 1, 6, 9).setFontSize(10); // the cards were cells here before (1.45): back to normal
-  [2, 3].forEach(row => sh.setRowHeight(row, 21));
-  if (cards) { todayCardModeRule_(sh); todayCardCharts_(sh, view); }
+  if (cards) todayProblemRows_(sh); else [2, 3].forEach(row => sh.setRowHeight(row, 21));
+  if (cards) { todayCardModeRule_(sh); todayCardCharts_(sh, view); todayProblemCharts_(sh); }
 }
