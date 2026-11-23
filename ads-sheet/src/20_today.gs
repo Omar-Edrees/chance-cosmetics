@@ -11,7 +11,7 @@ const TODAY = {
   GRAND: '#00ff00', LABEL: '#f3f4f6', METRIC: '#e8f0fe', AVG: '#e8eefc', SPECIAL: '#fde8e8', TOTAL: '#e8eefc',
   GREEN: '#d9ead3', RED: '#f4cccc', OTHER: '#f3f4f6', CATALOG: '#fff2cc',
   MONEY: '#,##0.00', COUNT: '0', RATIO: '0.00', PCT: '0.00%',
-  FUNNEL_KEY: 'TODAY_FUNNEL', BEST_KEY: 'TODAY_FUNNEL_BEST', BEST_MONTHS: 3, BEST_VERSION: 1,
+  FUNNEL_KEY: 'TODAY_FUNNEL', BEST_KEY: 'TODAY_FUNNEL_BEST', BEST_MONTHS: 3, BEST_VERSION: 2,
   FIELDS: 'spend,impressions,clicks,inline_link_clicks,actions,action_values,video_thruplay_watched_actions',
   /* [Metric, numerator, denominator, times, format (money | pct | ratio), lower is better?, blank when the numerator is 0?].
    * ROAS, AOV and CVR first; then the funnel in order: the ad (cost, clicks, video), the site step by step. */
@@ -77,7 +77,8 @@ function refreshTodayFunnel_() {
     const row = { id: acc.id, name: acc.name || acc.id };
     try {
       row.raw = funnelRaw_(metaAll_('act_' + acc.id + '/insights', { level: 'account', time_range: range(today, today), fields: TODAY.FIELDS }));
-      if (needBest) metaAll_('act_' + acc.id + '/insights', { level: 'account', time_range: range(from, to), time_increment: 'monthly', fields: TODAY.FIELDS })
+      // The benchmark is the website funnel: a messages-only account (accounts.messages_only) stays out of it.
+      if (needBest && !isMsgAccount_(acc.id)) metaAll_('act_' + acc.id + '/insights', { level: 'account', time_range: range(from, to), time_increment: 'monthly', fields: TODAY.FIELDS })
         .forEach(m => { const ym = String(m.date_start).slice(0, 7); months[ym] = funnelAdd_(months[ym] || {}, funnelRaw_([m])); });
     } catch (e) { row.error = errText_(e); bestOk = false; }
     out.accounts.push(row);
@@ -303,7 +304,7 @@ function todayBenchmark_(g, r, today, shown) {
   const mon = k => Utilities.formatDate(new Date(Date.UTC(Number(k.slice(0, 4)), Number(k.slice(5, 7)) - 1, 15)), 'UTC', 'MMM-yyyy');
   const span = f.best && f.best.from && f.best.to ? ' (' + mon(f.best.from) + ' → ' + mon(f.best.to) + ')' : '';
   r = todayHead_(g, r, c, width, 'META BENCHMARK vs TODAY | ' + shown,
-    ['METRIC', 'LAST ' + S.BEST_MONTHS + ' MONTHS' + span].concat(accs.map(a => (a.error ? '⚠️ ' : '') + a.name)));
+    ['METRIC', 'LAST ' + S.BEST_MONTHS + ' MONTHS' + span].concat(accs.map(a => (a.error ? '⚠️ ' : '') + (isMsgAccount_(a.id) ? '💬 ' : '') + a.name)));
   S.METRICS.forEach(m => {
     const v3 = total ? funnelRatio_(total, m) : '', base = typeof v3 === 'number' && isFinite(v3) && v3 > 0 ? v3 : '', nf = { money: S.MONEY, pct: S.PCT, ratio: S.RATIO }[m[4]];
     g.set(r, c, m[0], { b: 'bold' });
@@ -311,7 +312,7 @@ function todayBenchmark_(g, r, today, shown) {
     accs.forEach((a, i) => {
       const v = funnelRatio_(a.raw, m);
       let bg = null;
-      if (v !== '' && base !== '' && v !== base) bg = (m[5] ? v < base : v > base) ? S.GREEN : S.RED;
+      if (v !== '' && base !== '' && v !== base && !isMsgAccount_(a.id)) bg = (m[5] ? v < base : v > base) ? S.GREEN : S.RED; // messages: not judged
       g.set(r, c + 2 + i, v === '' ? '—' : v, { nf: nf, bg: bg, al: 'center' });
     });
     r++;

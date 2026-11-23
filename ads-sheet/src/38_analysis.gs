@@ -16,6 +16,9 @@
  *  - Duplication: campaigns whose platform counts many more orders than Shopify (last 7 days).
  *  - Shopify: today against yesterday until the same hour (sessions, conversion, bounce, sales, orders against the spend).
  *  - Products, governorates and the catalog: what sells better, where it's delivered best, what the catalog sells.
+ * A messages-only account (accounts.messages_only, isMsgAccount_) isn't judged in any part: no account, funnel, benchmark,
+ * campaign, cancellation or duplication finding, and it's left out of the business's funnel. Its spend stays in the
+ * business's numbers (as Closing).
  */
 const ANA = {
   TAB: 'Actions', TAB2: 'Analysis', OLD_TAB: 'Analysis & Actions', SNAP: 'Intraday Ads', GROUPS: 'ANA_GROUPS',
@@ -116,7 +119,7 @@ function anaBe_(F) {
  */
 function anaFacts_(today) {
   const from = shiftKey_(today, -ANA.BACK), F = { today: today, from: from, month0: today.slice(0, 8) + '01', biz: {}, acc: {}, accName: {}, accPlat: {},
-    pix: {}, camp: {}, campName: {}, campAcc: {}, prod: {}, items: {}, gov: {}, times: [], okIds: {}, cat: {}, catSpend: {} };
+    pix: {}, camp: {}, campName: {}, campAcc: {}, prod: {}, items: {}, gov: {}, times: [], okIds: {}, cat: {}, catSpend: {}, msg: msgAccounts_() };
   const day = (map, k, d) => { const x = map[k] = map[k] || {}; return x[d] = x[d] || anaZero_(); };
   const status = (t, st) => {
     if (!st) return;
@@ -251,7 +254,7 @@ function anaMerge_(finds) {
 
 function anaAccounts_(F, ctx) {
   const be = ctx.be, out = [], y = shiftKey_(F.today, -1), d3 = shiftKey_(F.today, -3), d4 = shiftKey_(F.today, -4), d10 = shiftKey_(F.today, -10);
-  const ids = p => Object.keys(F.accPlat).filter(id => F.accPlat[id] === p && anaSum_(F.acc[id], F.month0, F.today).spend > 0)
+  const ids = p => Object.keys(F.accPlat).filter(id => F.accPlat[id] === p && !F.msg.has(id) && anaSum_(F.acc[id], F.month0, F.today).spend > 0)
     .sort((a, b) => anaSum_(F.acc[b], F.month0, F.today).spend - anaSum_(F.acc[a], F.month0, F.today).spend);
   const meta = ids('META'), tt = ids('TIKTOK'), mc = ctx.mc;
   meta.concat(tt).forEach(id => {
@@ -340,7 +343,7 @@ function anaThreeHours_(F, ctx) {
       // The campaigns that spent the most in the window, with their orders in it.
       const a = (camps[d] || {})[w.from] || (w.from ? null : {}), b = (camps[d] || {})[w.to], who = [];
       if (a && b) Object.keys(b).forEach(k => {
-        if (k.split('|')[0] !== 'META') return;
+        if (k.split('|')[0] !== 'META' || F.msg.has(String(F.campAcc[k]))) return;
         const s = b[k] - (a[k] || 0);
         if (s <= 0) return;
         const os = F.times.filter(o => o.d === d && o.camp === k && o.h >= w.from && o.h < w.to);
@@ -382,6 +385,10 @@ function anaBench_(F, ctx) {
   const base = months.length ? funnelMonthsTotal_(months) : null;
   (f.today && f.today.day === today ? f.today.accounts : []).forEach(a => {
     if (a.error || !a.raw) return;
+    if (F.msg.has(String(a.id))) {
+      rows.push({ name: a.name, plat: 'META', spend: num_(a.raw.spend), roas: '', base: '', worse: [], msg: true, text: MSG_TAG + ': مش بيتقارن بالبنشمارك' });
+      return;
+    }
     const spend = num_(a.raw.spend), worse = [];
     if (spend >= 300 && base) TODAY.METRICS.forEach(m => {
       const v = funnelRatio_(a.raw, m), b = funnelRatio_(base, m);
@@ -442,6 +449,7 @@ function anaFunnel_(F) {
   let kept = null;
   try { kept = JSON.parse(propGetBig_(ANA.FUNNEL_KEY) || 'null'); } catch (e) { kept = null; }
   if (!kept) return { find: out, rows: rows, none: true };
+  kept.accounts = kept.accounts.filter(a => !F.msg.has(String(a.id))); // messages campaigns: no website funnel
   const y = shiftKey_(F.today, -1), d3 = shiftKey_(F.today, -3), d4 = shiftKey_(F.today, -4), d17 = shiftKey_(F.today, -17);
   const steps = FUNNEL.METRICS.filter(m => m[2] !== 'one' && !/^shop/.test(m[1]) && !/^shop/.test(m[2]));
   const sum = (days, from, to) => {
@@ -487,6 +495,7 @@ function anaFunnel_(F) {
 function anaCampaigns_(F, ctx) {
   const out = [];
   (ctx.mc || []).forEach(c => {
+    if (F.msg.has(String(c.acc))) return;
     const v = c.verdict || {}, s3 = c.w && c.w[3] ? c.w[3] : mcZero_(), r = s3.spend > 0 ? s3.revenue / s3.spend : null, acc = F.accName[c.acc] || c.acc;
     const nums = anaList_(['صرف 3 أيام ' + anaMoney_(s3.spend) + ' و ' + s3.orders + ' أوردر', r !== null ? 'رؤاس ' + anaNum_(r, 2) : '',
       c.target && c.target.v ? 'التعادل ' + anaNum_(c.target.v, 2) : '', v.reason]);
@@ -565,7 +574,7 @@ function anaCancelPart_(F, ctx) {
   const m = anaSum_(F.biz, F.month0, t), lm = anaSum_(F.biz, lastMonth, lastTo);
   rows.push({ label: 'الشهر ده قدام الشهر اللي فات (لحد نفس اليوم)', scope: ANA.BIZ, a: m, b: lm, ca: anaCancel_(m), cb: anaCancel_(lm),
     ra: m.finished > 0 ? m.returned / m.finished : null, rb: lm.finished > 0 ? lm.returned / lm.finished : null, month: true });
-  Object.keys(F.accName).filter(id => anaSum_(F.acc[id], d14, y).orders > 0).forEach(id => rows.push(line(F.accName[id], F.acc[id], F.accName[id])));
+  Object.keys(F.accName).filter(id => !F.msg.has(id) && anaSum_(F.acc[id], d14, y).orders > 0).forEach(id => rows.push(line(F.accName[id], F.acc[id], F.accName[id])));
   const prods = Object.keys(F.items).filter(n => anaSum_(F.items[n], d7, y).decided >= 10).sort((a, b) => anaSum_(F.items[b], d7, y).orders - anaSum_(F.items[a], d7, y).orders).slice(0, 10);
   prods.forEach(n => rows.push(line(n, F.items[n], n)));
   const biz = rows[0];
@@ -604,6 +613,7 @@ function anaCancelPart_(F, ctx) {
 function anaDup_(F, ctx) {
   const out = [], rows = [], data = dupData_(shiftKey_(F.today, -6), F.today);
   ['META', 'TIKTOK'].forEach(p => (data[p] ? data[p].camps : []).forEach(c => {
+    if (F.msg.has(String(c.acc))) return;
     const s = c.sum, shop = s.utm + s.direct, gap = s.pixel - shop, dup = shop > 0 ? gap / shop : null;
     if (!(s.spend >= ANA.DUP_SPEND) || !(s.pixel >= 5) || gap < ANA.DUP_MIN || (dup !== null && dup < ANA.DUP)) return;
     const acc = F.accName[c.acc] || (p === 'TIKTOK' ? 'TikTok' : c.acc), cppP = s.spend / s.pixel, cppS = shop > 0 ? s.spend / shop : null;

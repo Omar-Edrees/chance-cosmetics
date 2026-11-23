@@ -27,12 +27,12 @@ const MC = {
   LEVELS: ['campaign', 'adset', 'ad'],
   FIELDS: 'spend,impressions,reach,inline_link_clicks,actions',
   DROP: 0.2, SCALE: 1.2, MIN_ORDERS: 3, ID_COL: 21,
-  ORDER: { '🔴': 0, '🟠': 1, '🔁': 2, '🟢': 3, '🟡': 4, '⏳': 5, '⏸': 6 },
-  BG: { '🔴': '#f4cccc', '🟠': '#fce5cd', '🔁': '#cfe2f3', '🟢': '#d9ead3', '🟡': '#fff2cc', '⏳': '#f3f4f6', '⏸': '#e5e7eb' },
+  ORDER: { '🔴': 0, '🟠': 1, '🔁': 2, '🟢': 3, '🟡': 4, '⏳': 5, '💬': 6, '⏸': 7 },
+  BG: { '🔴': '#f4cccc', '🟠': '#fce5cd', '🔁': '#cfe2f3', '🟢': '#d9ead3', '🟡': '#fff2cc', '⏳': '#f3f4f6', '💬': '#e8eefc', '⏸': '#e5e7eb' },
   WORDS: {
-    campaign: { '🔴': 'وقّفها', '🟠': 'وقعت', '🔁': 'رجّعها', '🟢': 'زوّد الميزانية', '🟡': 'سيبها', '⏳': 'لسه بدري', '⏸': 'واقفة' },
-    adset: { '🔴': 'وقّفه', '🟠': 'وقع', '🔁': 'رجّعه', '🟢': 'كسبان', '🟡': 'سيبه', '⏳': 'لسه بدري', '⏸': 'واقف' },
-    ad: { '🔴': 'وقّفه', '🟠': 'وقع', '🔁': 'رجّعه', '🟢': 'كسبان، ابني عليه', '🟡': 'سيبه', '⏳': 'لسه بدري', '⏸': 'واقف' }
+    campaign: { '🔴': 'وقّفها', '🟠': 'وقعت', '🔁': 'رجّعها', '🟢': 'زوّد الميزانية', '🟡': 'سيبها', '⏳': 'لسه بدري', '💬': 'مسجات', '⏸': 'واقفة' },
+    adset: { '🔴': 'وقّفه', '🟠': 'وقع', '🔁': 'رجّعه', '🟢': 'كسبان', '🟡': 'سيبه', '⏳': 'لسه بدري', '💬': 'مسجات', '⏸': 'واقف' },
+    ad: { '🔴': 'وقّفه', '🟠': 'وقع', '🔁': 'رجّعه', '🟢': 'كسبان، ابني عليه', '🟡': 'سيبه', '⏳': 'لسه بدري', '💬': 'مسجات', '⏸': 'واقف' }
   },
   HEADERS: ['القرار', 'الكامبين / الأد سيت / الإعلان', 'الحساب', 'الحالة', 'الميزانية في اليوم', 'المنتج', 'صرف 3 أيام',
     'أوردرات 3 أيام', 'رؤاس 3 أيام', 'رؤاس الـ 7 أيام قبلها', 'رؤاس الـ 14 يوم قبلها', 'رؤاس التعادل', 'المترك الواقع',
@@ -305,7 +305,7 @@ function mcBySpend_(a, b) { return (b.w[3].spend - a.w[3].spend) || (b.w[14].spe
  */
 function writeMetaCamps_() {
   if (!ss_().getSheetByName(MC.RAW)) return;
-  const tree = mcTree_(), W = MC.HEADERS.length, prods = products_(), stock = stockByName_().by, accs = accounts_('META');
+  const tree = mcTree_(), W = MC.HEADERS.length, prods = products_(), stock = stockByName_().by, accs = accounts_('META'), msg = msgAccounts_();
   let budgets = {};
   try { budgets = JSON.parse(propGetBig_(MC.BUDGETS) || '{}'); } catch (e) { budgets = {}; }
   const accName = id => { const a = accs.find(x => String(x.id) === String(id)); return a ? a.name || a.id : id; };
@@ -324,7 +324,9 @@ function writeMetaCamps_() {
     n.budget = budgets[n.id] || 0;
     const ref = refOf[acc].ref;
     n.target = mcTarget_(n, prods, ref);
-    n.verdict = mcJudge_(n, n.target, ref, stock);
+    // A messages-only account (accounts.messages_only): its ads bring chats, not store orders, so Shopify ROAS doesn't judge them.
+    n.verdict = msg.has(String(acc)) ? { code: '💬', word: MC.WORDS[n.level]['💬'], metric: '',
+      reason: 'حساب مسجات: الأوردرات بتيجي من الشات ومش متتبعة، فمش بيتحكم عليها بـ Shopify ROAS' } : mcJudge_(n, n.target, ref, stock);
   };
   tree.camps.forEach(c => {
     judge(c, c.acc);
@@ -346,7 +348,7 @@ function writeMetaCamps_() {
   g.fill(1, 2, W - 1, { bg: '#1f2937' });
   g.merge(1, 1, 1, W);
   g.set(2, 1, '🔴 تحت التعادل من الأول  🟠 كانت كويسة ونزلت (المترك الواقع جنبها)  🔁 واقفة وكانت كويسة: تستاهل فرصة  🟢 فوق التعادل بـ 20% وأكتر  ' +
-    '🟡 حوالين التعادل  ⏳ صرفها لسه قليل  ⏸ واقفة. اضغط + جنب الكامبين تشوف الأد سيتس، و + جنب الأد سيت تشوف الإعلانات. ' +
+    '🟡 حوالين التعادل  ⏳ صرفها لسه قليل  💬 حساب مسجات (accounts.messages_only في Settings): مش بيتحكم عليه  ⏸ واقفة. اضغط + جنب الكامبين تشوف الأد سيتس، و + جنب الأد سيت تشوف الإعلانات. ' +
     'الكامبين اللي بدأت النهارده بتظهر من بكره. حط الماوس على أرقام CPM لحد متوسط الأوردر تشوف الـ 7 والـ 14 يوم.', { fc: '#374151' });
   g.merge(2, 1, 1, W);
 
@@ -364,23 +366,26 @@ function writeMetaCamps_() {
     const w = accSum(camps), s3 = mcStats_(w[3]), s7 = mcStats_(w[7]), s14 = mcStats_(w[14]);
     const R = typeof s7.roas === 'number' ? s7.roas : s14.roas, S = s3.spend;
     const ch = typeof s3.roas === 'number' && R > 0 ? s3.roas / R - 1 : null;
-    const state = ch === null ? '' : ch <= -0.1 ? '📉 نازل' : ch >= 0.1 ? '📈 طالع' : '➖ ثابت';
-    const drag = typeof R === 'number' && S > 0 ? camps.filter(c => c.w[3].spend > 0)
+    const isMsg = camps.length > 0 && camps.every(c => msg.has(String(c.acc)));
+    const state = isMsg ? MSG_TAG : ch === null ? '' : ch <= -0.1 ? '📉 نازل' : ch >= 0.1 ? '📈 طالع' : '➖ ثابت';
+    const drag = !isMsg && typeof R === 'number' && S > 0 ? camps.filter(c => c.w[3].spend > 0)
       .map(c => ({ c: c, v: c.w[3].spend * ((mcStats_(c.w[3]).roas || 0) - R) / S })).filter(x => x.v <= -0.01).sort((a, b) => a.v - b.v).slice(0, 3) : [];
     const up = camps.filter(c => c.verdict.code === '🟢').sort((a, b) => mcStats_(b.w[3]).roas - mcStats_(a.w[3]).roas).slice(0, 3);
     const back = camps.filter(c => c.verdict.code === '🔁').slice(0, 2);
     g.set(r, 1, label, { b: 'bold' });
-    g.set(r, 2, state, { al: 'center', bg: ch === null ? null : ch <= -0.1 ? '#f4cccc' : ch >= 0.1 ? '#d9ead3' : null });
+    g.set(r, 2, state, { al: 'center', bg: isMsg ? MC.BG['💬'] : ch === null ? null : ch <= -0.1 ? '#f4cccc' : ch >= 0.1 ? '#d9ead3' : null });
     [S, s3.orders, s3.roas, s7.roas, s14.roas].forEach((v, i) => g.set(r, 7 + i, typeof v === 'number' ? (i < 2 ? Math.round(v) : round2_(v)) : '',
       { nf: i < 2 ? '#,##0' : '0.00', al: 'center' }));
-    g.set(r, 12, ch === null ? '' : Math.round(ch * 1000) / 1000, { nf: '+0%;-0%;0%', al: 'center', fc: ch === null ? '#000000' : ch < 0 ? '#cc0000' : '#38761d', b: 'bold' });
-    g.set(r, 13, drag.length ? drag.map(x => x.c.name + ' (' + (Math.round(x.v * 100) / 100) + ')').join('، ') : ch !== null && ch < 0 ? 'نزول خفيف في كذا كامبين' : '—');
+    g.set(r, 12, ch === null ? '' : Math.round(ch * 1000) / 1000, { nf: '+0%;-0%;0%', al: 'center', fc: ch === null || isMsg ? '#000000' : ch < 0 ? '#cc0000' : '#38761d', b: 'bold' });
+    g.set(r, 13, isMsg ? 'كامبينات مسجات: مش بيتحكم عليها بـ Shopify ROAS' : drag.length ? drag.map(x => x.c.name + ' (' + (Math.round(x.v * 100) / 100) + ')').join('، ') : ch !== null && ch < 0 ? 'نزول خفيف في كذا كامبين' : '—');
     g.merge(r, 13, 1, 2);
     g.set(r, 15, up.map(c => c.name + ' (' + round2_(mcStats_(c.w[3]).roas) + ')').concat(back.map(c => '🔁 ' + c.name)).join('، ') || '—');
     g.merge(r, 15, 1, 6);
     r++;
   };
-  if (Object.keys(byAcc).length > 1) card('كل الحسابات', tree.camps);
+  // Every account but the messages-only ones (their chats' orders aren't tracked yet).
+  const web = tree.camps.filter(c => !msg.has(String(c.acc)));
+  if (Object.keys(byAcc).length > 1 && web.length) card(web.length < tree.camps.length ? 'كل الحسابات (من غير المسجات)' : 'كل الحسابات', web);
   Object.keys(byAcc).sort((a, b) => accName(a).localeCompare(accName(b))).forEach(id => card(accName(id), byAcc[id]));
   if (!tree.camps.length) { g.set(r, 1, 'مفيش كامبينات Meta صرفت في آخر 17 يوم، أو لسه ماتقريتش من Meta', { fc: '#6b7280' }); r++; }
   r++;

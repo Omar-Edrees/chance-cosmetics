@@ -523,7 +523,7 @@ function anaDrawBench_(g, r, part) {
     g.set(r, R + 1, anaNum_(x.spend, 0), { nf: ANA.MONEY, al: 'right' });
     g.set(r, R + 2, x.roas === '' || x.roas === null ? '—' : anaNum_(x.roas, 2), { nf: ANA.RATIO, al: 'center' });
     g.set(r, R + 3, x.base === '' || x.base === null ? '—' : anaNum_(x.base, 2), { nf: ANA.RATIO, al: 'center', fc: ANA.GREY });
-    g.set(r, R + 4, x.worse.length, { al: 'center', b: 'bold', bg: x.worse.length >= 3 ? ANA.RED : x.worse.length ? ANA.AMBER : ANA.GREEN });
+    g.set(r, R + 4, x.msg ? '—' : x.worse.length, { al: 'center', b: 'bold', bg: x.msg ? null : x.worse.length >= 3 ? ANA.RED : x.worse.length ? ANA.AMBER : ANA.GREEN });
     g.set(r, R + 5, x.text, {});
     r++;
   });

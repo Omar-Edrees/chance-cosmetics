@@ -64,6 +64,7 @@ const SETTINGS_SPEC = [
   ['attribution.meta_markers', 'fb,facebook,ig,instagram,meta', 'كلمات في الـUTM تعني Meta'],
   ['attribution.other_utm_platform', 'META', 'UTM موجود بس مش معروف: META | UNKNOWN'],
   ['attribution.manual_account', '1354948596094660', 'الأكاونت اللي أوردرات المانيول (المسيجات) بتتحسب عليه في Daily Account Funnel و Actual ROAS'],
+  ['accounts.messages_only', '1354948596094660', 'حسابات Meta اللي شغالة على كامبينات مسجات بس (Chance 26)، مفصولة بفاصلة، و - = مفيش: مش بيتحكم عليها بالفانل ولا بالرؤاس ولا بالبنشمارك، ومش داخلة في بنشمارك البيزنس ولا فانل البيزنس، ومكانها 💬. صرفها لسه داخل في الصرف كله (Closing و Today)'],
   ['meta.api_version', 'v26.0', 'نسخة Graph API'],
   ['meta.purchase_actions', 'offsite_conversion.fb_pixel_purchase,purchase,omni_purchase', 'أول نوع موجود بس بيتحسب'],
   ['tiktok.method', 'none', 'none | connector_tab | csv_tab — لو TikTok متربط من المنيو (الإعدادات ← ربط TikTok) بيتقري من الـ API ومش بيبص على ده'],
@@ -131,6 +132,16 @@ function accounts_(platform) {
       name: String(r[2] || '').trim(), purpose: String(r[3] || ''), brand: String(r[5] || '') }))
     .filter(a => !platform || a.platform === platform);
 }
+
+/*
+ * Meta accounts that run messages campaigns only (accounts.messages_only, Chance 26): their ads bring chats, not website
+ * orders, so a low funnel or Shopify ROAS there is expected. They are not judged (Actions, Analysis, Meta Campaigns, the
+ * benchmark in Today, تعادل الحسابات) and are left out of the business's funnel and benchmark; their spend still counts
+ * as spend (Closing, Daily Log, Today's totals).
+ */
+function msgAccounts_() { return new Set(cfgList_('accounts.messages_only').map(x => x.replace(/^act_/i, '').trim()).filter(x => /^\d+$/.test(x))); }
+function isMsgAccount_(id) { return msgAccounts_().has(String(id || '').replace(/^act_/i, '').trim()); }
+const MSG_TAG = '💬 مسجات';
 
 /* Products tab: Product | SKU | Landing slugs | Name codes | Order aliases | Price | Cost | Shipping | Other cost | Confirm rate | Delivery rate | Active */
 const PRODUCT_HEADERS = ['Product', 'SKU', 'Landing slugs', 'Name codes', 'Order aliases', 'Price', 'Cost',
@@ -2214,7 +2225,8 @@ function writeAccountsBE_() {
 
   // Accounts: Accounts tab + anything that spent.
   const accs = new Map();
-  accounts_().forEach(a => accs.set(a.platform + '|' + a.id, { key: a.platform + '|' + a.id, platform: a.platform, name: a.name || a.id, purpose: a.purpose }));
+  accounts_().forEach(a => accs.set(a.platform + '|' + a.id, { key: a.platform + '|' + a.id, platform: a.platform, name: a.name || a.id, purpose: a.purpose,
+    msg: a.platform === 'META' && isMsgAccount_(a.id) }));
   const cell = {}, add = (k, d, f, v) => { const c = cell[k + '|' + d] = cell[k + '|' + d] || { spend: 0, pixel: 0, pval: 0, orders: 0, revenue: 0 }; c[f] += v; };
   rawRows_(APP.T.ADS, ADS_HEADERS.length).forEach(a => {
     const d = asKey_(a[0]);
@@ -2252,10 +2264,13 @@ function writeAccountsBE_() {
     return t;
   };
   const be = beRoas_(storeOrders ? storeRev / storeOrders : 0);
-  const line = (label, t, useReal) => {
+  const line = (label, t, useReal, msg) => {
     const pr = t.spend ? round2_(t.pval / t.spend) : '', rr = t.spend ? round2_(t.revenue / t.spend) : '';
     const roas = useReal ? rr : pr;
     let status = '';
+    if (msg) return [label, round2_(t.spend), round2_(t.spend * (1 + tax)), t.pixel, pr, t.orders, round2_(t.revenue), rr,
+      t.orders ? round2_(t.revenue / t.orders) : '', t.orders ? round2_(t.spend * (1 + tax) / t.orders) : '', be.v === null ? '' : be.v,
+      t.spend > 0 ? MSG_TAG + ' (مش بيتحكم عليه بالتعادل)' : ''];
     if (t.spend > 0) status = be.v === null ? 'ناقص نقطة التعادل' : roas === '' ? '' :
       roas >= be.v ? '✅ فوق التعادل' : roas >= be.v * 0.8 ? '⚠️ قريب من التعادل' : '🔻 تحت التعادل';
     if (status && !useReal) status += ' (بيكسل)';
@@ -2267,7 +2282,7 @@ function writeAccountsBE_() {
   const list = Array.from(accs.values()).sort((a, b) => tot(b.key, 1, days).spend - tot(a.key, 1, days).spend);
   const summary = list.map(a => {
     const t = tot(a.key, 1, days);
-    return line(a.name + (a.purpose ? ' — ' + a.purpose : ''), t, t.orders > 0);
+    return line(a.name + (a.purpose ? ' — ' + a.purpose : '') + (a.msg ? ' 💬' : ''), t, t.orders > 0, a.msg);
   });
   const all = { spend: 0, pixel: 0, pval: 0, orders: storeOrders, revenue: storeRev };
   list.forEach(a => { const t = tot(a.key, 1, days); all.spend += t.spend; all.pixel += t.pixel; all.pval += t.pval; });
@@ -2283,11 +2298,12 @@ function writeAccountsBE_() {
     const useReal = tot(a.key, 1, days).orders > 0, rows = [];
     weeks.forEach((w, i) => {
       if (w[0] > days) return;
-      for (let d = w[0]; d <= w[1]; d++) rows.push(line(month + '-' + String(d).padStart(2, '0'), tot(a.key, d, d), useReal));
-      rows.push(line('إجمالي الأسبوع ' + (i + 1), tot(a.key, w[0], w[1]), useReal));
+      for (let d = w[0]; d <= w[1]; d++) rows.push(line(month + '-' + String(d).padStart(2, '0'), tot(a.key, d, d), useReal, a.msg));
+      rows.push(line('إجمالي الأسبوع ' + (i + 1), tot(a.key, w[0], w[1]), useReal, a.msg));
     });
-    rows.push(line('إجمالي الشهر', tot(a.key, 1, days), useReal));
-    blocks.push({ title: a.name + (useReal ? '' : ' — مفيش أوردرات مربوطة بالحساب ده لسه، الحالة من البيكسل'), headers: H, rows: rows });
+    rows.push(line('إجمالي الشهر', tot(a.key, 1, days), useReal, a.msg));
+    blocks.push({ title: a.name + (a.msg ? ' — ' + MSG_TAG + ' بس: أوردرات الشات مش متتبعة، فمش بيتحكم عليه بالتعادل'
+      : useReal ? '' : ' — مفيش أوردرات مربوطة بالحساب ده لسه، الحالة من البيكسل'), headers: H, rows: rows });
   });
   writeBlocks_(sh, 4, blocks, H.length);
   const lr = Math.max(sh.getLastRow() - 3, 1), stCol = sh.getRange(4, 12, lr, 1);
@@ -2827,7 +2843,8 @@ function writeFunnel_(data) {
   // The benchmark: each column's best month of the 3 before this one, the whole business (all accounts' month totals, not an
   // average; SHOPIFY ORDERS = every store order but those from an ad account not in the sheet). Lower is better for costs;
   // a step rate over 100% (an event not fully tracked) is used only if no month is at or under 100%.
-  const pastRaws = past.map(ym => bizShop(funnelShopAdd_(funnelSum_(data.accounts.filter(a => !a.error).map(a => a.months[ym] || {})),
+  // A messages-only account (accounts.messages_only) is left out of the business's funnel and benchmark: its ads bring chats.
+  const pastRaws = past.map(ym => bizShop(funnelShopAdd_(funnelSum_(data.accounts.filter(a => !a.error && !isMsgAccount_(a.id)).map(a => a.months[ym] || {})),
     shop.all, allSpend, shop, ym + '-01', monthEnd(ym), true), ym + '-01', monthEnd(ym)));
   const auto = {}, bench = F.METRICS.map(m => {
     let vals = pastRaws.map(raw => metricOf(raw, m)).filter(v => typeof v === 'number' && isFinite(v) && v > 0);
@@ -2858,44 +2875,45 @@ function writeFunnel_(data) {
   F.METRICS.forEach((m, i) => g.set(F.BENCH_ROW, 3 + i, bench[i], { nf: m[4], bg: F.BENCH_BG, b: 'bold', al: 'center' }));
 
   let r = F.BENCH_ROW + 1;
-  const line = (label, raw, style) => {
+  const line = (label, raw, style, plain) => {
     g.set(r, 1, label, Object.assign({ al: 'center' }, style));
     g.set(r, 2, Math.round((raw.spend || 0) * 100) / 100, Object.assign({ nf: '#,##0.00', al: 'center' }, style));
     F.METRICS.forEach((m, i) => {
       const v = m[2] === 'one' ? (m[1] in raw ? raw[m[1]] : '') : funnelValue_(raw, m), odd = m[7] && typeof v === 'number' && v > 1;
-      const color = m[6] || odd ? null : funnelColor_(v, bench[i], m[5], yellow);
+      const color = m[6] || odd || plain ? null : funnelColor_(v, bench[i], m[5], yellow);
       g.set(r, 3 + i, v, Object.assign({ nf: m[4], al: 'center' }, style, color ? { bg: color } : {}, odd ? { fc: '#9ca3af' } : {}));
     });
     r++;
   };
   // A section: name bar, totals of this month and the 3 before it, those 3 together, then the days.
-  const section = (name, months, days, error, shopDays, spendDays, biz) => {
+  const section = (name, months, days, error, shopDays, spendDays, biz, msg) => {
     const add = (raw, from, to) => (biz ? bizShop(raw, from, to) : raw);
-    g.set(r, 1, name + (error ? '   ⚠️ ماقدرتش أقرا الحساب: ' + error : ''), { bg: F.BAND, fc: '#ffffff', b: 'bold' });
+    g.set(r, 1, name + (msg ? '   ' + MSG_TAG + ' بس: من غير ألوان، ومش داخل في البيزنس كله ولا البنشمارك' : '') + (error ? '   ⚠️ ماقدرتش أقرا الحساب: ' + error : ''), { bg: F.BAND, fc: '#ffffff', b: 'bold' });
     g.fill(r, 2, W - 1, { bg: F.BAND });
     g.merge(r, 1, 1, W);
     r++;
     if (error) return;
     data.months.forEach((ym, i) => line(funnelMonthName_(ym) + (i ? '' : ' (لحد النهارده)'),
       add(funnelShopAdd_(Object.assign({}, months[ym] || {}), shopDays, spendDays, shop, ym + '-01', i ? monthEnd(ym) : today, true), ym + '-01', i ? monthEnd(ym) : today),
-      { bg: F.AVG_BG, b: 'bold' }));
+      { bg: F.AVG_BG, b: 'bold' }, msg));
     line('آخر 3 شهور (' + range3 + ')', add(funnelShopAdd_(funnelSum_(past.map(ym => months[ym] || {})), shopDays, spendDays, shop, pastFrom, pastTo, true), pastFrom, pastTo),
-      { bg: F.AVG3_BG, b: 'bold' });
+      { bg: F.AVG3_BG, b: 'bold' }, msg);
     days.forEach(d => {
       const p = d.date.split('-').map(Number), raw = Object.assign({}, d.raw);
       if (shop.first && d.date >= shop.first) {
         const s = (shopDays || {})[d.date] || { orders: 0, revenue: 0 };
         raw.shopOrders = s.orders; raw.shopRevenue = s.revenue; raw.shopSpend = biz && cover && d.date >= cover ? bizSpend[d.date] || 0 : d.raw.spend;
       }
-      line(Utilities.formatDate(new Date(Date.UTC(p[0], p[1] - 1, p[2], 12)), 'UTC', 'EEE dd-MMM'), raw, {});
+      line(Utilities.formatDate(new Date(Date.UTC(p[0], p[1] - 1, p[2], 12)), 'UTC', 'EEE dd-MMM'), raw, {}, msg);
     });
   };
-  const ok = data.accounts.filter(a => !a.error), allMonths = {}, allDays = {};
+  const ok = data.accounts.filter(a => !a.error && !isMsgAccount_(a.id)), allMonths = {}, allDays = {};
   data.months.forEach(ym => { allMonths[ym] = funnelSum_(ok.map(a => a.months[ym] || {})); });
   ok.forEach(a => a.days.forEach(d => { allDays[d.date] = funnelSum_([allDays[d.date] || {}, d.raw]); }));
-  if (ok.length > 1) section('كل الحسابات (البيزنس كله)', allMonths,
+  if (ok.length > 1 || (ok.length && ok.length < data.accounts.filter(a => !a.error).length)) section('كل الحسابات (البيزنس كله' +
+    (ok.length < data.accounts.filter(a => !a.error).length ? '، من غير المسجات)' : ')'), allMonths,
     Object.keys(allDays).sort().reverse().map(d => ({ date: d, raw: allDays[d] })), '', shop.all, allSpend, true);
-  data.accounts.forEach(a => section(a.name, a.months, a.days, a.error, shop.acc[a.id] || {}, shop.spend[a.id] || {}));
+  data.accounts.forEach(a => section(a.name, a.months, a.days, a.error, shop.acc[a.id] || {}, shop.spend[a.id] || {}, false, isMsgAccount_(a.id)));
   if (!data.accounts.length) g.set(r, 1, 'مفيش حساب Meta صرف في الفترة دي', { fc: '#6b7280' });
   if (!writeGrid_(sh, g)) return;
   sh.setFrozenRows(F.BENCH_ROW);
@@ -3026,7 +3044,7 @@ const TODAY = {
   GRAND: '#00ff00', LABEL: '#f3f4f6', METRIC: '#e8f0fe', AVG: '#e8eefc', SPECIAL: '#fde8e8', TOTAL: '#e8eefc',
   GREEN: '#d9ead3', RED: '#f4cccc', OTHER: '#f3f4f6', CATALOG: '#fff2cc',
   MONEY: '#,##0.00', COUNT: '0', RATIO: '0.00', PCT: '0.00%',
-  FUNNEL_KEY: 'TODAY_FUNNEL', BEST_KEY: 'TODAY_FUNNEL_BEST', BEST_MONTHS: 3, BEST_VERSION: 1,
+  FUNNEL_KEY: 'TODAY_FUNNEL', BEST_KEY: 'TODAY_FUNNEL_BEST', BEST_MONTHS: 3, BEST_VERSION: 2,
   FIELDS: 'spend,impressions,clicks,inline_link_clicks,actions,action_values,video_thruplay_watched_actions',
   /* [Metric, numerator, denominator, times, format (money | pct | ratio), lower is better?, blank when the numerator is 0?].
    * ROAS, AOV and CVR first; then the funnel in order: the ad (cost, clicks, video), the site step by step. */
@@ -3092,7 +3110,8 @@ function refreshTodayFunnel_() {
     const row = { id: acc.id, name: acc.name || acc.id };
     try {
       row.raw = funnelRaw_(metaAll_('act_' + acc.id + '/insights', { level: 'account', time_range: range(today, today), fields: TODAY.FIELDS }));
-      if (needBest) metaAll_('act_' + acc.id + '/insights', { level: 'account', time_range: range(from, to), time_increment: 'monthly', fields: TODAY.FIELDS })
+      // The benchmark is the website funnel: a messages-only account (accounts.messages_only) stays out of it.
+      if (needBest && !isMsgAccount_(acc.id)) metaAll_('act_' + acc.id + '/insights', { level: 'account', time_range: range(from, to), time_increment: 'monthly', fields: TODAY.FIELDS })
         .forEach(m => { const ym = String(m.date_start).slice(0, 7); months[ym] = funnelAdd_(months[ym] || {}, funnelRaw_([m])); });
     } catch (e) { row.error = errText_(e); bestOk = false; }
     out.accounts.push(row);
@@ -3318,7 +3337,7 @@ function todayBenchmark_(g, r, today, shown) {
   const mon = k => Utilities.formatDate(new Date(Date.UTC(Number(k.slice(0, 4)), Number(k.slice(5, 7)) - 1, 15)), 'UTC', 'MMM-yyyy');
   const span = f.best && f.best.from && f.best.to ? ' (' + mon(f.best.from) + ' → ' + mon(f.best.to) + ')' : '';
   r = todayHead_(g, r, c, width, 'META BENCHMARK vs TODAY | ' + shown,
-    ['METRIC', 'LAST ' + S.BEST_MONTHS + ' MONTHS' + span].concat(accs.map(a => (a.error ? '⚠️ ' : '') + a.name)));
+    ['METRIC', 'LAST ' + S.BEST_MONTHS + ' MONTHS' + span].concat(accs.map(a => (a.error ? '⚠️ ' : '') + (isMsgAccount_(a.id) ? '💬 ' : '') + a.name)));
   S.METRICS.forEach(m => {
     const v3 = total ? funnelRatio_(total, m) : '', base = typeof v3 === 'number' && isFinite(v3) && v3 > 0 ? v3 : '', nf = { money: S.MONEY, pct: S.PCT, ratio: S.RATIO }[m[4]];
     g.set(r, c, m[0], { b: 'bold' });
@@ -3326,7 +3345,7 @@ function todayBenchmark_(g, r, today, shown) {
     accs.forEach((a, i) => {
       const v = funnelRatio_(a.raw, m);
       let bg = null;
-      if (v !== '' && base !== '' && v !== base) bg = (m[5] ? v < base : v > base) ? S.GREEN : S.RED;
+      if (v !== '' && base !== '' && v !== base && !isMsgAccount_(a.id)) bg = (m[5] ? v < base : v > base) ? S.GREEN : S.RED; // messages: not judged
       g.set(r, c + 2 + i, v === '' ? '—' : v, { nf: nf, bg: bg, al: 'center' });
     });
     r++;
@@ -6199,12 +6218,12 @@ const MC = {
   LEVELS: ['campaign', 'adset', 'ad'],
   FIELDS: 'spend,impressions,reach,inline_link_clicks,actions',
   DROP: 0.2, SCALE: 1.2, MIN_ORDERS: 3, ID_COL: 21,
-  ORDER: { '🔴': 0, '🟠': 1, '🔁': 2, '🟢': 3, '🟡': 4, '⏳': 5, '⏸': 6 },
-  BG: { '🔴': '#f4cccc', '🟠': '#fce5cd', '🔁': '#cfe2f3', '🟢': '#d9ead3', '🟡': '#fff2cc', '⏳': '#f3f4f6', '⏸': '#e5e7eb' },
+  ORDER: { '🔴': 0, '🟠': 1, '🔁': 2, '🟢': 3, '🟡': 4, '⏳': 5, '💬': 6, '⏸': 7 },
+  BG: { '🔴': '#f4cccc', '🟠': '#fce5cd', '🔁': '#cfe2f3', '🟢': '#d9ead3', '🟡': '#fff2cc', '⏳': '#f3f4f6', '💬': '#e8eefc', '⏸': '#e5e7eb' },
   WORDS: {
-    campaign: { '🔴': 'وقّفها', '🟠': 'وقعت', '🔁': 'رجّعها', '🟢': 'زوّد الميزانية', '🟡': 'سيبها', '⏳': 'لسه بدري', '⏸': 'واقفة' },
-    adset: { '🔴': 'وقّفه', '🟠': 'وقع', '🔁': 'رجّعه', '🟢': 'كسبان', '🟡': 'سيبه', '⏳': 'لسه بدري', '⏸': 'واقف' },
-    ad: { '🔴': 'وقّفه', '🟠': 'وقع', '🔁': 'رجّعه', '🟢': 'كسبان، ابني عليه', '🟡': 'سيبه', '⏳': 'لسه بدري', '⏸': 'واقف' }
+    campaign: { '🔴': 'وقّفها', '🟠': 'وقعت', '🔁': 'رجّعها', '🟢': 'زوّد الميزانية', '🟡': 'سيبها', '⏳': 'لسه بدري', '💬': 'مسجات', '⏸': 'واقفة' },
+    adset: { '🔴': 'وقّفه', '🟠': 'وقع', '🔁': 'رجّعه', '🟢': 'كسبان', '🟡': 'سيبه', '⏳': 'لسه بدري', '💬': 'مسجات', '⏸': 'واقف' },
+    ad: { '🔴': 'وقّفه', '🟠': 'وقع', '🔁': 'رجّعه', '🟢': 'كسبان، ابني عليه', '🟡': 'سيبه', '⏳': 'لسه بدري', '💬': 'مسجات', '⏸': 'واقف' }
   },
   HEADERS: ['القرار', 'الكامبين / الأد سيت / الإعلان', 'الحساب', 'الحالة', 'الميزانية في اليوم', 'المنتج', 'صرف 3 أيام',
     'أوردرات 3 أيام', 'رؤاس 3 أيام', 'رؤاس الـ 7 أيام قبلها', 'رؤاس الـ 14 يوم قبلها', 'رؤاس التعادل', 'المترك الواقع',
@@ -6477,7 +6496,7 @@ function mcBySpend_(a, b) { return (b.w[3].spend - a.w[3].spend) || (b.w[14].spe
  */
 function writeMetaCamps_() {
   if (!ss_().getSheetByName(MC.RAW)) return;
-  const tree = mcTree_(), W = MC.HEADERS.length, prods = products_(), stock = stockByName_().by, accs = accounts_('META');
+  const tree = mcTree_(), W = MC.HEADERS.length, prods = products_(), stock = stockByName_().by, accs = accounts_('META'), msg = msgAccounts_();
   let budgets = {};
   try { budgets = JSON.parse(propGetBig_(MC.BUDGETS) || '{}'); } catch (e) { budgets = {}; }
   const accName = id => { const a = accs.find(x => String(x.id) === String(id)); return a ? a.name || a.id : id; };
@@ -6496,7 +6515,9 @@ function writeMetaCamps_() {
     n.budget = budgets[n.id] || 0;
     const ref = refOf[acc].ref;
     n.target = mcTarget_(n, prods, ref);
-    n.verdict = mcJudge_(n, n.target, ref, stock);
+    // A messages-only account (accounts.messages_only): its ads bring chats, not store orders, so Shopify ROAS doesn't judge them.
+    n.verdict = msg.has(String(acc)) ? { code: '💬', word: MC.WORDS[n.level]['💬'], metric: '',
+      reason: 'حساب مسجات: الأوردرات بتيجي من الشات ومش متتبعة، فمش بيتحكم عليها بـ Shopify ROAS' } : mcJudge_(n, n.target, ref, stock);
   };
   tree.camps.forEach(c => {
     judge(c, c.acc);
@@ -6518,7 +6539,7 @@ function writeMetaCamps_() {
   g.fill(1, 2, W - 1, { bg: '#1f2937' });
   g.merge(1, 1, 1, W);
   g.set(2, 1, '🔴 تحت التعادل من الأول  🟠 كانت كويسة ونزلت (المترك الواقع جنبها)  🔁 واقفة وكانت كويسة: تستاهل فرصة  🟢 فوق التعادل بـ 20% وأكتر  ' +
-    '🟡 حوالين التعادل  ⏳ صرفها لسه قليل  ⏸ واقفة. اضغط + جنب الكامبين تشوف الأد سيتس، و + جنب الأد سيت تشوف الإعلانات. ' +
+    '🟡 حوالين التعادل  ⏳ صرفها لسه قليل  💬 حساب مسجات (accounts.messages_only في Settings): مش بيتحكم عليه  ⏸ واقفة. اضغط + جنب الكامبين تشوف الأد سيتس، و + جنب الأد سيت تشوف الإعلانات. ' +
     'الكامبين اللي بدأت النهارده بتظهر من بكره. حط الماوس على أرقام CPM لحد متوسط الأوردر تشوف الـ 7 والـ 14 يوم.', { fc: '#374151' });
   g.merge(2, 1, 1, W);
 
@@ -6536,23 +6557,26 @@ function writeMetaCamps_() {
     const w = accSum(camps), s3 = mcStats_(w[3]), s7 = mcStats_(w[7]), s14 = mcStats_(w[14]);
     const R = typeof s7.roas === 'number' ? s7.roas : s14.roas, S = s3.spend;
     const ch = typeof s3.roas === 'number' && R > 0 ? s3.roas / R - 1 : null;
-    const state = ch === null ? '' : ch <= -0.1 ? '📉 نازل' : ch >= 0.1 ? '📈 طالع' : '➖ ثابت';
-    const drag = typeof R === 'number' && S > 0 ? camps.filter(c => c.w[3].spend > 0)
+    const isMsg = camps.length > 0 && camps.every(c => msg.has(String(c.acc)));
+    const state = isMsg ? MSG_TAG : ch === null ? '' : ch <= -0.1 ? '📉 نازل' : ch >= 0.1 ? '📈 طالع' : '➖ ثابت';
+    const drag = !isMsg && typeof R === 'number' && S > 0 ? camps.filter(c => c.w[3].spend > 0)
       .map(c => ({ c: c, v: c.w[3].spend * ((mcStats_(c.w[3]).roas || 0) - R) / S })).filter(x => x.v <= -0.01).sort((a, b) => a.v - b.v).slice(0, 3) : [];
     const up = camps.filter(c => c.verdict.code === '🟢').sort((a, b) => mcStats_(b.w[3]).roas - mcStats_(a.w[3]).roas).slice(0, 3);
     const back = camps.filter(c => c.verdict.code === '🔁').slice(0, 2);
     g.set(r, 1, label, { b: 'bold' });
-    g.set(r, 2, state, { al: 'center', bg: ch === null ? null : ch <= -0.1 ? '#f4cccc' : ch >= 0.1 ? '#d9ead3' : null });
+    g.set(r, 2, state, { al: 'center', bg: isMsg ? MC.BG['💬'] : ch === null ? null : ch <= -0.1 ? '#f4cccc' : ch >= 0.1 ? '#d9ead3' : null });
     [S, s3.orders, s3.roas, s7.roas, s14.roas].forEach((v, i) => g.set(r, 7 + i, typeof v === 'number' ? (i < 2 ? Math.round(v) : round2_(v)) : '',
       { nf: i < 2 ? '#,##0' : '0.00', al: 'center' }));
-    g.set(r, 12, ch === null ? '' : Math.round(ch * 1000) / 1000, { nf: '+0%;-0%;0%', al: 'center', fc: ch === null ? '#000000' : ch < 0 ? '#cc0000' : '#38761d', b: 'bold' });
-    g.set(r, 13, drag.length ? drag.map(x => x.c.name + ' (' + (Math.round(x.v * 100) / 100) + ')').join('، ') : ch !== null && ch < 0 ? 'نزول خفيف في كذا كامبين' : '—');
+    g.set(r, 12, ch === null ? '' : Math.round(ch * 1000) / 1000, { nf: '+0%;-0%;0%', al: 'center', fc: ch === null || isMsg ? '#000000' : ch < 0 ? '#cc0000' : '#38761d', b: 'bold' });
+    g.set(r, 13, isMsg ? 'كامبينات مسجات: مش بيتحكم عليها بـ Shopify ROAS' : drag.length ? drag.map(x => x.c.name + ' (' + (Math.round(x.v * 100) / 100) + ')').join('، ') : ch !== null && ch < 0 ? 'نزول خفيف في كذا كامبين' : '—');
     g.merge(r, 13, 1, 2);
     g.set(r, 15, up.map(c => c.name + ' (' + round2_(mcStats_(c.w[3]).roas) + ')').concat(back.map(c => '🔁 ' + c.name)).join('، ') || '—');
     g.merge(r, 15, 1, 6);
     r++;
   };
-  if (Object.keys(byAcc).length > 1) card('كل الحسابات', tree.camps);
+  // Every account but the messages-only ones (their chats' orders aren't tracked yet).
+  const web = tree.camps.filter(c => !msg.has(String(c.acc)));
+  if (Object.keys(byAcc).length > 1 && web.length) card(web.length < tree.camps.length ? 'كل الحسابات (من غير المسجات)' : 'كل الحسابات', web);
   Object.keys(byAcc).sort((a, b) => accName(a).localeCompare(accName(b))).forEach(id => card(accName(id), byAcc[id]));
   if (!tree.camps.length) { g.set(r, 1, 'مفيش كامبينات Meta صرفت في آخر 17 يوم، أو لسه ماتقريتش من Meta', { fc: '#6b7280' }); r++; }
   r++;
@@ -7204,6 +7228,9 @@ function dupEdit_(name, a1) { if (name === DUP.TAB && a1 === 'B2') writeDupTab_(
  *  - Duplication: campaigns whose platform counts many more orders than Shopify (last 7 days).
  *  - Shopify: today against yesterday until the same hour (sessions, conversion, bounce, sales, orders against the spend).
  *  - Products, governorates and the catalog: what sells better, where it's delivered best, what the catalog sells.
+ * A messages-only account (accounts.messages_only, isMsgAccount_) isn't judged in any part: no account, funnel, benchmark,
+ * campaign, cancellation or duplication finding, and it's left out of the business's funnel. Its spend stays in the
+ * business's numbers (as Closing).
  */
 const ANA = {
   TAB: 'Actions', TAB2: 'Analysis', OLD_TAB: 'Analysis & Actions', SNAP: 'Intraday Ads', GROUPS: 'ANA_GROUPS',
@@ -7304,7 +7331,7 @@ function anaBe_(F) {
  */
 function anaFacts_(today) {
   const from = shiftKey_(today, -ANA.BACK), F = { today: today, from: from, month0: today.slice(0, 8) + '01', biz: {}, acc: {}, accName: {}, accPlat: {},
-    pix: {}, camp: {}, campName: {}, campAcc: {}, prod: {}, items: {}, gov: {}, times: [], okIds: {}, cat: {}, catSpend: {} };
+    pix: {}, camp: {}, campName: {}, campAcc: {}, prod: {}, items: {}, gov: {}, times: [], okIds: {}, cat: {}, catSpend: {}, msg: msgAccounts_() };
   const day = (map, k, d) => { const x = map[k] = map[k] || {}; return x[d] = x[d] || anaZero_(); };
   const status = (t, st) => {
     if (!st) return;
@@ -7439,7 +7466,7 @@ function anaMerge_(finds) {
 
 function anaAccounts_(F, ctx) {
   const be = ctx.be, out = [], y = shiftKey_(F.today, -1), d3 = shiftKey_(F.today, -3), d4 = shiftKey_(F.today, -4), d10 = shiftKey_(F.today, -10);
-  const ids = p => Object.keys(F.accPlat).filter(id => F.accPlat[id] === p && anaSum_(F.acc[id], F.month0, F.today).spend > 0)
+  const ids = p => Object.keys(F.accPlat).filter(id => F.accPlat[id] === p && !F.msg.has(id) && anaSum_(F.acc[id], F.month0, F.today).spend > 0)
     .sort((a, b) => anaSum_(F.acc[b], F.month0, F.today).spend - anaSum_(F.acc[a], F.month0, F.today).spend);
   const meta = ids('META'), tt = ids('TIKTOK'), mc = ctx.mc;
   meta.concat(tt).forEach(id => {
@@ -7528,7 +7555,7 @@ function anaThreeHours_(F, ctx) {
       // The campaigns that spent the most in the window, with their orders in it.
       const a = (camps[d] || {})[w.from] || (w.from ? null : {}), b = (camps[d] || {})[w.to], who = [];
       if (a && b) Object.keys(b).forEach(k => {
-        if (k.split('|')[0] !== 'META') return;
+        if (k.split('|')[0] !== 'META' || F.msg.has(String(F.campAcc[k]))) return;
         const s = b[k] - (a[k] || 0);
         if (s <= 0) return;
         const os = F.times.filter(o => o.d === d && o.camp === k && o.h >= w.from && o.h < w.to);
@@ -7570,6 +7597,10 @@ function anaBench_(F, ctx) {
   const base = months.length ? funnelMonthsTotal_(months) : null;
   (f.today && f.today.day === today ? f.today.accounts : []).forEach(a => {
     if (a.error || !a.raw) return;
+    if (F.msg.has(String(a.id))) {
+      rows.push({ name: a.name, plat: 'META', spend: num_(a.raw.spend), roas: '', base: '', worse: [], msg: true, text: MSG_TAG + ': مش بيتقارن بالبنشمارك' });
+      return;
+    }
     const spend = num_(a.raw.spend), worse = [];
     if (spend >= 300 && base) TODAY.METRICS.forEach(m => {
       const v = funnelRatio_(a.raw, m), b = funnelRatio_(base, m);
@@ -7630,6 +7661,7 @@ function anaFunnel_(F) {
   let kept = null;
   try { kept = JSON.parse(propGetBig_(ANA.FUNNEL_KEY) || 'null'); } catch (e) { kept = null; }
   if (!kept) return { find: out, rows: rows, none: true };
+  kept.accounts = kept.accounts.filter(a => !F.msg.has(String(a.id))); // messages campaigns: no website funnel
   const y = shiftKey_(F.today, -1), d3 = shiftKey_(F.today, -3), d4 = shiftKey_(F.today, -4), d17 = shiftKey_(F.today, -17);
   const steps = FUNNEL.METRICS.filter(m => m[2] !== 'one' && !/^shop/.test(m[1]) && !/^shop/.test(m[2]));
   const sum = (days, from, to) => {
@@ -7675,6 +7707,7 @@ function anaFunnel_(F) {
 function anaCampaigns_(F, ctx) {
   const out = [];
   (ctx.mc || []).forEach(c => {
+    if (F.msg.has(String(c.acc))) return;
     const v = c.verdict || {}, s3 = c.w && c.w[3] ? c.w[3] : mcZero_(), r = s3.spend > 0 ? s3.revenue / s3.spend : null, acc = F.accName[c.acc] || c.acc;
     const nums = anaList_(['صرف 3 أيام ' + anaMoney_(s3.spend) + ' و ' + s3.orders + ' أوردر', r !== null ? 'رؤاس ' + anaNum_(r, 2) : '',
       c.target && c.target.v ? 'التعادل ' + anaNum_(c.target.v, 2) : '', v.reason]);
@@ -7753,7 +7786,7 @@ function anaCancelPart_(F, ctx) {
   const m = anaSum_(F.biz, F.month0, t), lm = anaSum_(F.biz, lastMonth, lastTo);
   rows.push({ label: 'الشهر ده قدام الشهر اللي فات (لحد نفس اليوم)', scope: ANA.BIZ, a: m, b: lm, ca: anaCancel_(m), cb: anaCancel_(lm),
     ra: m.finished > 0 ? m.returned / m.finished : null, rb: lm.finished > 0 ? lm.returned / lm.finished : null, month: true });
-  Object.keys(F.accName).filter(id => anaSum_(F.acc[id], d14, y).orders > 0).forEach(id => rows.push(line(F.accName[id], F.acc[id], F.accName[id])));
+  Object.keys(F.accName).filter(id => !F.msg.has(id) && anaSum_(F.acc[id], d14, y).orders > 0).forEach(id => rows.push(line(F.accName[id], F.acc[id], F.accName[id])));
   const prods = Object.keys(F.items).filter(n => anaSum_(F.items[n], d7, y).decided >= 10).sort((a, b) => anaSum_(F.items[b], d7, y).orders - anaSum_(F.items[a], d7, y).orders).slice(0, 10);
   prods.forEach(n => rows.push(line(n, F.items[n], n)));
   const biz = rows[0];
@@ -7792,6 +7825,7 @@ function anaCancelPart_(F, ctx) {
 function anaDup_(F, ctx) {
   const out = [], rows = [], data = dupData_(shiftKey_(F.today, -6), F.today);
   ['META', 'TIKTOK'].forEach(p => (data[p] ? data[p].camps : []).forEach(c => {
+    if (F.msg.has(String(c.acc))) return;
     const s = c.sum, shop = s.utm + s.direct, gap = s.pixel - shop, dup = shop > 0 ? gap / shop : null;
     if (!(s.spend >= ANA.DUP_SPEND) || !(s.pixel >= 5) || gap < ANA.DUP_MIN || (dup !== null && dup < ANA.DUP)) return;
     const acc = F.accName[c.acc] || (p === 'TIKTOK' ? 'TikTok' : c.acc), cppP = s.spend / s.pixel, cppS = shop > 0 ? s.spend / shop : null;
@@ -8483,7 +8517,7 @@ function anaDrawBench_(g, r, part) {
     g.set(r, R + 1, anaNum_(x.spend, 0), { nf: ANA.MONEY, al: 'right' });
     g.set(r, R + 2, x.roas === '' || x.roas === null ? '—' : anaNum_(x.roas, 2), { nf: ANA.RATIO, al: 'center' });
     g.set(r, R + 3, x.base === '' || x.base === null ? '—' : anaNum_(x.base, 2), { nf: ANA.RATIO, al: 'center', fc: ANA.GREY });
-    g.set(r, R + 4, x.worse.length, { al: 'center', b: 'bold', bg: x.worse.length >= 3 ? ANA.RED : x.worse.length ? ANA.AMBER : ANA.GREEN });
+    g.set(r, R + 4, x.msg ? '—' : x.worse.length, { al: 'center', b: 'bold', bg: x.msg ? null : x.worse.length >= 3 ? ANA.RED : x.worse.length ? ANA.AMBER : ANA.GREEN });
     g.set(r, R + 5, x.text, {});
     r++;
   });

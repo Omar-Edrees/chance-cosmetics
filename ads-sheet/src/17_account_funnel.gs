@@ -218,7 +218,8 @@ function writeFunnel_(data) {
   // The benchmark: each column's best month of the 3 before this one, the whole business (all accounts' month totals, not an
   // average; SHOPIFY ORDERS = every store order but those from an ad account not in the sheet). Lower is better for costs;
   // a step rate over 100% (an event not fully tracked) is used only if no month is at or under 100%.
-  const pastRaws = past.map(ym => bizShop(funnelShopAdd_(funnelSum_(data.accounts.filter(a => !a.error).map(a => a.months[ym] || {})),
+  // A messages-only account (accounts.messages_only) is left out of the business's funnel and benchmark: its ads bring chats.
+  const pastRaws = past.map(ym => bizShop(funnelShopAdd_(funnelSum_(data.accounts.filter(a => !a.error && !isMsgAccount_(a.id)).map(a => a.months[ym] || {})),
     shop.all, allSpend, shop, ym + '-01', monthEnd(ym), true), ym + '-01', monthEnd(ym)));
   const auto = {}, bench = F.METRICS.map(m => {
     let vals = pastRaws.map(raw => metricOf(raw, m)).filter(v => typeof v === 'number' && isFinite(v) && v > 0);
@@ -249,44 +250,45 @@ function writeFunnel_(data) {
   F.METRICS.forEach((m, i) => g.set(F.BENCH_ROW, 3 + i, bench[i], { nf: m[4], bg: F.BENCH_BG, b: 'bold', al: 'center' }));
 
   let r = F.BENCH_ROW + 1;
-  const line = (label, raw, style) => {
+  const line = (label, raw, style, plain) => {
     g.set(r, 1, label, Object.assign({ al: 'center' }, style));
     g.set(r, 2, Math.round((raw.spend || 0) * 100) / 100, Object.assign({ nf: '#,##0.00', al: 'center' }, style));
     F.METRICS.forEach((m, i) => {
       const v = m[2] === 'one' ? (m[1] in raw ? raw[m[1]] : '') : funnelValue_(raw, m), odd = m[7] && typeof v === 'number' && v > 1;
-      const color = m[6] || odd ? null : funnelColor_(v, bench[i], m[5], yellow);
+      const color = m[6] || odd || plain ? null : funnelColor_(v, bench[i], m[5], yellow);
       g.set(r, 3 + i, v, Object.assign({ nf: m[4], al: 'center' }, style, color ? { bg: color } : {}, odd ? { fc: '#9ca3af' } : {}));
     });
     r++;
   };
   // A section: name bar, totals of this month and the 3 before it, those 3 together, then the days.
-  const section = (name, months, days, error, shopDays, spendDays, biz) => {
+  const section = (name, months, days, error, shopDays, spendDays, biz, msg) => {
     const add = (raw, from, to) => (biz ? bizShop(raw, from, to) : raw);
-    g.set(r, 1, name + (error ? '   ⚠️ ماقدرتش أقرا الحساب: ' + error : ''), { bg: F.BAND, fc: '#ffffff', b: 'bold' });
+    g.set(r, 1, name + (msg ? '   ' + MSG_TAG + ' بس: من غير ألوان، ومش داخل في البيزنس كله ولا البنشمارك' : '') + (error ? '   ⚠️ ماقدرتش أقرا الحساب: ' + error : ''), { bg: F.BAND, fc: '#ffffff', b: 'bold' });
     g.fill(r, 2, W - 1, { bg: F.BAND });
     g.merge(r, 1, 1, W);
     r++;
     if (error) return;
     data.months.forEach((ym, i) => line(funnelMonthName_(ym) + (i ? '' : ' (لحد النهارده)'),
       add(funnelShopAdd_(Object.assign({}, months[ym] || {}), shopDays, spendDays, shop, ym + '-01', i ? monthEnd(ym) : today, true), ym + '-01', i ? monthEnd(ym) : today),
-      { bg: F.AVG_BG, b: 'bold' }));
+      { bg: F.AVG_BG, b: 'bold' }, msg));
     line('آخر 3 شهور (' + range3 + ')', add(funnelShopAdd_(funnelSum_(past.map(ym => months[ym] || {})), shopDays, spendDays, shop, pastFrom, pastTo, true), pastFrom, pastTo),
-      { bg: F.AVG3_BG, b: 'bold' });
+      { bg: F.AVG3_BG, b: 'bold' }, msg);
     days.forEach(d => {
       const p = d.date.split('-').map(Number), raw = Object.assign({}, d.raw);
       if (shop.first && d.date >= shop.first) {
         const s = (shopDays || {})[d.date] || { orders: 0, revenue: 0 };
         raw.shopOrders = s.orders; raw.shopRevenue = s.revenue; raw.shopSpend = biz && cover && d.date >= cover ? bizSpend[d.date] || 0 : d.raw.spend;
       }
-      line(Utilities.formatDate(new Date(Date.UTC(p[0], p[1] - 1, p[2], 12)), 'UTC', 'EEE dd-MMM'), raw, {});
+      line(Utilities.formatDate(new Date(Date.UTC(p[0], p[1] - 1, p[2], 12)), 'UTC', 'EEE dd-MMM'), raw, {}, msg);
     });
   };
-  const ok = data.accounts.filter(a => !a.error), allMonths = {}, allDays = {};
+  const ok = data.accounts.filter(a => !a.error && !isMsgAccount_(a.id)), allMonths = {}, allDays = {};
   data.months.forEach(ym => { allMonths[ym] = funnelSum_(ok.map(a => a.months[ym] || {})); });
   ok.forEach(a => a.days.forEach(d => { allDays[d.date] = funnelSum_([allDays[d.date] || {}, d.raw]); }));
-  if (ok.length > 1) section('كل الحسابات (البيزنس كله)', allMonths,
+  if (ok.length > 1 || (ok.length && ok.length < data.accounts.filter(a => !a.error).length)) section('كل الحسابات (البيزنس كله' +
+    (ok.length < data.accounts.filter(a => !a.error).length ? '، من غير المسجات)' : ')'), allMonths,
     Object.keys(allDays).sort().reverse().map(d => ({ date: d, raw: allDays[d] })), '', shop.all, allSpend, true);
-  data.accounts.forEach(a => section(a.name, a.months, a.days, a.error, shop.acc[a.id] || {}, shop.spend[a.id] || {}));
+  data.accounts.forEach(a => section(a.name, a.months, a.days, a.error, shop.acc[a.id] || {}, shop.spend[a.id] || {}, false, isMsgAccount_(a.id)));
   if (!data.accounts.length) g.set(r, 1, 'مفيش حساب Meta صرف في الفترة دي', { fc: '#6b7280' });
   if (!writeGrid_(sh, g)) return;
   sh.setFrozenRows(F.BENCH_ROW);

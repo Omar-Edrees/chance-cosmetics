@@ -120,6 +120,8 @@ function env(options) {
   if (opt.archive !== true) { const arch = typeof opt.archive === 'function' ? opt.archive(c) : opt.archive || []; c.archiveOrders_ = () => arch; }
   // The real stock read from Shopify (23_stock_snapshot.gs) only where a test asks for it; opt.snapshot = {title: units} gives a small one.
   if (opt.snapshot !== true) { const snap = opt.snapshot || {}; c.stockSnapshot_ = () => Object.assign({}, snap); }
+  // A1 is Chance 26, the messages account in Settings (accounts.messages_only); the tests use it as a normal account unless opt.msg.
+  if (!opt.msg) c.msgAccounts_ = () => new Set();
   return { c, ss: active, source, doc, user, alerts, requests, triggers };
 }
 
@@ -2358,4 +2360,83 @@ test('الأرقام موحدة: رؤاس البيزنس في Daily Account Funn
   e.doc.SHOPTAB_CARDS = JSON.stringify({ day: today, at: '12:00', cards: [{ key: 'aov', title: 'AOV', values: [333.333, 300, 280], pct: false, up: true }] });
   e.c.withLock_(() => e.c.writeToday_());
   assert.equal(todayRow(e, 'GRAND TOTAL')[6], 333.33);
+});
+
+test('حساب المسجات (Chance 26، accounts.messages_only): مش بيتحكم عليه في Meta Campaigns ولا Actions ولا البنشمارك ولا الفانل ولا التعادل، وصرفه لسه في الصرف كله', () => {
+  const probe = env(), today = probe.c.todayKey_(), d = n => probe.c.shiftKey_(today, -n), B = '(blank)';
+  const ad = (n, camp, adId, spend) => Object.assign(adRow(d(n), adId, spend), { campaign_id: camp, campaign_name: 'Camp ' + camp,
+    adset_id: 'S' + camp, adset_name: 'Set ' + camp, ad_name: 'Ad ' + adId, impressions: '1000', inline_link_clicks: '20', v3: 300 });
+  const flow = (id, n, adId) => ['gid://shopify/Order/' + id, ' #' + id, ' N', B, 400, ' ' + d(n) + 'T10:00:00+03:00',
+    B, B, B, B, B, 'facebook', 'x', adId, 'Facebook', 'Lip Oil x1', '4655075'];
+  const msgRows = [], webRows = [], orders = [];
+  for (let n = 0; n <= 17; n++) {
+    msgRows.push(ad(n, 'M1', '1300000000111', 500)); // كامبين مسجات: بتصرف ومفيش أوردرات موقع
+    webRows.push(ad(n, 'W1', '1400000000111', 100)); orders.push(flow(n + 1, n, '1400000000111'));
+  }
+  // الشهر اللي فات: عشان البنشمارك يبقى فيه أرقام والألوان تظهر
+  const p = today.split('-').map(Number), last = new Date(Date.UTC(p[0], p[1] - 2, 10)).toISOString().slice(0, 10);
+  msgRows.push(Object.assign(ad(0, 'M1', '1300000000111', 900), { date_start: last }));
+  webRows.push(Object.assign(ad(0, 'W1', '1400000000111', 300), { date_start: last }));
+  const e = env({ msg: true, orderHead: FLOW_HEAD.slice(0, 17), ads: { [A1]: msgRows, [A2]: webRows }, orders,
+    activeAds: { [A1]: ['1300000000111'], [A2]: ['1400000000111'] }, stock: [['P1', 'V1', 'Lip Oil', 'Default Title', 'LO', 'lip-oil', 40, 300]] });
+  e.c.setupAll();
+  const st = e.ss.getSheetByName('Settings'), keys = st.getDataRange().getValues().map(r => r[0]);
+  assert.deepEqual(Array.from(e.c.msgAccounts_()), [A1], 'Chance 26 من الأول');
+  st.getRange(keys.indexOf('be.roas') + 1, 2).setValue(2);
+  e.c.liveTick(); e.c.liveTick();
+  e.c.refreshFunnelNow();
+
+  // Meta Campaigns: 💬 مسجات بدل وقّفها، وكارت كل الحسابات من غيره
+  const mc = e.ss.getSheetByName('Meta Campaigns').getDataRange().getValues();
+  const camp = name => mc.find(r => r[1] === name);
+  assert.equal(camp('Camp M1')[0], '💬 مسجات');
+  assert.match(camp('Camp M1')[13], /حساب مسجات/);
+  assert.match(camp('Camp W1')[0], /^🟢/);
+  assert.ok(mc.some(r => r[0] === 'كل الحسابات (من غير المسجات)'));
+  assert.equal(mc.find(r => r[0] === 'Chance 26')[1], '💬 مسجات');
+
+  // Actions و Analysis: مفيش أي حاجة عن الكامبين ولا الحساب
+  const acts = e.ss.getSheetByName('Actions').getDataRange().getValues().map(r => r.join(' ')).join('\n');
+  assert.ok(!/Camp M1/.test(acts), 'مفيش وقّف الكامبين');
+  assert.ok(!/Chance 26/.test(acts), 'مفيش الرؤاس نزل أو الفانل وقع في الحساب');
+
+  // Today: عمود الحساب في البنشمارك عليه 💬 ومن غير ألوان
+  const tv = e.ss.getSheetByName('Today').getDataRange().getValues(), head = tv.find(r => r[8] === 'METRIC');
+  const col = head.indexOf('💬 Chance 26');
+  assert.ok(col > 0, 'عمود الحساب عليه 💬');
+  const cpm = tv.findIndex(r => r[8] === 'CPM');
+  assert.equal(e.ss.getSheetByName('Today').attr(cpm + 1, col + 1).bg, null, 'من غير أحمر ولا أخضر');
+
+  // Daily Account Funnel: قسم الحساب مكتوب عليه مسجات ومن غير ألوان، والبيزنس كله من غيره
+  const f = e.ss.getSheetByName('Daily Account Funnel'), fv = f.getDataRange().getValues();
+  const biz = fv.findIndex(r => r[0] === 'كل الحسابات (البيزنس كله، من غير المسجات)');
+  assert.ok(biz > 0);
+  const inMonth = [...Array(18).keys()].filter(n => d(n).slice(0, 7) === today.slice(0, 7)).length;
+  assert.equal(fv[biz + 1][1], 100 * inMonth, 'صرف الشهر في البيزنس كله من حساب الموقع بس');
+  const sec = fv.findIndex(r => /^Chance 26 .*💬 مسجات بس/.test(String(r[0])));
+  assert.ok(sec > biz);
+  const colors = [e.c.funnelColor_(1, 1, true, 0.2), e.c.funnelColor_(1.1, 1, true, 0.2), e.c.funnelColor_(2, 1, true, 0.2)], next = fv.findIndex((r, i) => i > sec && r[0] !== '' && fv[i][1] === '' && i > sec + 1);
+  let colored = 0, checked = 0;
+  for (let r = sec + 2; r <= (next > 0 ? next : fv.length); r++) for (let c = 3; c <= fv[0].length; c++) { checked++; if (colors.indexOf(f.attr(r, c).bg) >= 0) colored++; }
+  assert.ok(checked > 20);
+  assert.equal(colored, 0, 'قسم المسجات من غير أخضر ولا أصفر ولا أحمر');
+  const web = fv.findIndex(r => /^chance store \. egy3$|^Chance Golden Era$/.test(String(r[0])));
+  let webColored = 0;
+  for (let r = web + 2; r < web + 25; r++) for (let c = 3; c <= fv[0].length; c++) if (colors.indexOf(f.attr(r, c).bg) >= 0) webColored++;
+  assert.ok(webColored > 0, 'حساب الموقع ليه ألوان عادي');
+
+  // تعادل الحسابات
+  e.c.writeAccountsBE_();
+  const be = e.ss.getSheetByName('تعادل الحسابات').getDataRange().getValues().find(r => /^Chance 26.*💬$/.test(String(r[0])));
+  assert.ok(be, 'الحساب عليه 💬');
+  assert.match(be[11], /^💬 مسجات/);
+
+  // صرفه لسه في Closing
+  const closing = closingRow(e.ss.getSheetByName('Closing'), dayLabel(e.c, today));
+  assert.equal(closing['TOTAL SPEND'], 600);
+
+  // - = مفيش حساب مسجات
+  st.getRange(keys.indexOf('accounts.messages_only') + 1, 2).setValue('-');
+  e.c.resetCaches_();
+  assert.equal(e.c.msgAccounts_().size, 0);
 });

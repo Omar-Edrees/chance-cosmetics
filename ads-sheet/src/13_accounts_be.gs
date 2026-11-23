@@ -22,7 +22,8 @@ function writeAccountsBE_() {
 
   // Accounts: Accounts tab + anything that spent.
   const accs = new Map();
-  accounts_().forEach(a => accs.set(a.platform + '|' + a.id, { key: a.platform + '|' + a.id, platform: a.platform, name: a.name || a.id, purpose: a.purpose }));
+  accounts_().forEach(a => accs.set(a.platform + '|' + a.id, { key: a.platform + '|' + a.id, platform: a.platform, name: a.name || a.id, purpose: a.purpose,
+    msg: a.platform === 'META' && isMsgAccount_(a.id) }));
   const cell = {}, add = (k, d, f, v) => { const c = cell[k + '|' + d] = cell[k + '|' + d] || { spend: 0, pixel: 0, pval: 0, orders: 0, revenue: 0 }; c[f] += v; };
   rawRows_(APP.T.ADS, ADS_HEADERS.length).forEach(a => {
     const d = asKey_(a[0]);
@@ -60,10 +61,13 @@ function writeAccountsBE_() {
     return t;
   };
   const be = beRoas_(storeOrders ? storeRev / storeOrders : 0);
-  const line = (label, t, useReal) => {
+  const line = (label, t, useReal, msg) => {
     const pr = t.spend ? round2_(t.pval / t.spend) : '', rr = t.spend ? round2_(t.revenue / t.spend) : '';
     const roas = useReal ? rr : pr;
     let status = '';
+    if (msg) return [label, round2_(t.spend), round2_(t.spend * (1 + tax)), t.pixel, pr, t.orders, round2_(t.revenue), rr,
+      t.orders ? round2_(t.revenue / t.orders) : '', t.orders ? round2_(t.spend * (1 + tax) / t.orders) : '', be.v === null ? '' : be.v,
+      t.spend > 0 ? MSG_TAG + ' (مش بيتحكم عليه بالتعادل)' : ''];
     if (t.spend > 0) status = be.v === null ? 'ناقص نقطة التعادل' : roas === '' ? '' :
       roas >= be.v ? '✅ فوق التعادل' : roas >= be.v * 0.8 ? '⚠️ قريب من التعادل' : '🔻 تحت التعادل';
     if (status && !useReal) status += ' (بيكسل)';
@@ -75,7 +79,7 @@ function writeAccountsBE_() {
   const list = Array.from(accs.values()).sort((a, b) => tot(b.key, 1, days).spend - tot(a.key, 1, days).spend);
   const summary = list.map(a => {
     const t = tot(a.key, 1, days);
-    return line(a.name + (a.purpose ? ' — ' + a.purpose : ''), t, t.orders > 0);
+    return line(a.name + (a.purpose ? ' — ' + a.purpose : '') + (a.msg ? ' 💬' : ''), t, t.orders > 0, a.msg);
   });
   const all = { spend: 0, pixel: 0, pval: 0, orders: storeOrders, revenue: storeRev };
   list.forEach(a => { const t = tot(a.key, 1, days); all.spend += t.spend; all.pixel += t.pixel; all.pval += t.pval; });
@@ -91,11 +95,12 @@ function writeAccountsBE_() {
     const useReal = tot(a.key, 1, days).orders > 0, rows = [];
     weeks.forEach((w, i) => {
       if (w[0] > days) return;
-      for (let d = w[0]; d <= w[1]; d++) rows.push(line(month + '-' + String(d).padStart(2, '0'), tot(a.key, d, d), useReal));
-      rows.push(line('إجمالي الأسبوع ' + (i + 1), tot(a.key, w[0], w[1]), useReal));
+      for (let d = w[0]; d <= w[1]; d++) rows.push(line(month + '-' + String(d).padStart(2, '0'), tot(a.key, d, d), useReal, a.msg));
+      rows.push(line('إجمالي الأسبوع ' + (i + 1), tot(a.key, w[0], w[1]), useReal, a.msg));
     });
-    rows.push(line('إجمالي الشهر', tot(a.key, 1, days), useReal));
-    blocks.push({ title: a.name + (useReal ? '' : ' — مفيش أوردرات مربوطة بالحساب ده لسه، الحالة من البيكسل'), headers: H, rows: rows });
+    rows.push(line('إجمالي الشهر', tot(a.key, 1, days), useReal, a.msg));
+    blocks.push({ title: a.name + (a.msg ? ' — ' + MSG_TAG + ' بس: أوردرات الشات مش متتبعة، فمش بيتحكم عليه بالتعادل'
+      : useReal ? '' : ' — مفيش أوردرات مربوطة بالحساب ده لسه، الحالة من البيكسل'), headers: H, rows: rows });
   });
   writeBlocks_(sh, 4, blocks, H.length);
   const lr = Math.max(sh.getLastRow() - 3, 1), stCol = sh.getRange(4, 12, lr, 1);
