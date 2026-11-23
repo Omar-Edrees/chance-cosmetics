@@ -359,21 +359,26 @@ function orderedList_(orders, prefer) {
  * The store orders of GRAND TOTAL (every order but the outside account's: Meta ads, DIRECT, MANUAL, TikTok ...) as pieces
  * per product: catalog ads' orders together in CATALOG, every other order's pieces each on its own product. Sales: the
  * order's total split over its products by their price in Products (by pieces when one has no price). Then the totals:
- * pieces, orders, sales, spend (Meta + TikTok), AOV and ROAS.
+ * pieces, orders, sales, spend (Meta + TikTok), AOV and ROAS. A product's AOV: the average whole total of the orders that
+ * have it (like Shopify's AOV, on those orders only), so it can be set against TOTAL's.
  */
 function todayProducts_(g, r, title, from, to, rows, orders) {
   const S = TODAY, c = S.RIGHT_COL, by = {}, tot = { units: 0, orders: 0, revenue: 0, spend: 0 }, price = {};
   products_().forEach(p => { if (p.price > 0) price[p.name] = p.price; });
   rows.forEach(x => { if ((x[1] === 'META' || x[1] === 'TIKTOK') && x[0] >= from && x[0] <= to) tot.spend += num_(x[3]); });
-  const add = (n, units, revenue) => { const t = by[n] = by[n] || { units: 0, revenue: 0 }; t.units += units; t.revenue += revenue; };
+  // basket/inOrders: the whole totals of the orders that have the product, and how many: the product's AOV
+  const add = (n, units, revenue, total) => {
+    const t = by[n] = by[n] || { units: 0, revenue: 0, basket: 0, inOrders: 0 };
+    t.units += units; t.revenue += revenue; t.basket += total; t.inOrders++;
+  };
   orders.forEach(o => {
     if (o.d < from || o.d > to) return;
     const units = o.items.reduce((a, i) => a + i.qty, 0);
     tot.units += units; tot.orders++; tot.revenue += o.total;
-    if (o.key === APP.CATALOG) { add(APP.CATALOG, units, o.total); return; }
+    if (o.key === APP.CATALOG) { add(APP.CATALOG, units, o.total, o.total); return; }
     const priced = o.items.every(i => price[i.name]), w = i => (priced ? price[i.name] : 1) * i.qty;
     const sum = o.items.reduce((a, i) => a + w(i), 0);
-    o.items.forEach(i => add(i.name, i.qty, sum > 0 ? o.total * w(i) / sum : 0));
+    o.items.forEach(i => add(i.name, i.qty, sum > 0 ? o.total * w(i) / sum : 0, o.total));
   });
   r = todayHead_(g, r, c, 7, title, ['PRODUCT', 'PIECES', 'ORDERS', 'REVENUE', 'SPEND', 'AOV', 'SHOPIFY ROAS']);
   const money = v => Math.round(v * 100) / 100;
@@ -384,7 +389,7 @@ function todayProducts_(g, r, title, from, to, rows, orders) {
     if (t.orders !== undefined) {
       num(c + 2, t.orders, S.COUNT); num(c + 4, money(t.spend), S.MONEY); num(c + 5, ratioOrBlank_(t.revenue, t.orders, 2), S.MONEY);
       num(c + 6, ratioOrBlank_(t.revenue, t.spend, 2), S.RATIO);
-    }
+    } else num(c + 5, ratioOrBlank_(t.basket, t.inOrders, 2), S.MONEY);
     r++;
   };
   if (by[APP.CATALOG]) line(APP.CATALOG, by[APP.CATALOG], { bg: S.CATALOG, b: 'bold' });

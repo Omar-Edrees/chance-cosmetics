@@ -294,7 +294,7 @@ test('Today: بنشمارك Meta، أرقام التلات شهور اللي ف�
   assert.equal(e.c.funnelRatio_(tot, ['Checkout → Purchase', 'purchases', 'checkouts', 1, 'pct', false]), 17 / 20);
 });
 
-test('Today: أداء المنتجات بالقطع والمبيعات لكل منتج، والإجمالي فيه القطع والأوردرات والصرف و AOV و ROAS', () => {
+test('Today: أداء المنتجات بالقطع والمبيعات و AOV لكل منتج (متوسط الأوردرات اللي فيها المنتج)، والإجمالي فيه القطع والأوردرات والصرف و AOV و ROAS', () => {
   const e = scenario(), values = e.ss.getSheetByName('Today').getDataRange().getValues();
   const titles = values.map(r => String(r[8])).filter(t => /^PRODUCT PERFORMANCE/.test(t));
   assert.equal(titles.length, 2);
@@ -302,10 +302,11 @@ test('Today: أداء المنتجات بالقطع والمبيعات لكل م
   assert.equal(heads.length, 2);
   heads.forEach(h => assert.deepEqual(h.slice(8, 16), ['PRODUCT', 'PIECES', 'ORDERS', 'REVENUE', 'SPEND', 'AOV', 'SHOPIFY ROAS', '']));
   // كل قطعة على منتجها، ومبيعات الأوردر 1001 (750) متقسمة بسعر Lip Oil (300) و Blush (250). أوردر TikTok داخل.
+  // AOV المنتج = متوسط إجمالي الأوردرات اللي فيها المنتج: Lip Oil في 1001 (750) وأوردر 300 = 525.
   const i = values.findIndex(r => r[8] === 'PRODUCT');
   assert.deepEqual(values.slice(i + 1, i + 4).map(r => r.slice(8, 15)), [
-    ['Lip Oil', 3, '', 829.41, '', '', ''],
-    ['Blush', 2, '', 470.59, '', '', ''],
+    ['Lip Oil', 3, '', 829.41, '', 525, ''],
+    ['Blush', 2, '', 470.59, '', 500, ''],
     ['TOTAL', 5, 3, 1300, 1100, 433.33, 1.18],
   ]);
 });
@@ -570,9 +571,9 @@ test('الكتالوج: Today فيه صف CATALOG واحد بصرفه وأورد
   const v = e.ss.getSheetByName('Today').getDataRange().getValues();
   // Today: قطع أوردرات الكتالوج كلها في صف واحد، والباقي كل قطعة على منتجها (Blush مالوش سعر: المبيعات بالقطع)
   assert.deepEqual(between(v, 8, 'PRODUCT', 'TOTAL').map(r => r.slice(8, 15)), [
-    ['CATALOG (كل إعلانات الكتالوج)', 1, '', 250, '', '', ''],
-    ['Blush', 2, '', 200, '', '', ''],
-    ['Lip Oil', 1, '', 100, '', '', ''],
+    ['CATALOG (كل إعلانات الكتالوج)', 1, '', 250, '', 250, ''],
+    ['Blush', 2, '', 200, '', 300, ''],
+    ['Lip Oil', 1, '', 100, '', 300, ''],
     ['TOTAL', 4, 2, 550, 1000, 275, 0.55],
   ]);
   const t = e.ss.getSheetByName('الكتالوج').getDataRange().getValues();
@@ -695,8 +696,8 @@ test('أوردرات من حساب Meta مش معانا: صف لوحدها بر�
   const i = v.findIndex(r => r[8] === 'PRODUCT');
   // أوردر 2 جه من إعلان Lip Oil ومافيهوش Lip Oil: كل قطعة على منتجها
   assert.deepEqual(v.slice(i + 1, i + 6).map(r => r.slice(8, 15)), [
-    ['Blush', 2, '', 360, '', '', ''], ['Mascara', 2, '', 360, '', '', ''], ['Lip Oil', 1, '', 300, '', '', ''],
-    ['Primer', 1, '', 180, '', '', ''], ['TOTAL', 6, 2, 1200, 600, 600, 2]]);
+    ['Blush', 2, '', 360, '', 900, ''], ['Mascara', 2, '', 360, '', 900, ''], ['Lip Oil', 1, '', 300, '', 300, ''],
+    ['Primer', 1, '', 180, '', 900, ''], ['TOTAL', 6, 2, 1200, 600, 600, 2]]);
   const t = e.ss.getSheetByName('الكتالوج').getDataRange().getValues(), j = t.findIndex(r => r[7] === 'CAMPAIGN');
   assert.deepEqual(t.slice(j + 1, j + 4).map(r => [r[7], r[10], r[11], r[12]]), [
     ['Camp', 2, 'Lip Oil', 1],
@@ -993,7 +994,7 @@ test('PRODUCT PERFORMANCE: أوردرات DIRECT والمانيول (Draft) دا
   e.c.liveTick(); e.c.liveTick();
   const v = e.ss.getSheetByName('Today').getDataRange().getValues(), i = v.findIndex(r => /^PRODUCT PERFORMANCE — TODAY/.test(String(r[8])));
   assert.deepEqual(v.slice(i + 2, i + 5).map(r => r.slice(8, 15)), [
-    ['Blush', 3, '', 1000, '', '', ''], ['Lip Oil', 2, '', 1000, '', '', ''], ['TOTAL', 5, 4, 2000, 600, 500, 3.33]],
+    ['Blush', 3, '', 1000, '', 500, ''], ['Lip Oil', 2, '', 1000, '', 500, ''], ['TOTAL', 5, 4, 2000, 600, 500, 3.33]],
     'أوردر Meta + أوردر DIRECT لنفس المنتج، وأوردر Draft داخل');
   const cl = closingRow(e.ss.getSheetByName('Closing'), dayLabel(e.c, today));
   assert.deepEqual([cl['TOTAL SPEND'], cl['TOTAL ORDERS'], cl.ROAS, cl['TOTAL UNITS']], [600, 4, 3.33, 5], 'Closing: كل الأوردرات (Meta و DIRECT والمانيول)، و ROAS عليها');
