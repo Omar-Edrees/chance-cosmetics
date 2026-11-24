@@ -57,6 +57,7 @@ class FakeRange {
   setNotes(rows) { return this.each((r, c, i, j) => { this.sheet.attr(r, c).note = rows[i][j]; }); }
   setFontColors(rows) { return this.each((r, c, i, j) => { this.sheet.attr(r, c).fc = rows[i][j]; }); }
   setNumberFormats(rows) { return this.each((r, c, i, j) => { this.sheet.attr(r, c).nf = rows[i][j]; }); }
+  setWraps(rows) { return this.each((r, c, i, j) => { this.sheet.attr(r, c).wr = rows[i][j]; }); }
   setFontWeights(rows) { return this.each((r, c, i, j) => { this.sheet.attr(r, c).fw = rows[i][j]; }); }
   clearNote() { return this.attr('note', ''); }
   /* التنسيق بس (الملاحظة بتفضل، زي جوجل) */
@@ -79,7 +80,7 @@ class FakeRange {
 }
 /* تنسيقات مش بنتابعها */
 ['merge', 'setHorizontalAlignment', 'removeCheckboxes', 'setWrap', 'setFontSize', 'breakApart', 'setDataValidation', 'setBorder',
-  'setVerticalAlignment', 'activate', 'setTextDirection', 'setHorizontalAlignments'].forEach(m => {
+  'setVerticalAlignment', 'activate', 'setTextDirection', 'setHorizontalAlignments', 'setVerticalAlignments'].forEach(m => {
   FakeRange.prototype[m] = function () { return this; };
 });
 

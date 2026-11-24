@@ -58,13 +58,14 @@ function todayProblemSpec_(c, i, sheetId, x) {
   const bg = !v ? T.NONE : scale ? T.GREEN : v.n > 0 ? T.RED : T.NONE, fc = !v || !v.n ? T.GREY_FC : scale ? T.GREEN_FC : T.RED_FC;
   // RLM + RLE … PDF: the chart writes left to right, and without them the Arabic and the numbers come out jumbled.
   const sub = !v ? 'لسه بيتحسب' : scale ? (v.n ? 'فرص تزوّد عليها' : 'مفيش دلوقتي') : !v.n ? 'مفيش ✅' : v.urgent ? v.urgent + ' عاجل' : 'مهم';
-  return { title: (scale ? '🟢 ' : '') + c[1], subtitle: '‏‫' + sub + '‬', fontName: 'Arial',
+  return { title: '‏‫' + (scale ? '🟢 ' : '') + c[1] + '‬', subtitle: '‏‫' + sub + '‬', fontName: 'Arial',
     backgroundColorStyle: { rgbColor: shopTabRgb_(bg) },
-    titleTextFormat: { bold: true, fontSize: 10, foregroundColor: shopTabRgb_('#111827') }, titleTextPosition: { horizontalAlignment: 'CENTER' },
-    subtitleTextFormat: { bold: true, fontSize: 8, foregroundColor: shopTabRgb_(fc) }, subtitleTextPosition: { horizontalAlignment: 'CENTER' },
+    // The title big and clear (where the problem is), the count smaller under it.
+    titleTextFormat: { bold: true, fontSize: 12, foregroundColor: shopTabRgb_('#111827') }, titleTextPosition: { horizontalAlignment: 'CENTER' },
+    subtitleTextFormat: { bold: true, fontSize: 9, foregroundColor: shopTabRgb_(fc) }, subtitleTextPosition: { horizontalAlignment: 'CENTER' },
     scorecardChart: { keyValueData: { sourceRange: { sources: [{ sheetId: sheetId, startRowIndex: at[0] - 1, endRowIndex: at[0], startColumnIndex: at[1] - 1,
       endColumnIndex: at[1] }] } }, numberFormatSource: 'FROM_DATA',
-      keyValueFormat: { textFormat: { bold: true, fontSize: 18, foregroundColor: shopTabRgb_(fc) }, position: { horizontalAlignment: 'CENTER' } } } };
+      keyValueFormat: { textFormat: { bold: true, fontSize: 13, foregroundColor: shopTabRgb_(fc) }, position: { horizontalAlignment: 'CENTER' } } } };
 }
 /* Makes the missing cards and updates the others (after Today is written). Errors go to Health with the other cards. */
 function todayProblemCharts_(sh) {

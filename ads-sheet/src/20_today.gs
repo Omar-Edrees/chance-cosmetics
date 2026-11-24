@@ -97,7 +97,10 @@ function funnelRatio_(raw, m) {
 
 /* ---------- Drawing ---------- */
 
-/* An in-memory page: cells with value / background / font color / bold / number format, plus merges. */
+/*
+ * An in-memory page: cells with value / background / font color / bold / number format, plus merges. A cell can also wrap
+ * (wr: true, for text on several lines) and sit in the middle of a tall row (va: 'middle'); only pages that use them set them.
+ */
 function todayGrid_() {
   const g = { rows: [], merges: [] };
   g.cell = (r, c) => {
@@ -106,7 +109,10 @@ function todayGrid_() {
     if (!line[c - 1]) line[c - 1] = { v: '', bg: null, fc: '#000000', b: 'normal', nf: 'General', al: 'left' };
     return line[c - 1];
   };
-  g.set = (r, c, v, style) => Object.assign(g.cell(r, c), { v: v === null || v === undefined ? '' : v }, style || {});
+  g.set = (r, c, v, style) => {
+    if (style && (style.wr || style.va)) g.wraps = true;
+    return Object.assign(g.cell(r, c), { v: v === null || v === undefined ? '' : v }, style || {});
+  };
   g.fill = (r, c, n, style) => { for (let i = 0; i < n; i++) Object.assign(g.cell(r, c + i), style); };
   g.merge = (r, c, rows, cols) => { g.merges.push([r, c, rows, cols]); };
   return g;
@@ -123,7 +129,9 @@ function writeGrid_(sh, g) {
   const pick = k => { const out = []; for (let r = 0; r < R; r++) { const line = []; for (let c = 0; c < W; c++) { const x = (g.rows[r] || [])[c]; line.push(x ? x[k] : (k === 'v' ? '' : k === 'fc' ? '#000000' : k === 'b' ? 'normal' : k === 'nf' ? 'General' : k === 'al' ? 'left' : null)); } out.push(line); } return out; };
   const v = pick('v'), live = (g.live || []).filter(x => x[0] <= R), still = v.map(r => r.slice());
   live.forEach(x => { still[x[0] - 1][x[1] - 1] = ''; });
-  const look = [pick('nf'), pick('bg'), pick('fc'), pick('b'), pick('al')], hash = sha_(JSON.stringify([still, look]));
+  const look = [pick('nf'), pick('bg'), pick('fc'), pick('b'), pick('al')];
+  if (g.wraps) look.push(pick('wr').map(r => r.map(x => !!x)), pick('va').map(r => r.map(x => x || 'bottom')));
+  const hash = sha_(JSON.stringify([still, look]));
   const mergeSig = sha_(JSON.stringify(g.merges)), old = sh.getLastRow();
   if (props.getProperty('GH_' + name) === hash && old <= R && String(sh.getRange(1, 1).getValue()) === String(v[0][0])) { // still there
     live.forEach(x => sh.getRange(x[0], x[1]).setValue(v[x[0] - 1][x[1] - 1]));
@@ -135,6 +143,7 @@ function writeGrid_(sh, g) {
   if (newMerges) { sh.getRange(1, 1, Math.max(old, R), Math.max(W, sh.getLastColumn())).breakApart(); sh.setConditionalFormatRules([]); }
   sh.getRange(1, 1, R, W).setNumberFormats(look[0]).setValues(v).setBackgrounds(look[1]).setFontColors(look[2])
     .setFontWeights(look[3]).setHorizontalAlignments(look[4]);
+  if (g.wraps) sh.getRange(1, 1, R, W).setWraps(look[5]).setVerticalAlignments(look[6]);
   if (old > R) sh.getRange(R + 1, 1, old - R, Math.max(W, sh.getLastColumn())).clear();
   if (newMerges) g.merges.forEach(m => sh.getRange(m[0], m[1], m[2], m[3]).merge());
   props.setProperty('GH_' + name, hash);
@@ -384,7 +393,8 @@ function todayProducts_(g, r, title, from, to, rows, orders, bundles) {
   const along = boughtWith_(mine, bundles || new Map());
   r = todayHead_(g, r, c, 9, title, ['PRODUCT', 'PIECES', 'ORDERS', 'REVENUE', 'SPEND', 'AOV', 'SHOPIFY ROAS', 'BOUGHT WITH (MOST)', 'BUNDLE']);
   const money = v => Math.round(v * 100) / 100;
-  const line = (name, t, style) => {
+  const line = (name, t, style0) => {
+    const style = Object.assign({ va: 'middle' }, style0); // a row can be several lines tall (BOUGHT WITH)
     const num = (col, v, nf) => g.set(r, col, v, Object.assign({ nf: nf, al: 'right' }, style));
     g.set(r, c, name, style);
     num(c + 1, t.units, S.COUNT); num(c + 3, money(t.revenue), S.MONEY);
@@ -392,7 +402,7 @@ function todayProducts_(g, r, title, from, to, rows, orders, bundles) {
       num(c + 2, t.orders, S.COUNT); num(c + 4, money(t.spend), S.MONEY); num(c + 5, ratioOrBlank_(t.revenue, t.orders, 2), S.MONEY);
       num(c + 6, ratioOrBlank_(t.revenue, t.spend, 2), S.RATIO);
     } else num(c + 5, ratioOrBlank_(t.revenue, t.inOrders, 2), S.MONEY);
-    if (along[name]) { g.set(r, c + 7, along[name].text, style); g.set(r, c + 8, along[name].bundle, style); }
+    if (along[name]) { g.set(r, c + 7, along[name].text, Object.assign({ wr: true }, style)); g.set(r, c + 8, along[name].bundle, Object.assign({ wr: true }, style)); }
     r++;
   };
   if (by[APP.CATALOG]) line(APP.CATALOG, by[APP.CATALOG], { bg: S.CATALOG, b: 'bold' });
@@ -406,7 +416,7 @@ function todayProducts_(g, r, title, from, to, rows, orders, bundles) {
 
 /*
  * Product → { text, bundle } over the orders of its row (catalog orders aren't on a product row): the products most often in
- * the same orders ("Gloss: 12 (10 باندل)" = in 12 of its orders, 10 of them in one Shopify bundle with it), and how many of its
+ * the same orders, one a line ("• Gloss: 12 (منهم 10 باندل)" = in 12 of its orders, 10 of them in one Shopify bundle with it), and how many of its
  * orders had it alone; bundle = the Shopify bundle it was most often bought in, a link to its page (bundles: orderBundlesMap_).
  */
 function boughtWith_(orders, bundles) {
@@ -428,15 +438,16 @@ function boughtWith_(orders, bundles) {
   });
   Object.keys(per).forEach(n => {
     const t = per[n], top = Object.keys(t.with).sort((a, b) => (t.with[b] - t.with[a]) || (a < b ? -1 : 1)).slice(0, 3);
-    const parts = top.map(m => m + ': ' + t.with[m] + (t.inBundle[m] ? ' (' + t.inBundle[m] + ' باندل)' : ''));
-    parts.push(top.length ? 'لوحده في ' + t.alone + ' من ' + t.orders : 'لوحده دايمًا');
+    // One product a line, under each other (a cell with a lot in it is never one long line), then how often it was alone.
+    const parts = top.map(m => '• ' + m + ': ' + t.with[m] + (t.inBundle[m] ? ' (منهم ' + t.inBundle[m] + ' باندل)' : ''));
+    parts.push(top.length ? 'لوحده في ' + t.alone + ' من ' + t.orders + ' أوردر' : 'لوحده دايمًا (' + t.orders + ' أوردر)');
     const best = Object.keys(t.bundles).sort((a, b) => t.bundles[b].n - t.bundles[a].n)[0];
     let bundle = '';
     if (best) {
       const label = t.bundles[best].title + ' (' + t.bundles[best].n + ' أوردر)', url = urls[best];
       bundle = url ? '=HYPERLINK("' + url.replace(/"/g, '%22') + '","' + label.replace(/"/g, '""') + '")' : label;
     }
-    out[n] = { text: parts.join(' · '), bundle: bundle };
+    out[n] = { text: parts.join('\n'), bundle: bundle };
   });
   return out;
 }

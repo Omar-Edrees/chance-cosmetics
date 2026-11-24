@@ -310,7 +310,11 @@ test('Today: أداء المنتجات بالقطع والمبيعات و AOV ل
     ['TOTAL', 5, 3, 1300, 1100, 433.33, 1.18],
   ]);
   // بيتطلب مع إيه: كل منتج اتطلب مع التاني في الأوردر 1001، وفي أوردر تاني لوحده. مفيش باندل.
-  assert.deepEqual(values.slice(i + 1, i + 4).map(r => r.slice(15, 17)), [['Blush: 1 · لوحده في 1 من 2', ''], ['Lip Oil: 1 · لوحده في 1 من 2', ''], ['', '']]);
+  assert.deepEqual(values.slice(i + 1, i + 4).map(r => r.slice(15, 17)), [['• Blush: 1\nلوحده في 1 من 2 أوردر', ''], ['• Lip Oil: 1\nلوحده في 1 من 2 أوردر', ''], ['', '']]);
+  // كلام كتير في خانة = سطور تحت بعض، والخانة بتلف (wrap)
+  const today = e.ss.getSheetByName('Today');
+  assert.equal(today.attr(i + 2, 16).wr, true, 'BOUGHT WITH بيلف');
+  assert.equal(today.attr(i + 2, 13).wr, false, 'باقي الخانات زي ما هي');
 });
 
 test('ربط الإعلانات بالمنتجات من لينك صفحة المنتج، والكوليكشن مش مربوط طول ما دومين المتجر فاضي', () => {
@@ -2501,7 +2505,11 @@ test('Today: كروت المشاكل فوق (C2:G3): عدد المشاكل من 
   // الكروت: 10 scorecards فوق، 5 في الصف، من C2
   const charts = e.ss.getSheetByName('Today').charts.filter(ch => ch.spec.backgroundColorStyle);
   assert.equal(charts.length, 10);
-  assert.deepEqual(Array.from(charts.map(ch => ch.spec.title)), ['الكامبينات', 'الحسابات', 'الـ 3 ساعات', 'الفانل والبنشمارك', 'الستوك',
+  const plain = t => String(t).replace(/[\u200f\u202b\u202c]/g, ''); // العنوان جوه RLM + RLE … PDF عشان العربي مايتلخبطش
+  assert.ok(charts.every(ch => /^\u200f\u202b.*\u202c$/.test(ch.spec.title)));
+  assert.deepEqual(charts.map(ch => ch.spec.titleTextFormat.fontSize).concat(charts[0].spec.scorecardChart.keyValueFormat.textFormat.fontSize), Array(10).fill(12).concat(13),
+    'العنوان كبير والرقم أصغر منه شوية');
+  assert.deepEqual(Array.from(charts.map(ch => plain(ch.spec.title))), ['الكامبينات', 'الحسابات', 'الـ 3 ساعات', 'الفانل والبنشمارك', 'الستوك',
     'الإلغاء والمحافظات', 'الدوبليكيشن', 'المنتجات والكتالوج', 'الموقع (شوبيفاي)', '🟢 Scaling']);
   const pos = charts.map(ch => ch.pos.overlayPosition);
   assert.deepEqual([pos[0].anchorCell.rowIndex, pos[0].anchorCell.columnIndex, pos[4].offsetXPixels, pos[5].offsetXPixels, pos[5].offsetYPixels > pos[0].offsetYPixels],
@@ -2509,16 +2517,16 @@ test('Today: كروت المشاكل فوق (C2:G3): عدد المشاكل من 
   const src = charts[0].spec.scorecardChart.keyValueData.sourceRange.sources[0];
   assert.deepEqual([src.startRowIndex, src.startColumnIndex], [1, 2], 'كارت الكامبينات بيقرا C2');
   const last = api[api.length - 1], spec = k => last.map(r => (r.updateChartSpec || {}).spec || (r.addChart || {}).chart && r.addChart.chart.spec)
-    .filter(Boolean).find(s => s.title === k || s.title === '🟢 ' + k);
+    .filter(Boolean).find(s => plain(s.title) === k || plain(s.title) === '🟢 ' + k);
   const bg = s => s.backgroundColorStyle.rgbColor;
   assert.deepEqual(bg(spec('الكامبينات')), e.c.shopTabRgb_('#fde2e2'), 'فيه مشاكل: أحمر باهت');
   assert.match(spec('الكامبينات').subtitle, /عاجل/);
   assert.deepEqual(bg(spec('Scaling')), e.c.shopTabRgb_('#c9ecd2'), 'Scaling أخضر');
-  const zero = keysOrder.findIndex(k => k !== 'scale' && saved.cards[k].n === 0), zt = charts[zero].spec.title;
+  const zero = keysOrder.findIndex(k => k !== 'scale' && saved.cards[k].n === 0), zt = plain(charts[zero].spec.title);
   assert.ok(zero >= 0, 'فيه نوع من غير مشاكل');
   assert.deepEqual(bg(spec(zt)), e.c.shopTabRgb_('#f3f4f6'), 'مفيش مشاكل: رمادي');
   assert.match(spec(zt).subtitle, /مفيش/);
-  const red = keysOrder.filter(k => k !== 'scale' && saved.cards[k].n > 0).map(k => charts[keysOrder.indexOf(k)].spec.title);
+  const red = keysOrder.filter(k => k !== 'scale' && saved.cards[k].n > 0).map(k => plain(charts[keysOrder.indexOf(k)].spec.title));
   red.forEach(t => assert.deepEqual(bg(spec(t)), e.c.shopTabRgb_('#fde2e2'), t + ': أحمر باهت'));
   // التحديث الجاي: الكروت بتتحدث بس، مابتتعملش تاني
   const n = e.ss.getSheetByName('Today').charts.length;
@@ -2726,9 +2734,9 @@ test('PRODUCT PERFORMANCE: بيتطلب مع إيه أكتر، ولو في با�
   const i = v.findIndex(r => /^PRODUCT PERFORMANCE — TODAY/.test(String(r[8])));
   // لينك الباندل معادلة HYPERLINK (اسم الباندل ولينكه)، من غير لينك لو الصفحة مش معروفة
   const row = n => { const k = v.findIndex((r, j) => j > i && r[8] === n); return [v[k][15], f[k][16] || v[k][16]]; };
-  assert.deepEqual(row('True Stain Liner'), ['Glass Gloss: 2 (2 باندل) · Blush: 1 · لوحده في 1 من 3',
+  assert.deepEqual(row('True Stain Liner'), ['• Glass Gloss: 2 (منهم 2 باندل)\n• Blush: 1\nلوحده في 1 من 3 أوردر',
     '=HYPERLINK("https://chance-cosmetics.com/products/lip-compo","Lip liner and gloss compo (2 أوردر)")']);
-  assert.deepEqual(row('Glass Gloss'), ['Blush: 2 · True Stain Liner: 2 (2 باندل) · لوحده في 0 من 3',
+  assert.deepEqual(row('Glass Gloss'), ['• Blush: 2\n• True Stain Liner: 2 (منهم 2 باندل)\nلوحده في 0 من 3 أوردر',
     '=HYPERLINK("https://chance-cosmetics.com/products/lip-compo","Lip liner and gloss compo (2 أوردر)")']);
-  assert.deepEqual(row('Blush'), ['Glass Gloss: 2 · True Stain Liner: 1 · لوحده في 0 من 2', ''], 'Blush مش في الباندل');
+  assert.deepEqual(row('Blush'), ['• Glass Gloss: 2\n• True Stain Liner: 1\nلوحده في 0 من 2 أوردر', ''], 'Blush مش في الباندل');
 });
