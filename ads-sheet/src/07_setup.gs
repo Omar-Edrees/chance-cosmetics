@@ -109,6 +109,7 @@ function ensureTriggers_() {
   if (PropertiesService.getDocumentProperties().getProperty('TRIGGERS_PAUSED')) return;
   const have = ScriptApp.getProjectTriggers().map(t => t.getHandlerFunction());
   try { ensureCardEditTrigger_(have); } catch (e) { console.error('edit trigger: ' + errText_(e)); }
+  if (have.indexOf('analysisTick') < 0) ScriptApp.newTrigger('analysisTick').timeBased().everyMinutes(5).create();
   if (have.indexOf('liveTick') >= 0 && have.indexOf('dailySync') >= 0) return;
   let every = cfgNum_('sync.live_minutes') || 15;
   every = [1, 5, 10, 15, 30].filter(v => v <= every).pop() || 15;
@@ -259,8 +260,9 @@ function quickRefresh() {
 }
 
 function installTriggers() {
-  const names = ['liveTick', 'dailySync'];
+  const names = ['liveTick', 'dailySync', 'analysisTick'];
   ScriptApp.getProjectTriggers().filter(t => names.indexOf(t.getHandlerFunction()) >= 0).forEach(t => ScriptApp.deleteTrigger(t));
+  ScriptApp.newTrigger('analysisTick').timeBased().everyMinutes(5).create();
   let every = cfgNum_('sync.live_minutes') || 15;
   every = [1, 5, 10, 15, 30].filter(v => v <= every).pop() || 15;
   ScriptApp.newTrigger('liveTick').timeBased().everyMinutes(every).create();
@@ -269,7 +271,7 @@ function installTriggers() {
   alert_('التحديث التلقائي شغال ✅\nكل ' + every + ' دقيقة خلال اليوم، ومزامنة كاملة الساعة 12:30 بالليل.');
 }
 function pauseTriggers() {
-  ScriptApp.getProjectTriggers().filter(t => ['liveTick', 'dailySync'].indexOf(t.getHandlerFunction()) >= 0).forEach(t => ScriptApp.deleteTrigger(t));
+  ScriptApp.getProjectTriggers().filter(t => ['liveTick', 'dailySync', 'analysisTick'].indexOf(t.getHandlerFunction()) >= 0).forEach(t => ScriptApp.deleteTrigger(t));
   PropertiesService.getDocumentProperties().setProperty('TRIGGERS_PAUSED', nowText_());
   alert_('التحديث التلقائي اتوقف ⏸');
 }

@@ -635,7 +635,7 @@ test('أيام ناقصة في الصرف بتتسحب لوحدها، والتح
   delete e.doc.SYNCED_THROUGH;
   e.c.liveTick();
   const names = e.triggers.map(t => t.getHandlerFunction()).sort();
-  assert.deepEqual(names, ['backfillStep', 'dailySync', 'liveTick']);
+  assert.deepEqual(names, ['analysisTick', 'backfillStep', 'dailySync', 'liveTick']);
   const job = JSON.parse(e.doc.BACKFILL);
   // أول مرة: الشهر كله تاني عشان صرف الكتالوج يتقسم، أو من أول يوم ناقص لو قبل كده
   const monthStart = today.slice(0, 8) + '01';
@@ -1672,9 +1672,9 @@ test('تاب Shopify: بيتقري من شوبيفاي مع التحديث وي�
   assert.match(e.ss.getSheetByName('Health').getDataRange().getValues().map(r => r.join(' ')).join('\n'), /تاب Shopify .*✓ اتقرا/);
   const tv = e.ss.getSheetByName('Today').getDataRange().getValues();
   assert.match(String(tv[0][0]), /DAILY AD CLOSING/, 'Today زي ما هو من فوق');
-  assert.deepEqual(tv.slice(7, 15).map(r => r.slice(0, 2)), [['Ad spend (Meta)', 300], ['Sessions', 1000], ['Total sales', 19500], ['Orders', 20],
+  assert.deepEqual(tv.slice(7, 15).map(r => r.slice(0, 2)), [['Ad spend (Meta)', 1000], ['Sessions', 1000], ['Total sales', 19500], ['Orders', 20],
     ['Conversion rate', 0.02], ['AOV', 1000], ['Bounce rate', 0.5], ['Gross sales', 21000]],
-    'أرقام الكروت في الخلايا اللي تحتها، من صف 8 (صرف Meta بالساعة: 100 لكل أكاونت). Gross sales قبل الخصم والمرتجعات');
+    'أرقام الكروت في الخلايا اللي تحتها، من صف 8 (صرف Meta بالساعة 300 متأخر، فالكارت بياخد صرف النهارده اللحظي من Ads Raw: 1000). Gross sales قبل الخصم والمرتجعات');
   assert.deepEqual(tv.slice(14, 15).map(r => r.slice(2, 3)), [[20000]], 'Gross sales إمبارح لحد نفس الساعة');
   assert.equal(tv[17][0], 'PLATFORM', 'جدول الأكاونتات تحت الكروت بـ 10 صفوف');
   assert.equal(api.length, 1);
@@ -1718,7 +1718,7 @@ test('تاب Shopify: بيتقري من شوبيفاي مع التحديث وي�
   assert.equal(row('Sessions')[1], 1000 + (sameMonth ? 800 : 0), 'من أول الشهر: الأيام اللي فاتت من الجزء اللي بيتقري كل 3 ساعات + النهارده لحد دلوقتي');
   assert.equal(row('Orders')[1], 20 + (sameMonth ? 20 : 0));
   assert.equal(row('Gross sales')[1], 21000 + (sameMonth ? 20000 : 0));
-  assert.equal(row('Ad spend (Meta)')[1], 300, 'صرف الشهر: أيام Meta اللي فاتت (مفيش صرف قبل النهارده هنا) + النهارده بالساعة');
+  assert.equal(row('Ad spend (Meta)')[1], 1000, 'صرف الشهر: أيام Meta اللي فاتت (مفيش صرف قبل النهارده هنا) + النهارده اللحظي');
   assert.match(String(mv[6][2]), new RegExp('^من أول ' + months[p[1] - 1] + ' لحد دلوقتي. التغيير عن ' + last + ' (كله|لحد ' + Math.min(p[2], 31) + ')'));
   const ups = api[api.length - 1].filter(r => r.updateChartSpec).map(r => r.updateChartSpec.spec);
   assert.equal(ups.length, 8, 'الكروت كلها اتحدثت مكانها');

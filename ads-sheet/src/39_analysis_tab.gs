@@ -116,7 +116,29 @@ function writeAnalysisTab_() {
   anaDrawActions_(sh, today, manual, F, M, errors);
   try { todayProblemsRefresh_(M); } catch (e) { setStatus_('TODAY_CARDS', '✗ كروت المشاكل: ' + errText_(e)); } // the cards in Today
   anaDrawAnalysis_(ensureTab_(ANA.TAB2), F, P, M, ctx, errors);
+  PropertiesService.getDocumentProperties().setProperty(ANA.AT_KEY, String(Date.now()));
   return true;
+}
+
+/*
+ * Trigger every 5 minutes: the 15-minute update draws Actions and Analysis last, and skips them when its run has no time
+ * left, so they could stay hours old. This draws them in a run of their own when they're ANA.STALE_MIN minutes old or more
+ * and no update is running (LIVE_AT), so they're never older than about 20 minutes. Reads the sheet's tabs only.
+ */
+function analysisTick() {
+  const props = PropertiesService.getDocumentProperties(), start = Date.now();
+  const fresh = () => Date.now() - Number(props.getProperty(ANA.AT_KEY) || 0) < ANA.STALE_MIN * 60000;
+  const busy = Number(props.getProperty('LIVE_AT') || 0);
+  if (props.getProperty('TRIGGERS_PAUSED') || fresh() || (busy && start - busy < 6 * 60000)) return;
+  try {
+    tryLock_(() => {
+      if (fresh()) return;
+      DEADLINE_ = start + 5 * 60000;
+      resetCaches_();
+      try { writeMetaCamps_(); } catch (e) { console.error('meta camps: ' + errText_(e)); }
+      writeAnalysisTab_();
+    }, 60000);
+  } catch (e) { console.error('analysisTick: ' + errText_(e)); }
 }
 
 /* Tab Actions: the urgent and important actions, the best opportunities and your open tasks; your tasks; before / after. */

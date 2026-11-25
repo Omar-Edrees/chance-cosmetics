@@ -302,12 +302,26 @@ function shopTabCardModel_(fast, spend) {
   const f = Number(Utilities.formatDate(now, tz, 'm')) / 60, today = fast.today, y = shiftKey_(today, -1), w = shiftKey_(today, -7);
   const a = shopTabCut_(fast.hours, today, H, 1), b = shopTabCut_(fast.hours, y, H, f), c = shopTabCut_(fast.hours, w, H, f);
   const hs = (spend || {}).hours || {};
-  const cut = (d, part) => { const x = hs[d]; if (!x) return ''; let t = 0; for (let h = 0; h <= H; h++) t += num_(x[h]) * (h < H ? 1 : part); return round2_(t); };
+  // Today's spend: Meta's hourly breakdown comes in hours late, so the live total of today (Ads Raw, read in the same update,
+  // like the accounts table in Today) is taken when it's bigger. The days we compare with are whole by then.
+  const live = spend ? shopTabLiveSpend_(today) : 0;
+  const cut = (d, part) => {
+    const x = hs[d]; if (!x) return d === today && live ? round2_(live) : '';
+    let t = 0; for (let h = 0; h <= H; h++) t += num_(x[h]) * (h < H ? 1 : part);
+    return round2_(d === today ? Math.max(t, live) : t);
+  };
   const wName = S.DAY_NAMES[shopTabWeekday_(w)] + ' اللي فات';
   return { day: today, atMs: fast.atMs, at: Utilities.formatDate(now, tz, 'HH:mm'), wName: wName, wDate: Number(w.slice(8, 10)) + '/' + Number(w.slice(5, 7)),
     cards: shopTabCardsOf_([a, b, c], spend ? [cut(today, 1), cut(y, f), cut(w, f)] : null),
     month: shopTabMonthModel_(fast, spend, H, f, a, cut),
     diag: [['قدام إمبارح: ', shopTabDiagnose_(a, b)], ['قدام ' + wName + ': ', shopTabDiagnose_(a, c)]] };
+}
+/* Meta spend today from Ads Raw (every Meta account, read with every update and ⚡): the same number as META TOTAL in Today. */
+function shopTabLiveSpend_(today) {
+  let t = 0;
+  try { recentRows_(APP.T.ADS, ADS_HEADERS.length, 1, asKey_, today).forEach(a => { if (asKey_(a[0]) === today && a[1] === 'META') t += num_(a[10]); }); }
+  catch (e) { return 0; }
+  return t;
 }
 /* The cards for three periods' numbers: [{key, title, values [3], pct, up: up is good (null: neither)}]. spend: [3] or null (no spend card). */
 function shopTabCardsOf_(periods, spend) {

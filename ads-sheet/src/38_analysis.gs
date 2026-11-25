@@ -26,6 +26,7 @@ const ANA = {
   W2: [190, 85, 85, 85, 85, 14, 240, 85, 85, 85, 85, 14, 90, 420, 95], LC: [1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 13, 14], BACK: 60, WIDTH: 18, TOP: 4, MIN_ROWS: 12, SPARE: 4,
   R: 7, BA: 12, // tasks start at column G (5 columns), before / after at column L (7 columns); the left side is A–E
   FUNNEL_KEY: 'ANA_FUNNEL', DONE_KEY: 'ANA_DONE', ROWS_KEY: 'ANA_ROWS', FIND_KEY: 'ANA_FINDS', PENDING_KEY: 'ANA_PENDING', DONE_DAYS: 7,
+  AT_KEY: 'ANA_AT', STALE_MIN: 14,
   STOCK_COLOR: 5, STOCK_NO_ADS: 30, STOCK_ACT: 15, STOCK_ROWS: 15, ACT_GOOD: 5, TOP_LIST: 8,
   MIN_SPEND: 1000, DROP: 0.2, WORSE: 0.15, WINDOW_LOW: 0.7, WINDOW_MIN: 500, DUP: 0.5, DUP_MIN: 3, DUP_SPEND: 1000,
   PRI: { 1: '🔴 عاجل', 2: '🟠 مهم', 3: '🟡 راقب', 4: '🟢 فرصة' },

@@ -212,7 +212,13 @@ function todayClosing_(g, today, sum, rows, gap) {
   };
   const platform = (label, color, list, totalLabel, totalStyle, key, plus) => {
     const first = r, items = list.length ? list : [{ name: '', spend: 0, orders: 0, value: 0 }];
-    items.forEach(a => { line(r, a.name, a.spend, a.orders, a.value, {}, key === 'META'); r++; });
+    items.forEach(a => {
+      line(r, a.name, a.spend, a.orders, a.value, {}, key === 'META');
+      // A messages-only account (accounts.messages_only, Chance 26): its orders come from chats and aren't tracked yet, so
+      // only its spend shows (no pixel orders, CPP, ROAS or AOV) until they are.
+      if (key === 'META' && a.id && isMsgAccount_(a.id)) [4, 5, 6, 7].forEach(c => { g.cell(r, c).v = ''; });
+      r++;
+    });
     g.set(first, 1, label, { bg: color, fc: '#ffffff', b: 'bold', al: 'center' });
     for (let i = first + 1; i < r; i++) g.cell(i, 1).bg = color;
     if (items.length > 1) g.merge(first, 1, items.length, 1);
