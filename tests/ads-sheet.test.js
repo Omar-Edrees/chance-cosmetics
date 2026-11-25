@@ -2202,7 +2202,7 @@ test('Duplication: أوردرات المنصة قدام أوردرات شوبي�
   assert.deepEqual(v()[mi + 2].slice(0, 3), [8, 6, 4], 'إمبارح داخل: إعلان 111 (2) وأوردر 8');
 });
 
-test('Actions و Analysis: المهم بس في Actions بالأولوية، والمهام وقبل وبعد، والجداول الصغيرة فوق في Analysis والتفاصيل تحت + (والستوك + على كل منتج)', () => {
+test('Actions و Analysis: المهم بس في Actions بالأولوية، والتاسكات بقبل وبعد، والجداول الصغيرة فوق في Analysis والتفاصيل تحت + (والستوك + على كل منتج)', () => {
   const probe = env(), today = probe.c.todayKey_(), d = n => probe.c.shiftKey_(today, -n);
   const variant = (id, handle, product, title, qty) => ({ id: 'gid://shopify/ProductVariant/' + id, title, inventoryQuantity: qty, product: { handle, title: product } });
   const variants = [variant(11, 'lip-oil', 'Lip Oil', 'Red', 2), variant(12, 'lip-oil', 'Lip Oil', 'Pink', 40), variant(13, 'lip-oil', 'Lip Oil', 'Nude', 0),
@@ -2227,14 +2227,16 @@ test('Actions و Analysis: المهم بس في Actions بالأولوية، و�
   assert.ok(sh && an, 'تابين: Actions و Analysis');
   assert.doesNotMatch(String(sh.getRange('A2').getValue()), /⚠️/, 'كل الأجزاء اتحسبت');
   const v = () => sh.getDataRange().getValues(), find = (col, re) => v().findIndex(r => re.test(String(r[col])));
-  // Actions: الأكشنز (A)، ومهامي (G)، وقبل وبعد (L) جنب بعض، والمهم بس
-  assert.deepEqual([v()[3][0], v()[3][6], v()[3][11]].map(x => x.split(' — ')[0].split(' (')[0]), ['الأكشنز', 'مهامي', 'قبل وبعد']);
+  // Actions: الأكشنز (A) والتاسكات (G) جنب بعض، والمهم بس
+  assert.deepEqual([v()[3][0], v()[3][6]].map(x => x.split(' — ')[0].split(' (')[0]), ['الأكشنز', 'التاسكات']);
+  assert.deepEqual(v()[4].slice(0, 20), ['الأولوية', 'الأكشن', 'ليه (بالأرقام)', 'القسم', '➕ تاسك', '', 'التاسك', 'الأولوية', 'الحالة', 'اتضافت يوم', 'ملاحظات',
+    'الكامبين', 'المتريكس اللي تظهر', 'الأوبتيمايز على', 'اتعملت يوم', 'قبل: آخر 3 أيام', 'قبل: آخر 7 أيام', 'بعد: 3 أيام', 'بعد: 7 أيام', 'النتيجة']);
   // الستوك: Lip Oil عليه إعلان، Nude خلص و Red يكفي يومين، وكانوا بيتباعوا 12 قطعة في الشهر: عاجل
   // الكلام الكتير نقط تحت بعض
   // الجملة العربي، وتحتها اسم المنتج في سطر لوحده، وتحته النقط
   assert.deepEqual(v()[5].slice(0, 2), ['🔴 عاجل', 'اطلب ستوك بالترتيب ده:\nLip Oil\n• Nude: 30 قطعة\n• Red: 28 قطعة\nولحد ما يوصل، شيل الألوان الخلصانة من الإعلانات']);
   assert.equal(v()[5][2], '1 لون خلص و 1 لون قرّب يخلص، وعليه 1 إعلان شغال:\nLip Oil\n• Nude: نفد، اتباع 12 في 30 يوم\n• Red: يكفي 2 يوم، اتباع 12 في 30 يوم');
-  assert.equal(v()[5][4], false, 'خانة ✅');
+  assert.equal(v()[5][4], false, 'خانة ➕');
   // الفانل (CPM غلي) راقب بس: مش في الأكشنز، في تاب Analysis
   assert.equal(v()[6][0], '🟡 1 حاجة تتراقب بس (من غير أكشن دلوقتي): في تاب Analysis');
   assert.equal(find(1, /CPM/), -1);
@@ -2263,39 +2265,53 @@ test('Actions و Analysis: المهم بس في Actions بالأولوية، و�
   assert.equal(a()[roas - 1][2], 'Chance 26');
   assert.equal(a()[roas + 1][0], e.c.anaDay_(today) + ' (لحد دلوقتي)');
 
-  // مهمة مكتوبة بإيدي بأولوية عاجل: بتدخل في الأكشنز، وتاريخ إضافتها بيتكتب لوحده
+  // تاسك مكتوب بإيدي بأولوية عاجل على الكامبين: بيدخل في الأكشنز، وتاريخ إضافته بيتكتب لوحده
+  const day = k => Number(k.slice(8, 10)) + '/' + Number(k.slice(5, 7));
   sh.getRange('G6').setValue('اعمل كرييتيف جديد لـ Lip Oil');
   sh.getRange('H6').setValue('🔴 عاجل');
-  sh.getRange('L6:O6').setValues([['وقفت الكامبين الخسرانة', d(3), 'الصرف في اليوم', '']]);
+  sh.getRange('L6:N6').setValues([['Camp', 'الصرف، CPM', 'CTR']]);
   e.c.withLock_(() => e.c.writeAnalysisTab_());
   const task = find(1, /^اعمل كرييتيف جديد لـ Lip Oil$/);
-  assert.deepEqual(v()[task].slice(0, 4), ['🔴 عاجل', 'اعمل كرييتيف جديد لـ Lip Oil', 'مكتوبة بإيدك يوم ' + today, 'مهمة يدوية']);
+  assert.deepEqual(v()[task].slice(0, 4), ['🔴 عاجل', 'اعمل كرييتيف جديد لـ Lip Oil', 'مكتوبة بإيدك يوم ' + today, 'تاسك']);
   assert.deepEqual(v()[5].slice(6, 10), ['اعمل كرييتيف جديد لـ Lip Oil', '🔴 عاجل', 'لسه', today]);
-  // الصرف في اليوم: قبل = الـ 7 أيام اللي قبلها (300 ÷ 7)، بعد = من يومها لحد إمبارح (2700 ÷ 3)
-  assert.deepEqual(v()[5].slice(11, 18).map(x => (typeof x === 'number' ? Math.round(x * 100) / 100 : x)),
-    ['وقفت الكامبين الخسرانة', d(3), 'الصرف في اليوم', 'البيزنس كله', 42.86, 900, '+2000%']);
-  // ✅ على أكشن الستوك: بيتنقل لقبل وبعد بتاريخ النهارده، ويستخبى من الأكشنز
-  const stock = find(1, /^اطلب ستوك/);
+  // قبل (الحالة لسه): آخر 3 أيام كاملة (900 في اليوم، 1000 ظهور و 20 كليك في اليوم) وآخر 7، والمتريكس اللي اخترتها + اللي بنعمل عليه أوبتيمايز
+  assert.equal(v()[5][15], day(d(3)) + ' → ' + day(d(1)) + '\nالصرف في اليوم: 900\nCPM: 900\nCTR: 2.00%');
+  assert.equal(v()[5][16], day(d(7)) + ' → ' + day(d(1)) + '\nالصرف في اليوم: 429\nCPM: 750\nCTR: 2.00%');
+  assert.deepEqual(v()[5].slice(17, 20), ['لما الحالة تبقى خلصت', 'لما الحالة تبقى خلصت', '']);
+  // الحالة خلصت: "اتعملت يوم" النهارده، والبعد بيبدأ لايف من النهارده
+  sh.getRange('I6').setValue('خلصت');
+  e.c.onEdit({ range: { getSheet: () => sh, getA1Notation: () => 'I6' } });
+  assert.equal(sh.getRange('O6').getValue(), today);
+  e.c.withLock_(() => e.c.writeAnalysisTab_());
+  assert.equal(find(1, /^اعمل كرييتيف جديد/), -1, 'خلصت: خرجت من الأكشنز');
+  assert.match(String(v()[5][17]), new RegExp('^' + day(today) + ' → النهارده \\(يوم 1 من 3\\)\\nالصرف في اليوم: '));
+  assert.equal(v()[5][19], 'CTR\n3 أيام: 0% زي ما هو (لسه)\n7 أيام: 0% زي ما هو (لسه)');
+  // ➕ على أكشن الستوك: بيبقى تاسك (اسمه الأكشن واسم المنتج) في أول صف فاضي، ويستخبى من الأكشنز
+  const stock = find(1, /^اطلب ستوك بالترتيب/);
   sh.getRange(stock + 1, 5).setValue(true);
   e.c.onEdit({ range: { getSheet: () => sh, getA1Notation: () => 'E' + (stock + 1) } });
-  assert.deepEqual(v()[6].slice(11, 15), ['اطلب ستوك بالترتيب ده:\nLip Oil', today, 'الأوردرات في اليوم', 'Lip Oil']);
+  assert.deepEqual(v()[6].slice(6, 10).concat(v()[6].slice(11, 14)), ['اطلب ستوك\nLip Oil', '🔴 عاجل', 'لسه', today, 'Lip Oil', '', 'الأوردرات في اليوم']);
+  assert.equal(v()[6][10], 'Nude: 30\nRed: 28', 'الملاحظة: كل حاجة في سطر');
   e.c.withLock_(() => e.c.writeAnalysisTab_());
-  assert.equal(find(1, /^اطلب ستوك/), -1, 'استخبى من الأكشنز');
-  assert.match(String(v()[6][11]), /^اطلب ستوك/, 'وفضل في قبل وبعد');
-  assert.equal(v()[6][16], 'من بكره');
-  // ✅ على المهمة: حالتها بتبقى خلصت وبتخرج من الأكشنز
-  const t2 = find(1, /^اعمل كرييتيف جديد/);
-  sh.getRange(t2 + 1, 5).setValue(true);
-  e.c.onEdit({ range: { getSheet: () => sh, getA1Notation: () => 'E' + (t2 + 1) } });
-  e.c.withLock_(() => e.c.writeAnalysisTab_());
-  assert.equal(v()[5][8], 'خلصت');
-  assert.equal(find(1, /^اعمل كرييتيف جديد/), -1);
-  assert.equal(v().filter(r => r[11] === 'اعمل كرييتيف جديد لـ Lip Oil').length, 1, 'المهمة اتنقلت لقبل وبعد');
+  assert.equal(find(1, /^اطلب ستوك بالترتيب/), -1, 'استخبى من الأكشنز');
+  assert.equal(v()[find(1, /^اطلب ستوك\nLip Oil$/)][3], 'تاسك', 'وبقى تاسك');
+  assert.equal(v()[5][6], 'اطلب ستوك\nLip Oil', 'اللي لسه فوق، واللي خلصت تحت');
   // التاب القديم (Analysis & Actions) بيتغير اسمه لـ Actions واللي مكتوب فيه بيفضل
   sh.setName('Analysis & Actions');
   e.c.withLock_(() => e.c.writeAnalysisTab_());
   assert.equal(e.ss.getSheetByName('Analysis & Actions'), null);
-  assert.equal(e.ss.getSheetByName('Actions').getRange('G6').getValue(), 'اعمل كرييتيف جديد لـ Lip Oil');
+  assert.equal(e.ss.getSheetByName('Actions').getRange('G6').getValue(), 'اطلب ستوك\nLip Oil');
+  // التاب بتاع 1.79: المهام في G:K وقبل وبعد في L:O. المهام بتفضل، وكل صف في قبل وبعد بيبقى تاسك خلصت يومها
+  delete e.doc.ANA_LAYOUT;
+  sh.getRange(6, 7, Number(e.doc.ANA_ROWS), 14).clearContent();
+  sh.getRange('G6:K6').setValues([['تاسك قديم', '🟠 مهم', 'لسه', d(2), '']]);
+  sh.getRange('L6:O6').setValues([['وقفت الكامبين الخسرانة', d(3), 'الصرف في اليوم', 'Camp']]);
+  e.c.withLock_(() => e.c.writeAnalysisTab_());
+  const old = v().find(r => r[6] === 'وقفت الكامبين الخسرانة');
+  assert.deepEqual(old.slice(6, 15), ['وقفت الكامبين الخسرانة', '🟡 راقب', 'خلصت', d(3), 'من جدول قبل وبعد القديم', 'Camp', '', 'الصرف في اليوم', d(3)]);
+  // قبل: 300 في 3 أيام (100 في اليوم)، بعد: 900 في اليوم، و 3 أيام خلصوا
+  assert.match(String(old[19]), /^الصرف في اليوم\n3 أيام: \+800% زاد\n7 أيام: .* \(لسه\)$/);
+  assert.ok(v().some(r => r[6] === 'تاسك قديم' && r[7] === '🟠 مهم'));
 });
 
 test('Analysis: كل 3 ساعات لوحدها قدام نفس الوقت في الأسبوع اللي فات، والكامبين اللي صرفت فيها من غير أوردرات، ولقطات الكامبينات بتتاخد مع لقطة Today', () => {
@@ -2348,6 +2364,10 @@ test('Actions: الحاجات اللي من نوع واحد وأولوية وا�
   assert.equal(out.length, 3);
   assert.deepEqual([out[0].pri, out[0].title, out[0].action, out[0].impact], [1, '3 كامبينات شغالة تحت التعادل', 'وقّف:\n• B\n• A\n• C', 1500]);
   assert.equal(out[0].detail, '• B\n• A\n• C', 'كل اسم في سطر لوحده');
+  // في تاب Actions كل كامبين في صف لوحده بـ ➕ تحت عنوان الأكشن، والتاسك اسمه الأكشن واسم الكامبين
+  assert.equal(JSON.stringify([out[0].head, out[0].subs.map(x => x.label)]), JSON.stringify(['3 كامبينات شغالة تحت التعادل', ['B', 'A', 'C']]));
+  assert.equal(e.c.anaTaskText_(out[0].subs[0], out[0].verb), 'وقّف\nB');
+  assert.equal(JSON.stringify(['task', 'camp', 'opt'].map(k => e.c.anaFindRow_(9, out[0].subs[0], out[0].verb)[k])), JSON.stringify(['وقّف\nB', 'B', 'Shopify ROAS']));
   assert.equal(JSON.stringify(out.slice(1).map(x => [x.id, x.pri])), JSON.stringify([['win|y', 2], ['win|x', 3]]), 'كل أولوية لوحدها');
 });
 

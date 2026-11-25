@@ -42,20 +42,44 @@ function takeIntraAds_() {
 
 /* ---------- What's typed in the tab ---------- */
 
-/* The tasks and the before / after rows typed in the tab, and the ✅ ones not written yet. */
+/*
+ * A task row of the tab (G–T, ANA.TASK_COLS) as {text, pri, status, added, note, camp, metrics, opt, doneAt}. doneAt: the
+ * day it was done (typed, or today when the status became خلصت), '' while it isn't done.
+ */
+function anaTaskOf_(r, today) {
+  const status = ANA.STATUS.indexOf(String(r[2]).trim()) >= 0 ? String(r[2]).trim() : ANA.STATUS[0];
+  return { text: String(r[0] || '').trim(), pri: anaPri_(r[1]), status: status, added: anaDate_(r[3], today) || today, note: String(r[4] || '').trim(),
+    camp: String(r[5] || '').trim(), metrics: String(r[6] || '').trim(), opt: String(r[7] || '').trim(),
+    doneAt: status === ANA.STATUS[2] ? anaDate_(r[8], today) || today : '' };
+}
+/* What a task's numbers depend on: once its 7 days after are over, the numbers are kept under this (ANA.TASK_FROZEN_KEY). */
+function anaTaskKey_(t) { return sha_(JSON.stringify([t.text, t.camp, t.metrics, t.opt, t.doneAt])).slice(0, 16); }
+function anaJson_(key, big) {
+  try { return JSON.parse((big ? propGetBig_(key) : PropertiesService.getDocumentProperties().getProperty(key)) || '{}') || {}; } catch (e) { return {}; }
+}
+
+/*
+ * The tasks typed in the tab, and the ones added with ➕ that had no free row yet. The tab of version 1.79 and before had
+ * the tasks in G–K and a before / after table in L–O: its tasks stay, and each before / after row becomes a done task
+ * (its metric is the optimized one, and what it was on the campaign).
+ */
 function anaReadManual_(sh, today) {
-  const props = PropertiesService.getDocumentProperties(), n = Number(props.getProperty(ANA.ROWS_KEY) || 0), out = { tasks: [], ba: [], n: n };
+  const props = PropertiesService.getDocumentProperties(), n = Number(props.getProperty(ANA.ROWS_KEY) || 0), out = { tasks: [], n: n };
+  const old = props.getProperty(ANA.LAYOUT_KEY) !== '2';
   if (n > 0 && sh.getLastRow() >= ANA.TOP + 2) {
-    sh.getRange(ANA.TOP + 2, ANA.R, n, 12).getValues().forEach(v => {
-      if (String(v[0]).trim()) out.tasks.push({ text: String(v[0]).trim(), pri: anaPri_(v[1]),
-        status: ANA.STATUS.indexOf(String(v[2]).trim()) >= 0 ? String(v[2]).trim() : ANA.STATUS[0], added: anaDate_(v[3], today) || today, note: String(v[4] || '').trim() });
-      if (String(v[5]).trim()) out.ba.push({ text: String(v[5]).trim(), done: v[6] instanceof Date ? dayKey_(v[6]) : String(v[6] || '').trim() || today,
-        metric: String(v[7] || '').trim() || ANA.METRICS[0], scope: String(v[8] || '').trim() || ANA.BIZ });
+    sh.getRange(ANA.TOP + 2, ANA.R, n, old ? 12 : ANA.TCOLS).getValues().forEach(v => {
+      if (!old) { if (String(v[0]).trim()) out.tasks.push(anaTaskOf_(v, today)); return; }
+      if (String(v[0]).trim()) out.tasks.push(anaTaskOf_([v[0], v[1], v[2], v[3], v[4]], today));
+      if (String(v[5]).trim()) {
+        const done = anaDate_(v[6], today) || today;
+        out.tasks.push(anaTaskOf_([v[5], '', ANA.STATUS[2], done, 'من جدول قبل وبعد القديم', String(v[8] || '').trim() || ANA.BIZ, '',
+          String(v[7] || '').trim() || ANA.METRICS[0], done], today));
+      }
     });
   }
   let pend = [];
   try { pend = JSON.parse(props.getProperty(ANA.PENDING_KEY) || '[]'); } catch (e) { pend = []; }
-  pend.forEach(p => { if (!out.ba.some(x => x.text === p.text && x.done === p.done)) out.ba.push(p); });
+  pend.forEach(p => { if (Array.isArray(p) && !out.tasks.some(x => x.text === String(p[0]).trim())) out.tasks.push(anaTaskOf_(p, today)); });
   props.deleteProperty(ANA.PENDING_KEY);
   return out;
 }
@@ -63,33 +87,85 @@ function anaDone_() {
   try { return JSON.parse(PropertiesService.getDocumentProperties().getProperty(ANA.DONE_KEY) || '{}'); } catch (e) { return {}; }
 }
 
-/* EXT.edit: ✅ next to an action. It goes to the before / after table and is hidden for ANA.DONE_DAYS days. */
+/*
+ * EXT.edit on the Actions tab.
+ * ➕ next to an action (column E): it becomes a task in the first free row of the tasks table (its name = what to do + the
+ * campaign or product, the campaign and the metric to optimize filled in) and is hidden from the actions for ANA.DONE_DAYS days.
+ * The status of a task (column I) set to خلصت: "اتعملت يوم" becomes today, so its after starts counting; set back: emptied.
+ */
 function anaEdit_(name, a1) {
   if (name !== ANA.TAB) return;
-  const m = String(a1).match(/^E(\d+)$/);
+  const m = String(a1).match(/^([A-Z]+)(\d+)$/);
   if (!m) return;
-  const sh = tab_(ANA.TAB), row = Number(m[1]);
-  if (sh.getRange(row, 5).getValue() !== true) return;
+  const sh = tab_(ANA.TAB), row = Number(m[2]), today = todayKey_(), props = PropertiesService.getDocumentProperties(), first = ANA.TOP + 2;
+  const n = Number(props.getProperty(ANA.ROWS_KEY) || 0);
+  if (m[1] === 'I' && row >= first && row < first + n) {
+    const st = String(sh.getRange(row, ANA.R + 2).getValue()).trim(), cell = sh.getRange(row, ANA.R + 8);
+    if (st === ANA.STATUS[2] && !String(cell.getValue()).trim()) cell.setNumberFormat('@').setValue(today);
+    if (st !== ANA.STATUS[2] && String(cell.getValue()).trim()) cell.setValue('');
+    return;
+  }
+  if (m[1] !== 'E' || sh.getRange(row, 5).getValue() !== true) return;
   let finds = [];
   try { finds = JSON.parse(propGetBig_(ANA.FIND_KEY) || '[]'); } catch (e) { finds = []; }
   const f = finds.find(x => x.row === row);
-  if (!f) return;
-  const props = PropertiesService.getDocumentProperties(), today = todayKey_(), done = anaDone_();
+  if (!f || !f.task) return;
+  const done = anaDone_();
   done[f.id] = today;
   Object.keys(done).forEach(k => { if (done[k] < shiftKey_(today, -30)) delete done[k]; });
   props.setProperty(ANA.DONE_KEY, JSON.stringify(done));
-  const item = { text: f.action, done: today, metric: f.metric || ANA.METRICS[0], scope: f.scope || ANA.BIZ };
-  const n = Number(props.getProperty(ANA.ROWS_KEY) || 0), first = ANA.TOP + 2;
-  const free = n ? sh.getRange(first, ANA.BA, n, 1).getValues().findIndex(v => !String(v[0]).trim()) : -1;
-  if (free >= 0) sh.getRange(first + free, ANA.BA, 1, 4).setValues([[item.text, item.done, item.metric, item.scope]]);
-  else {
+  const item = [f.task, ANA.PRI[f.pri] || ANA.PRI[3], ANA.STATUS[0], today, f.note || '', f.camp || '', '', f.opt || ''];
+  const free = n ? sh.getRange(first, ANA.R, n, 1).getValues().findIndex(v => !String(v[0]).trim()) : -1;
+  if (free >= 0) {
+    sh.getRange(first + free, ANA.R + 3).setNumberFormat('@');
+    sh.getRange(first + free, ANA.R, 1, item.length).setValues([item]);
+  } else {
     let pend = [];
     try { pend = JSON.parse(props.getProperty(ANA.PENDING_KEY) || '[]'); } catch (e) { pend = []; }
     pend.push(item);
     props.setProperty(ANA.PENDING_KEY, JSON.stringify(pend));
   }
-  if (f.trow) sh.getRange(f.trow, ANA.R + 2).setValue(ANA.STATUS[2]);
   sh.getRange(row, 1, 1, 5).setBackground('#e5e7eb');
+}
+
+/*
+ * EXT.live: Hook rate and the frequency of the tasks' campaigns (Meta only, read-only), for each before / after window,
+ * kept in ANA.TASK_META_KEY {campaign id|from|to: {imp, reach, v3}}. A window that ended is read once; one with today in
+ * it every update. Only tasks that show one of the two, and whose numbers aren't kept for good yet.
+ */
+function refreshTaskMeta_() {
+  const props = PropertiesService.getDocumentProperties(), sh = ss_().getSheetByName(ANA.TAB), n = Number(props.getProperty(ANA.ROWS_KEY) || 0);
+  if (!sh || !n || props.getProperty(ANA.LAYOUT_KEY) !== '2' || !accounts_('META').length || !timeLeft_()) return;
+  const today = todayKey_(), frozen = anaJson_(ANA.TASK_FROZEN_KEY, true), cache = anaJson_(ANA.TASK_META_KEY, true), keep = {}, reqs = [], what = [];
+  const tasks = sh.getRange(ANA.TOP + 2, ANA.R, n, ANA.TCOLS).getValues().map(r => anaTaskOf_(r, today))
+    .filter(t => t.text && t.camp && !frozen[anaTaskKey_(t)] && anaTaskMetrics_(t.metrics, t.opt).some(x => x === 'Hook rate' || x === 'الفريكونسي'));
+  if (!tasks.length) { propSetBig_(ANA.TASK_META_KEY, '{}'); return; }
+  const ids = {};
+  recentRows_(APP.T.ADS, ADS_HEADERS.length, 1, asKey_, shiftKey_(today, -ANA.BACK)).forEach(a => {
+    if (a[1] !== 'META' || !a[4] || !a[5]) return;
+    const k = norm_(a[5]), x = ids[k] = ids[k] || {};
+    x[a[4]] = (x[a[4]] || 0) + num_(a[10]);
+  });
+  tasks.forEach(t => {
+    const by = ids[norm_(t.camp)];
+    if (!by) return;
+    const cid = Object.keys(by).sort((a, b) => by[b] - by[a])[0], W = anaTaskWindows_(t, today, 1);
+    [W.b3, W.b7, W.a3, W.a7].filter(Boolean).forEach(w => {
+      const k = cid + '|' + w.from + '|' + w.to;
+      if (k in keep) return;
+      keep[k] = cache[k] || null;
+      if (cache[k] && w.to < today) return;
+      reqs.push({ path: cid + '/insights', params: { fields: 'impressions,reach,actions', time_range: JSON.stringify({ since: w.from, until: w.to }) } });
+      what.push(k);
+    });
+  });
+  if (reqs.length) metaMany_(reqs.slice(0, 60)).forEach((x, i) => {
+    if (x.error) return;
+    const r = (x.payload.data || [])[0] || {}, v = (r.actions || []).find(a => a.action_type === 'video_view');
+    keep[what[i]] = { imp: num_(r.impressions), reach: num_(r.reach), v3: v ? num_(v.value) : 0 };
+  });
+  Object.keys(keep).forEach(k => { if (!keep[k]) delete keep[k]; });
+  propSetBig_(ANA.TASK_META_KEY, JSON.stringify(keep));
 }
 
 /* ---------- Drawing ---------- */
@@ -99,21 +175,25 @@ function writeAnalysisTab_() {
   // The tab of version 1.68 becomes Actions (what's typed in it stays); its numbers move to Analysis.
   if (!ss_().getSheetByName(ANA.TAB) && ss_().getSheetByName(ANA.OLD_TAB)) ss_().getSheetByName(ANA.OLD_TAB).setName(ANA.TAB);
   const sh = ensureTab_(ANA.TAB), today = todayKey_();
-  const manual = anaReadManual_(sh, today), F = anaFacts_(today), ctx = { mc: MC_LAST_ ? MC_LAST_.camps : null };
+  const manual = anaReadManual_(sh, today), frozen = anaJson_(ANA.TASK_FROZEN_KEY, true);
+  // The Ads Raw days the tasks' before / after need (the 7 days before each one, until its numbers are kept for good).
+  const since = manual.tasks.filter(t => t.camp && !frozen[anaTaskKey_(t)]).map(t => shiftKey_(t.doneAt || today, -7)).sort()[0] || '';
+  const F = anaFacts_(today, since), ctx = { mc: MC_LAST_ ? MC_LAST_.camps : null };
   ctx.be = anaBe_(F);
   const P = {}, errors = [];
   [['acc', () => anaAccounts_(F, ctx)], ['win', () => anaThreeHours_(F, ctx)], ['bench', () => anaBench_(F, ctx)], ['funnel', () => anaFunnel_(F)],
     ['camps', () => anaCampaigns_(F, ctx)], ['stock', () => anaStock_(F)], ['cancel', () => anaCancelPart_(F, ctx)], ['dup', () => anaDup_(F, ctx)],
     ['shop', () => anaShopify_(F)], ['prod', () => anaProducts_(F, ctx)], ['gov', () => anaGov_(F)], ['cat', () => anaCatalog_(F, ctx)]]
     .forEach(x => { try { P[x[0]] = x[1](); } catch (e) { P[x[0]] = { find: [] }; errors.push(x[0] + ': ' + errText_(e)); } });
-  const done = anaDone_(), since = shiftKey_(today, -ANA.DONE_DAYS);
+  const done = anaDone_(), hideFrom = shiftKey_(today, -ANA.DONE_DAYS);
   let finds = [];
   Object.keys(P).forEach(k => { finds = finds.concat(P[k].find || []); });
-  const seen = {};
-  finds = anaMerge_(finds.filter(f => !seen[f.id] && (seen[f.id] = true))).filter(f => !(done[f.id] && done[f.id] > since));
+  const seen = {}, hidden = f => !!(done[f.id] && done[f.id] > hideFrom);
+  // What was made a task (➕) is hidden before the merging, so a merged action lists only what's left.
+  finds = anaMerge_(finds.filter(f => !seen[f.id] && (seen[f.id] = true)).filter(f => !hidden(f))).filter(f => !hidden(f));
   const M = { bad: finds.filter(f => f.kind === 'bad' && f.pri <= 2), good: finds.filter(f => f.kind === 'good'), watch: finds.filter(f => f.pri === 3) };
   if (errors.length) console.error('Analysis: ' + errors.join(' | '));
-  anaDrawActions_(sh, today, manual, F, M, errors);
+  anaDrawActions_(sh, today, manual, F, M, errors, frozen);
   try { todayProblemsRefresh_(M); } catch (e) { setStatus_('TODAY_CARDS', '✗ كروت المشاكل: ' + errText_(e)); } // the cards in Today
   anaDrawAnalysis_(ensureTab_(ANA.TAB2), F, P, M, ctx, errors);
   PropertiesService.getDocumentProperties().setProperty(ANA.AT_KEY, String(Date.now()));
@@ -141,92 +221,137 @@ function analysisTick() {
   } catch (e) { console.error('analysisTick: ' + errText_(e)); }
 }
 
-/* Tab Actions: the urgent and important actions, the best opportunities and your open tasks; your tasks; before / after. */
-function anaDrawActions_(sh, today, manual, F, M, errors) {
+/* What a task made from an action is called: what to do, then the campaign or product on its own line. */
+function anaTaskText_(f, verb) {
+  if (verb) return verb + '\n' + (f.label || f.item || f.scope || f.title);
+  const m = ANA_MERGE[String(f.id).split('|')[0]];
+  if (m && (f.item || f.label)) return m[1] + '\n' + (f.label || f.item);
+  return f.action + (f.item ? '\n' + f.item : '');
+}
+/* An action's row in ANA.FIND_KEY (for ➕): what the task gets. */
+function anaFindRow_(row, f, verb) {
+  const opt = anaTMetric_(f.metric);
+  return { row: row, id: f.id, pri: f.pri, task: anaTaskText_(f, verb), note: String(f.short || f.title || '').replace(/:$/, '').trim().split(/،\s*/).join('\n'), // one thing a line
+    camp: f.scope && f.scope !== ANA.BIZ ? f.scope : '', opt: opt ? opt[0] : '' };
+}
+
+/*
+ * Tab Actions: the urgent and important actions, the best opportunities and your open tasks, with ➕ to make an action a
+ * task (a merged action: a title row, then a row with ➕ for each campaign or product in it); and the tasks table, where
+ * each task can follow a campaign's metrics before and after it was done.
+ */
+function anaDrawActions_(sh, today, manual, F, M, errors, frozen) {
   const props = PropertiesService.getDocumentProperties(), order = (a, b) => (a.pri - b.pri) || (b.impact - a.impact);
   const tasks = manual.tasks.slice().sort((a, b) => ((a.status === ANA.STATUS[2]) - (b.status === ANA.STATUS[2])) || (a.pri - b.pri));
-  const N = Math.max(ANA.MIN_ROWS, tasks.length + ANA.SPARE, manual.ba.length + ANA.SPARE), first = ANA.TOP + 2;
-  const actions = M.bad.concat(M.good.slice(0, ANA.ACT_GOOD), tasks.map((t, i) => ({ id: 'task|' + sha_(t.text).slice(0, 12), kind: 'task', pri: t.pri,
-    area: 'مهمة يدوية', title: t.note || 'مكتوبة بإيدك يوم ' + t.added, action: t.text, impact: 0, metric: ANA.METRICS[0], scope: ANA.BIZ, trow: first + i,
-    status: t.status })).filter(t => t.status !== ANA.STATUS[2])).sort(order);
-  const g = todayGrid_(), W = ANA.WIDTH, R = ANA.R, BA = ANA.BA, dark = { bg: ANA.DARK, fc: '#ffffff', b: 'bold' };
+  const N = Math.max(ANA.MIN_ROWS, tasks.length + ANA.SPARE), first = ANA.TOP + 2;
+  const actions = M.bad.concat(M.good.slice(0, ANA.ACT_GOOD), tasks.map(t => ({ id: 'task|' + sha_(t.text).slice(0, 12), kind: 'task', pri: t.pri,
+    area: 'تاسك', title: t.note || 'مكتوبة بإيدك يوم ' + t.added, action: t.text, impact: 0, status: t.status })).filter(t => t.status !== ANA.STATUS[2])).sort(order);
+  const g = todayGrid_(), W = ANA.WIDTH, R = ANA.R, C = ANA.TCOLS, dark = { bg: ANA.DARK, fc: '#ffffff', b: 'bold' };
   g.width = W;
   g.set(1, 1, 'ACTIONS — تعمل إيه النهارده بالترتيب' + (anaBe_(F) ? '' : ' | مفيش رؤاس تعادل: اكتب be.roas في Settings'), dark);
   g.fill(1, 2, W - 1, { bg: ANA.DARK });
   g.merge(1, 1, 1, W);
-  g.set(2, 1, 'هنا المهم بس: 🔴 عاجل (بيخسرك دلوقتي) و 🟠 مهم، وأحسن ' + ANA.ACT_GOOD + ' فرص 🟢، ومهامك. الحاجات اللي من نوع واحد (كامبينات توقفها، منتجات تطلب لها ستوك ...) في أكشن واحد. ' +
-    'علّم ✅ لما تعمله: بيتنقل لـ "قبل وبعد" ويستخبى ' + ANA.DONE_DAYS + ' أيام. اللي محتاج تراقبه بس (🟡) والأرقام كلها في تاب ' + ANA.TAB2 + '.' +
+  g.set(2, 1, 'هنا المهم بس: 🔴 عاجل (بيخسرك دلوقتي) و 🟠 مهم، وأحسن ' + ANA.ACT_GOOD + ' فرص 🟢، والتاسكات اللي لسه. ' +
+    'علّم ➕ جنب أي أكشن (أو أي كامبين أو منتج جواه) يبقى تاسك في جدول التاسكات، ويستخبى من هنا ' + ANA.DONE_DAYS + ' أيام. ' +
+    'في التاسك اختار الكامبين والمتريكس والأوبتيمايز على إيه، ولما الحالة تبقى خلصت الشيت يقارن قبل وبعد. اللي محتاج تراقبه بس (🟡) والأرقام كلها في تاب ' + ANA.TAB2 + '.' +
     (errors.length ? '   ⚠️ أجزاء ماتحسبتش: ' + errors.join(' | ') : ''), { fc: '#374151' });
   g.merge(2, 1, 1, W);
   g.set(3, 1, 'آخر تحديث ' + nowText_(), { fc: ANA.GREY });
   g.merge(3, 1, 1, 3);
-  let r = todayHead_(g, ANA.TOP, 1, 5, 'الأكشنز (' + actions.length + ')', ['الأولوية', 'الأكشن', 'ليه (بالأرقام)', 'القسم', '✅ اتعملت']);
-  const findRows = [];
+  const count = actions.reduce((t, f) => t + (f.n || 1), 0);
+  let r = todayHead_(g, ANA.TOP, 1, 5, 'الأكشنز (' + count + ')', ['الأولوية', 'الأكشن', 'ليه (بالأرقام)', 'القسم', '➕ تاسك']);
+  const findRows = [], pri = f => g.set(r, 1, ANA.PRI[f.pri], { bg: ANA.PRI_BG[f.pri], b: 'bold', al: 'center' });
   if (!actions.length) { g.set(r, 1, 'مفيش حاجة عاجلة دلوقتي ✅', { fc: ANA.GREY }); g.merge(r, 1, 1, 5); r++; }
   actions.forEach(f => {
-    g.set(r, 1, ANA.PRI[f.pri], { bg: ANA.PRI_BG[f.pri], b: 'bold', al: 'center' });
-    g.set(r, 2, f.kind === 'task' ? f.action : anaDo_(f), { b: 'bold' });
-    g.set(r, 3, f.kind === 'task' ? f.title : anaWhy_(f), {});
-    g.set(r, 4, f.area, { al: 'center', fc: ANA.GREY });
-    g.set(r, 5, false, { al: 'center' });
-    findRows.push({ row: r, id: f.id, action: f.action + (f.item ? '\n' + f.item : ''), metric: f.metric, scope: f.scope, trow: f.trow || 0 });
+    if (f.kind === 'task') {
+      pri(f);
+      g.set(r, 2, f.action, { b: 'bold' }); g.set(r, 3, f.title, {}); g.set(r, 4, f.area, { al: 'center', fc: ANA.GREY });
+      r++;
+      return;
+    }
+    if (!f.subs) {
+      pri(f);
+      g.set(r, 2, anaDo_(f), { b: 'bold' }); g.set(r, 3, anaWhy_(f), {}); g.set(r, 4, f.area, { al: 'center', fc: ANA.GREY });
+      g.set(r, 5, false, { al: 'center' });
+      findRows.push(anaFindRow_(r, f));
+      r++;
+      return;
+    }
+    // A merged action: its title, then each campaign / product on its own row with its own ➕.
+    g.set(r, 1, '', { bg: ANA.PRI_BG[f.pri] });
+    g.set(r, 2, f.head + ':', { b: 'bold', bg: ANA.LABEL }); g.set(r, 3, '', { bg: ANA.LABEL }); g.set(r, 4, '', { bg: ANA.LABEL }); g.set(r, 5, '', { bg: ANA.LABEL });
     r++;
+    f.subs.slice(0, ANA.ACT_ITEMS).forEach(x => {
+      pri(f);
+      g.set(r, 2, f.verb + '\n' + x.label, { b: 'bold' }); g.set(r, 3, anaWhy_(x), {}); g.set(r, 4, x.area, { al: 'center', fc: ANA.GREY });
+      g.set(r, 5, false, { al: 'center' });
+      findRows.push(anaFindRow_(r, x, f.verb));
+      r++;
+    });
+    if (f.subs.length > ANA.ACT_ITEMS) { g.set(r, 2, 'و ' + (f.subs.length - ANA.ACT_ITEMS) + ' كمان في تاب ' + ANA.TAB2, { fc: ANA.GREY }); r++; }
   });
   if (M.watch.length) { g.set(r, 1, '🟡 ' + M.watch.length + ' حاجة تتراقب بس (من غير أكشن دلوقتي): في تاب ' + ANA.TAB2, { fc: ANA.GREY }); g.merge(r, 1, 1, 5); }
 
-  todayHead_(g, ANA.TOP, R, 5, 'مهامي — اكتب هنا', ['المهمة', 'الأولوية', 'الحالة', 'اتضافت يوم', 'ملاحظات']);
-  todayHead_(g, ANA.TOP, BA, 7, 'قبل وبعد — الأكشنز اللي اتعملت', ['الأكشن', 'اتعمل يوم', 'المقياس', 'على', 'قبل (7 أيام)', 'بعد', 'التغيير']);
+  todayHead_(g, ANA.TOP, R, C, 'التاسكات — اكتب التاسك هنا، أو علّم ➕ جنب أي أكشن', ANA.TASK_COLS.map(x => x[0]));
+  const H = Number(Utilities.formatDate(new Date(), tz_(), 'H')), Mi = Number(Utilities.formatDate(new Date(), tz_(), 'm')), dayPart = (H + Mi / 60) / 24;
+  const meta = anaJson_(ANA.TASK_META_KEY, true), keepFrozen = {};
+  const metaOf = (camp, w) => { const p = camp.split('|'); return p[0] === 'META' ? meta[p[1] + '|' + w.from + '|' + w.to] || null : null; };
   for (let i = 0; i < N; i++) {
-    const t = tasks[i], row = first + i, inp = { bg: ANA.INPUT };
+    const t = tasks[i], row = first + i, inp = { bg: ANA.INPUT, va: 'middle' }, mid = { va: 'middle' };
     if (t) {
-      const closed = t.status === ANA.STATUS[2], st = closed ? { bg: '#e5e7eb', fc: ANA.GREY } : inp;
-      g.set(row, R, t.text, Object.assign({ b: closed ? 'normal' : 'bold' }, st));
-      g.set(row, R + 1, ANA.PRI[t.pri], Object.assign({ al: 'center' }, closed ? st : { bg: ANA.PRI_BG[t.pri] }));
+      const closed = t.status === ANA.STATUS[2], st = closed ? { bg: '#e5e7eb', fc: ANA.GREY, va: 'middle' } : inp, key = anaTaskKey_(t);
+      let v = frozen[key];
+      if (!v) { v = anaTaskNums_(F, t, metaOf, dayPart); if (v.full) keepFrozen[key] = v; } else keepFrozen[key] = v;
+      g.set(row, R, t.text, Object.assign({ b: closed ? 'normal' : 'bold', wr: true }, st));
+      g.set(row, R + 1, ANA.PRI[t.pri], Object.assign({ al: 'center' }, closed ? st : { bg: ANA.PRI_BG[t.pri], va: 'middle' }));
       g.set(row, R + 2, t.status, Object.assign({ al: 'center' }, st));
       g.set(row, R + 3, t.added, Object.assign({ al: 'center' }, st));
-      g.set(row, R + 4, t.note, st);
-    } else g.fill(row, R, 5, inp);
-    const x = manual.ba[i];
-    if (x) {
-      const v = anaBeforeAfter_(F, x), bg = v.good === true ? ANA.GREEN : v.good === false ? ANA.RED : null;
-      g.set(row, BA, x.text, Object.assign({ b: 'bold' }, inp));
-      g.set(row, BA + 1, anaDate_(x.done, today) || x.done, Object.assign({ al: 'center' }, inp));
-      g.set(row, BA + 2, v.metric || x.metric, Object.assign({ al: 'center' }, inp));
-      g.set(row, BA + 3, x.scope, inp);
-      g.set(row, BA + 4, typeof v.before === 'number' ? anaNum_(v.before, 4) : v.before, { nf: v.nf, al: 'center' });
-      g.set(row, BA + 5, typeof v.after === 'number' ? anaNum_(v.after, 4) : v.after, { nf: v.nf, al: 'center' });
-      g.set(row, BA + 6, v.change, { al: 'center', b: 'bold', bg: bg });
-    } else { g.fill(row, BA, 4, inp); }
+      g.set(row, R + 4, t.note, Object.assign({ wr: true }, st));
+      g.set(row, R + 5, t.camp, Object.assign({ wr: true }, inp));
+      g.set(row, R + 6, t.metrics, Object.assign({ wr: true }, inp));
+      g.set(row, R + 7, t.opt, Object.assign({ al: 'center' }, inp));
+      g.set(row, R + 8, t.doneAt, Object.assign({ al: 'center' }, inp));
+      ['b3', 'b7', 'a3', 'a7'].forEach((k, j) => g.set(row, R + 9 + j, v[k], Object.assign({ wr: true, fc: /^(اختار|مش لاقي|لما)/.test(v[k]) ? ANA.GREY : '#000000' }, mid)));
+      g.set(row, R + 13, v.res, { wr: true, b: 'bold', va: 'middle', bg: v.good === true ? ANA.GREEN : v.good === false ? ANA.RED : null });
+    } else { g.fill(row, R, 9, inp); g.fill(row, R + 9, 5, mid); }
     g.cell(row, R + 3).nf = '@'; // dates stay as typed text (2026-11-21)
-    g.cell(row, BA + 1).nf = '@';
+    g.cell(row, R + 8).nf = '@';
   }
+  propSetBig_(ANA.TASK_FROZEN_KEY, JSON.stringify(keepFrozen));
   g.live = [[3, 1]];
   anaRtl_(g);
   const oldN = Number(props.getProperty(ANA.ROWS_KEY) || 0);
   let oldFinds = [];
   try { oldFinds = JSON.parse(propGetBig_(ANA.FIND_KEY) || '[]'); } catch (e) { oldFinds = []; }
-  const drew = writeGrid_(sh, g);
+  const drew = writeGrid_(sh, g), relaid = props.getProperty(ANA.LAYOUT_KEY) !== '2';
   props.setProperty(ANA.ROWS_KEY, String(N));
+  props.setProperty(ANA.LAYOUT_KEY, '2');
   propSetBig_(ANA.FIND_KEY, JSON.stringify(findRows));
-  if (!drew) return;
-  // The ✅ boxes and the lists to choose from, where the rows are now.
+  if (!drew && !relaid) return;
+  // The ➕ boxes and the lists to choose from, where the rows are now.
   const lastOld = Math.max(oldFinds.length ? oldFinds[oldFinds.length - 1].row : 0, sh.getLastRow());
   if (lastOld >= ANA.TOP) sh.getRange(ANA.TOP, 5, lastOld - ANA.TOP + 1, 1).setDataValidation(null);
-  if (findRows.length) sh.getRange(findRows[0].row, 5, findRows.length, 1).insertCheckboxes();
-  if (oldN > N) sh.getRange(first + N, R, oldN - N, 12).setDataValidation(null);
+  for (let i = 0; i < findRows.length;) { // consecutive rows in one go
+    let k = i + 1;
+    while (k < findRows.length && findRows[k].row === findRows[k - 1].row + 1) k++;
+    sh.getRange(findRows[i].row, 5, k - i, 1).insertCheckboxes();
+    i = k;
+  }
+  sh.getRange(first, R, Math.max(N, oldN), C).setDataValidation(null);
   const list = (vals, bad) => SpreadsheetApp.newDataValidation().requireValueInList(vals.slice(0, 500), true).setAllowInvalid(!!bad).build();
-  const scopes = [ANA.BIZ].concat(Object.keys(F.accName).map(id => F.accName[id]),
-    Object.keys(F.items).filter(n => anaSum_(F.items[n], shiftKey_(today, -30), today).orders >= 3).sort(),
-    Object.keys(F.campName).filter(k => anaSum_(F.camp[k], shiftKey_(today, -14), today).spend > 0).map(k => F.campName[k]));
+  const spent = k => anaSum_(F.camp[k], shiftKey_(today, -14), today).spend;
+  const scopes = Object.keys(F.campName).filter(k => spent(k) > 0).sort((a, b) => spent(b) - spent(a)).map(k => F.campName[k])
+    .concat([ANA.BIZ], Object.keys(F.accName).map(id => F.accName[id]),
+      Object.keys(F.items).filter(n => anaSum_(F.items[n], shiftKey_(today, -30), today).orders >= 3).sort());
   sh.getRange(first, R + 1, N, 1).setDataValidation(list([1, 2, 3, 4].map(k => ANA.PRI[k])));
   sh.getRange(first, R + 2, N, 1).setDataValidation(list(ANA.STATUS));
-  sh.getRange(first, BA + 2, N, 1).setDataValidation(list(ANA.METRICS));
-  sh.getRange(first, BA + 3, N, 1).setDataValidation(list(Array.from(new Set(scopes)), true));
+  sh.getRange(first, R + 5, N, 1).setDataValidation(list(Array.from(new Set(scopes)), true));
+  sh.getRange(first, R + 6, N, 1).setDataValidation(list(ANA.METRIC_SETS.concat([ANA.ALL_METRICS], ANA.TMETRICS.map(x => x[0])), true));
+  sh.getRange(first, R + 7, N, 1).setDataValidation(list(ANA.TMETRICS.map(x => x[0])));
   ANA.WIDTHS.forEach((w, i) => sh.setColumnWidth(i + 1, w));
   sh.getRange(1, 2, sh.getMaxRows(), 2).setWrap(true);
-  sh.getRange(first, R, N, 1).setWrap(true);
-  sh.getRange(first, BA, N, 1).setWrap(true);
   anaLook_(sh, g, W);
+  sh.getRange(first, R, N, C).setVerticalAlignment('middle');
 }
 
 /*

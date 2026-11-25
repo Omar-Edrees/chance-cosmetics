@@ -23,18 +23,35 @@
 const ANA = {
   TAB: 'Actions', TAB2: 'Analysis', OLD_TAB: 'Analysis & Actions', SNAP: 'Intraday Ads', GROUPS: 'ANA_GROUPS',
   /* Analysis: 15 columns, F and L narrow gaps between the small tables at the top; the tables under them skip the gaps. */
-  W2: [190, 85, 85, 85, 85, 14, 240, 85, 85, 85, 85, 14, 90, 420, 95], LC: [1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 13, 14], BACK: 60, WIDTH: 18, TOP: 4, MIN_ROWS: 12, SPARE: 4,
-  R: 7, BA: 12, // tasks start at column G (5 columns), before / after at column L (7 columns); the left side is A–E
+  W2: [190, 85, 85, 85, 85, 14, 240, 85, 85, 85, 85, 14, 90, 420, 95], LC: [1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 13, 14], BACK: 60, WIDTH: 20, TOP: 4, MIN_ROWS: 12, SPARE: 4,
+  R: 7, TCOLS: 14, // the tasks table starts at column G (14 columns, G–T); the actions are A–E
+  /* The tasks table: [header, key] in order (G–T). The numbers (P–T) are drawn; the rest is typed or chosen. */
+  TASK_COLS: [['التاسك', 'text'], ['الأولوية', 'pri'], ['الحالة', 'status'], ['اتضافت يوم', 'added'], ['ملاحظات', 'note'], ['الكامبين', 'camp'],
+    ['المتريكس اللي تظهر', 'metrics'], ['الأوبتيمايز على', 'opt'], ['اتعملت يوم', 'doneAt'], ['قبل: آخر 3 أيام', 'b3'], ['قبل: آخر 7 أيام', 'b7'],
+    ['بعد: 3 أيام', 'a3'], ['بعد: 7 أيام', 'a7'], ['النتيجة', 'res']],
+  LAYOUT_KEY: 'ANA_LAYOUT', TASK_FROZEN_KEY: 'ANA_TASK_FROZEN', TASK_META_KEY: 'ANA_TASK_META',
   FUNNEL_KEY: 'ANA_FUNNEL', DONE_KEY: 'ANA_DONE', ROWS_KEY: 'ANA_ROWS', FIND_KEY: 'ANA_FINDS', PENDING_KEY: 'ANA_PENDING', DONE_DAYS: 7,
   AT_KEY: 'ANA_AT', STALE_MIN: 14,
-  STOCK_COLOR: 5, STOCK_NO_ADS: 30, STOCK_ACT: 15, STOCK_ROWS: 15, ACT_GOOD: 5, TOP_LIST: 8,
+  STOCK_COLOR: 5, STOCK_NO_ADS: 30, STOCK_ACT: 15, STOCK_ROWS: 15, ACT_GOOD: 5, ACT_ITEMS: 15, TOP_LIST: 8,
   MIN_SPEND: 1000, DROP: 0.2, WORSE: 0.15, WINDOW_LOW: 0.7, WINDOW_MIN: 500, DUP: 0.5, DUP_MIN: 3, DUP_SPEND: 1000,
   PRI: { 1: '🔴 عاجل', 2: '🟠 مهم', 3: '🟡 راقب', 4: '🟢 فرصة' },
   PRI_BG: { 1: '#f4cccc', 2: '#fce5cd', 3: '#fff2cc', 4: '#d9ead3' },
   STATUS: ['لسه', 'شغال فيها', 'خلصت'],
   METRICS: ['Shopify ROAS', 'CPP', 'الأوردرات في اليوم', 'الصرف في اليوم', 'نسبة الإلغاء'],
+  /*
+   * The metrics a task can show before / after: [name, kind, better (1 up, -1 down, 0 neither), other names typed for it].
+   * kind: money, ratio, pct, freq. Hook rate and the frequency are read from Meta for the task's campaign (refreshTaskMeta_).
+   */
+  TMETRICS: [['الصرف في اليوم', 'money', 0, ['الصرف', 'spend', 'amount spent', 'ad spend']], ['الأوردرات في اليوم', 'count', 1, ['الأوردرات', 'orders', 'اوردرات']],
+    ['CPP', 'money', -1, ['cost per purchase']], ['Shopify ROAS', 'ratio', 1, ['roas', 'رؤاس']], ['Meta ROAS', 'ratio', 1, ['pixel roas']],
+    ['AOV', 'money', 1, ['متوسط الأوردر']], ['CPM', 'money', -1, []], ['CTR', 'pct', 1, ['link ctr']], ['CPC', 'money', -1, ['link cpc']],
+    ['التحويل', 'pct', 1, ['cvr', 'conversion rate', 'conversion']], ['Hook rate', 'pct', 1, ['hook', 'هوك']], ['الفريكونسي', 'freq', -1, ['frequency', 'freq']],
+    ['نسبة الإلغاء', 'pct', -1, ['الإلغاء', 'cancel', 'cancellation']]],
+  ALL_METRICS: 'كل المتريكس',
+  DEFAULT_METRICS: ['الصرف في اليوم', 'الأوردرات في اليوم', 'CPP', 'Shopify ROAS'],
+  METRIC_SETS: ['الصرف، الأوردرات، CPP، Shopify ROAS', 'CPM، CTR، CPC، Hook rate', 'CTR، Hook rate، الفريكونسي', 'Shopify ROAS، AOV، التحويل'],
   BIZ: 'البيزنس كله',
-  WIDTHS: [95, 400, 440, 95, 70, 16, 240, 90, 90, 95, 150, 240, 95, 120, 130, 95, 95, 95],
+  WIDTHS: [95, 400, 440, 95, 70, 16, 240, 90, 90, 95, 150, 220, 170, 120, 95, 160, 160, 160, 160, 190],
   DARK: '#1f2937', LABEL: '#f3f4f6', INPUT: '#fffbe6', GREEN: '#d9ead3', RED: '#f4cccc', AMBER: '#fff2cc', GREY: '#6b7280', BLUE: '#e8eefc',
   MONEY: '#,##0', RATIO: '0.00', PCT: '0.0%', COUNT: '0',
   /* What to do when a metric is worse, by its name in Today's benchmark or the Daily Account Funnel. */
@@ -118,7 +135,7 @@ function anaBe_(F) {
  * governorate, last 30 days), times (each order of the last 8 days with its hour, platform and campaign), okIds (orders not
  * cancelled or returned, for the colors), cat (catalog ads' orders and spend per product, last 14 days).
  */
-function anaFacts_(today) {
+function anaFacts_(today, since) {
   const from = shiftKey_(today, -ANA.BACK), F = { today: today, from: from, month0: today.slice(0, 8) + '01', biz: {}, acc: {}, accName: {}, accPlat: {},
     pix: {}, camp: {}, campName: {}, campAcc: {}, prod: {}, items: {}, gov: {}, times: [], okIds: {}, cat: {}, catSpend: {}, msg: msgAccounts_() };
   const day = (map, k, d) => { const x = map[k] = map[k] || {}; return x[d] = x[d] || anaZero_(); };
@@ -132,7 +149,8 @@ function anaFacts_(today) {
   ['META', 'TIKTOK'].forEach(p => accounts_(p).forEach(a => { F.accName[a.id] = a.name || a.id; F.accPlat[a.id] = p; }));
   // Ads and store orders: this month or the last 31 days, whichever is longer (every 15 minutes, so not more); the business
   // and the products (Daily Log, already read) go back ANA.BACK days, for last month and the before / after table.
-  const near = [F.month0, shiftKey_(today, -30)].sort()[0];
+  // since: the first day an open task's before / after needs (ANA.BACK days back at most).
+  const near = [F.month0, shiftKey_(today, -30), since ? (since > from ? since : from) : today].sort()[0];
   const biz = bizDays_(from, today);
   Object.keys(biz).forEach(d => {
     const t = biz[d];
@@ -146,16 +164,17 @@ function anaFacts_(today) {
     if ((p !== 'META' && p !== 'TIKTOK') || !d) return;
     const acc = String(a[2]), cid = String(a[4] || ''), k = p + '|' + cid, s = num_(a[10]);
     if (!F.accName[acc]) { F.accName[acc] = String(a[3] || acc); F.accPlat[acc] = p; }
-    const x = day(F.pix, acc, d);
-    x.spend += s; x.orders += num_(a[13]); x.revenue += num_(a[14]);
-    day(F.acc, acc, d).spend += s;
+    const x = day(F.pix, acc, d), imp = num_(a[11]), clicks = num_(a[12]), pval = num_(a[14]);
+    x.spend += s; x.orders += num_(a[13]); x.revenue += pval;
+    const ac = day(F.acc, acc, d);
+    ac.spend += s; ac.imp = (ac.imp || 0) + imp; ac.clicks = (ac.clicks || 0) + clicks; ac.pval = (ac.pval || 0) + pval;
     if (!cid) return;
     if (!F.campName[k]) { F.campName[k] = String(a[5] || cid); F.campAcc[k] = acc; }
     if (a[5] && !byName[p + '|' + norm_(a[5])]) byName[p + '|' + norm_(a[5])] = k;
     if (a[8]) adCamp[p + '|' + a[8]] = k;
     if (a[6]) setCamp[p + '|' + a[6]] = k;
     const c = day(F.camp, k, d);
-    c.spend += s; c.pixel += num_(a[13]);
+    c.spend += s; c.pixel += num_(a[13]); c.imp = (c.imp || 0) + imp; c.clicks = (c.clicks || 0) + clicks; c.pval = (c.pval || 0) + pval;
   });
   const campOf = o => {
     const p = o[3];
@@ -246,7 +265,8 @@ function anaMerge_(finds) {
     out.push({ id: k.split('|')[0] + '|' + sha_(list.map(item).sort().join('|')).slice(0, 12), kind: list[0].kind, pri: list[0].pri, area: list[0].area,
       title: list.length + ' ' + m[0], detail: list.slice(0, 6).map(f => '• ' + item(f) + (f.short ? '\n     ' + f.short : '')).join('\n') + more,
       action: m[1] + ':\n' + anaList_(list.slice(0, 6).map(item)) + more, impact: list.reduce((s, f) => s + f.impact, 0),
-      metric: list[0].metric, scope: scopes.length === 1 ? scopes[0] : ANA.BIZ, n: list.length });
+      metric: list[0].metric, scope: scopes.length === 1 ? scopes[0] : ANA.BIZ, n: list.length,
+      head: list.length + ' ' + m[0], verb: m[1], subs: list.map(f => Object.assign({}, f, { label: item(f) })) });
   });
   return out.sort((a, b) => (a.pri - b.pri) || (b.impact - a.impact));
 }
@@ -749,33 +769,113 @@ function anaScopeDays_(F, scope) {
     Object.keys(Object.assign({}, a, b)).forEach(d => { out[d] = Object.assign(anaZero_(), a[d] || {}, { cancelled: (b[d] || {}).cancelled || 0, decided: (b[d] || {}).decided || 0 }); });
     return out;
   }
-  const camp = Object.keys(F.campName).find(k => norm_(F.campName[k]) === n);
+  const camp = anaScopeCamp_(F, s);
   return camp ? F.camp[camp] || {} : null;
 }
-/* A metric over [from..to] of a scope's days, or null. */
-function anaMetric_(days, metric, from, to) {
-  if (!days || to < from) return null;
-  const t = anaSum_(days, from, to), n = Math.round((Date.parse(to) - Date.parse(from)) / 86400000) + 1;
-  if (metric === 'CPP') return t.orders > 0 ? t.spend / t.orders : null;
-  if (metric === 'الأوردرات في اليوم') return t.orders / n;
-  if (metric === 'الصرف في اليوم') return t.spend / n;
-  if (metric === 'نسبة الإلغاء') return anaCancel_(t);
-  return anaRoas_(t);
+/* ---------- The tasks table: a campaign's numbers before and after a task ---------- */
+
+/* A task metric by its name (or another name typed for it): [name, kind, better, other names], or null. */
+function anaTMetric_(name) {
+  const n = norm_(name);
+  if (!n) return null;
+  return ANA.TMETRICS.find(m => norm_(m[0]) === n || m[3].some(x => norm_(x) === n)) || null;
 }
-/* Before = the 7 days before the day it was done, after = from that day until yesterday (7 days at most). */
-function anaBeforeAfter_(F, x) {
-  const d = anaDate_(x.done, F.today), metric = ANA.METRICS.indexOf(x.metric) >= 0 ? x.metric : ANA.METRICS[0];
-  if (!d) return { before: '', after: x.done ? 'اكتب التاريخ كده: ' + F.today : '', change: '' };
-  const days = anaScopeDays_(F, x.scope);
-  if (!days) return { before: '', after: 'مش لاقي "' + x.scope + '"', change: '' };
-  const y = shiftKey_(F.today, -1), to = shiftKey_(d, 6) < y ? shiftKey_(d, 6) : y;
-  const b = anaMetric_(days, metric, shiftKey_(d, -7), shiftKey_(d, -1)), a = d > y ? null : anaMetric_(days, metric, d, to);
-  const better = metric === 'CPP' || metric === 'نسبة الإلغاء' ? -1 : metric === 'الصرف في اليوم' ? 0 : 1;
-  let change = '', good = null;
-  if (typeof a === 'number' && typeof b === 'number') {
-    if (metric === 'نسبة الإلغاء') { change = Math.round((a - b) * 1000) / 10 + ' نقطة'; good = better * (a - b) > 0.005 ? true : better * (a - b) < -0.005 ? false : null; }
-    else if (b > 0) { const c = a / b - 1; change = anaPct_(c); good = better === 0 ? null : better * c > 0.03 ? true : better * c < -0.03 ? false : null; }
+/* The metrics a task shows: what's typed or chosen (separated by ، , + or new lines; "كل المتريكس" = all), else the usual ones; the optimized one always. */
+function anaTaskMetrics_(text, opt) {
+  const s = String(text || '').trim(), out = [];
+  if (norm_(s) === norm_(ANA.ALL_METRICS)) ANA.TMETRICS.forEach(m => out.push(m[0]));
+  else s.split(/[،,+\n|]+/).forEach(x => { const m = anaTMetric_(x); if (m && out.indexOf(m[0]) < 0) out.push(m[0]); });
+  if (!out.length) ANA.DEFAULT_METRICS.forEach(m => out.push(m));
+  const o = anaTMetric_(opt);
+  if (o && out.indexOf(o[0]) < 0) out.push(o[0]);
+  return out;
+}
+/* The campaign key (PLATFORM|id) of a scope written as a campaign's name, or ''. The one that spent most when two share a name. */
+function anaScopeCamp_(F, scope) {
+  const n = norm_(scope);
+  if (!n) return '';
+  const keys = Object.keys(F.campName).filter(k => norm_(F.campName[k]) === n);
+  return keys.sort((a, b) => anaSum_(F.camp[b], F.from, F.today).spend - anaSum_(F.camp[a], F.from, F.today).spend)[0] || '';
+}
+/*
+ * A task's 4 windows. Not done yet: before = the last 3 and 7 full days (until yesterday), no after. Done on day d: before =
+ * the 3 and 7 days before d, after = from d for 3 and 7 days, until today at most (today live). n = days in the window so
+ * far (today counts by the hours gone), full = the window is over.
+ */
+function anaTaskWindows_(t, today, dayPart) {
+  const done = !!t.doneAt && t.doneAt <= today, d = done ? t.doneAt : today, w = (from, to) => ({ from: from, to: to });
+  const after = len => {
+    const end = shiftKey_(d, len - 1), to = end < today ? end : today, full = end < today;
+    const n = Math.round((Date.parse(to) - Date.parse(d)) / 86400000) + (to === today ? dayPart : 1);
+    return { from: d, to: to, n: Math.max(n, 0.05), full: full, len: len, day: Math.round((Date.parse(to) - Date.parse(d)) / 86400000) + 1 };
+  };
+  return { done: done, d: d, b3: Object.assign(w(shiftKey_(d, -3), shiftKey_(d, -1)), { n: 3, full: true }),
+    b7: Object.assign(w(shiftKey_(d, -7), shiftKey_(d, -1)), { n: 7, full: true }), a3: done ? after(3) : null, a7: done ? after(7) : null };
+}
+/* A metric of a window's sum t (n days; meta: Meta's impressions, reach and 3-second plays of the campaign), or null. */
+function anaTaskValue_(name, t, n, meta) {
+  const r = (a, b) => (b > 0 ? a / b : null);
+  switch (name) {
+    case 'الصرف في اليوم': return t.spend / n;
+    case 'الأوردرات في اليوم': return t.orders / n;
+    case 'CPP': return r(t.spend, t.orders);
+    case 'Shopify ROAS': return r(t.revenue, t.spend);
+    case 'Meta ROAS': return t.pval === undefined ? null : r(t.pval || 0, t.spend);
+    case 'AOV': return r(t.revenue, t.orders);
+    case 'CPM': return t.imp ? r(t.spend * 1000, t.imp) : null;
+    case 'CTR': return t.imp ? r(t.clicks || 0, t.imp) : null;
+    case 'CPC': return t.clicks ? r(t.spend, t.clicks) : null;
+    case 'التحويل': return t.clicks ? r(t.orders, t.clicks) : null;
+    case 'Hook rate': return meta ? r(meta.v3, meta.imp) : null;
+    case 'الفريكونسي': return meta ? r(meta.imp, meta.reach) : null;
+    case 'نسبة الإلغاء': return anaCancel_(t);
   }
-  return { before: b === null ? '—' : b, after: d > y ? 'من بكره' : a === null ? '—' : a, change: change, good: good, metric: metric,
-    nf: metric === 'نسبة الإلغاء' ? ANA.PCT : metric === 'Shopify ROAS' ? ANA.RATIO : ANA.MONEY };
+  return null;
+}
+/* A metric's value as text: money with commas, percentages with 2 decimals. */
+function anaTaskFmt_(name, v) {
+  if (typeof v !== 'number' || !isFinite(v)) return '—';
+  const kind = (anaTMetric_(name) || [])[1];
+  if (kind === 'pct') return (Math.round(v * 10000) / 100).toFixed(2) + '%';
+  if (kind === 'ratio' || kind === 'freq') return v.toFixed(2);
+  if (kind === 'count') return String(Math.round(v * 10) / 10);
+  return anaMoney_(v);
+}
+/* "21/11" */
+function anaShortDay_(k) { return Number(k.slice(8, 10)) + '/' + Number(k.slice(5, 7)); }
+/*
+ * A task's numbers: {b3, b7, a3, a7, res, good, full}. Each window cell: its days on the first line, then a line per
+ * metric. res: the optimized metric after against before (3 days and 7 days), and whether it got better (good: true /
+ * false / null). full: the 7 days after are over (the numbers don't change anymore). metaOf(campKey, window) → Meta's numbers.
+ */
+function anaTaskNums_(F, t, metaOf, dayPart) {
+  const empty = { b3: '', b7: '', a3: '', a7: '', res: '', good: null, full: false };
+  if (!String(t.camp || '').trim()) return Object.assign(empty, { b3: 'اختار الكامبين' });
+  const days = anaScopeDays_(F, t.camp);
+  if (!days) return Object.assign(empty, { b3: 'مش لاقي "' + t.camp + '" في آخر ' + ANA.BACK + ' يوم' });
+  const camp = anaScopeCamp_(F, t.camp), W = anaTaskWindows_(t, F.today, dayPart), list = anaTaskMetrics_(t.metrics, t.opt);
+  const vals = w => {
+    const sum = anaSum_(days, w.from, w.to), meta = camp && metaOf ? metaOf(camp, w) : null, out = {};
+    list.forEach(m => { out[m] = anaTaskValue_(m, sum, w.n, meta); });
+    return out;
+  };
+  const cell = (w, head) => { const v = vals(w); return { v: v, text: head + '\n' + list.map(m => m + ': ' + anaTaskFmt_(m, v[m])).join('\n') }; };
+  const b3 = cell(W.b3, anaShortDay_(W.b3.from) + ' → ' + anaShortDay_(W.b3.to)), b7 = cell(W.b7, anaShortDay_(W.b7.from) + ' → ' + anaShortDay_(W.b7.to));
+  const out = Object.assign({}, empty, { b3: b3.text, b7: b7.text });
+  if (!W.done) return Object.assign(out, { a3: 'لما الحالة تبقى خلصت', a7: 'لما الحالة تبقى خلصت' });
+  const live = w => anaShortDay_(w.from) + ' → ' + (w.full ? anaShortDay_(w.to) : 'النهارده (يوم ' + w.day + ' من ' + w.len + ')');
+  const a3 = cell(W.a3, live(W.a3)), a7 = cell(W.a7, live(W.a7));
+  Object.assign(out, { a3: a3.text, a7: a7.text, full: W.a7.full });
+  const opt = (anaTMetric_(t.opt) || [])[0];
+  if (!opt) return Object.assign(out, { res: 'اختار الأوبتيمايز على' });
+  const better = anaTMetric_(opt)[2];
+  const change = (a, b) => {
+    if (typeof a !== 'number' || typeof b !== 'number' || !(b > 0)) return { text: '—', good: null };
+    const c = a / b - 1, good = better === 0 ? null : better * c > 0.03 ? true : better * c < -0.03 ? false : null;
+    const word = better === 0 ? (c > 0.03 ? 'زاد' : c < -0.03 ? 'قل' : 'زي ما هو') : good === true ? 'اتحسن ✅' : good === false ? 'وقع ❌' : 'زي ما هو';
+    return { text: anaPct_(c) + ' ' + word, good: good };
+  };
+  const c3 = change(a3.v[opt], b3.v[opt]), c7 = change(a7.v[opt], b7.v[opt]);
+  const pick = W.a7.full ? c7 : c3;
+  return Object.assign(out, { res: opt + '\n3 أيام: ' + c3.text + (W.a3.full ? '' : ' (لسه)') + '\n7 أيام: ' + c7.text + (W.a7.full ? '' : ' (لسه)'), good: pick.good });
 }
