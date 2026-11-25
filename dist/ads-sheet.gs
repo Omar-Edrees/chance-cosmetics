@@ -11,7 +11,7 @@
  * Ad accounts and stores are read-only from here: no writes to Meta, TikTok or order sources.
  */
 const APP = {
-  VERSION: '1.79.0',
+  VERSION: '1.80.0',
   T: {
     SETTINGS: 'Settings', ACCOUNTS: 'Accounts', PRODUCTS: 'Products', ADMAP: 'Ad Map',
     ADS: 'Ads Raw', ACC_RAW: 'Account Raw', ORDERS: 'Orders Raw', DAILY: 'Daily Log',
@@ -1772,6 +1772,7 @@ function ensureTriggers_() {
   if (PropertiesService.getDocumentProperties().getProperty('TRIGGERS_PAUSED')) return;
   const have = ScriptApp.getProjectTriggers().map(t => t.getHandlerFunction());
   try { ensureCardEditTrigger_(have); } catch (e) { console.error('edit trigger: ' + errText_(e)); }
+  if (have.indexOf('analysisTick') < 0) ScriptApp.newTrigger('analysisTick').timeBased().everyMinutes(5).create();
   if (have.indexOf('liveTick') >= 0 && have.indexOf('dailySync') >= 0) return;
   let every = cfgNum_('sync.live_minutes') || 15;
   every = [1, 5, 10, 15, 30].filter(v => v <= every).pop() || 15;
@@ -1922,8 +1923,9 @@ function quickRefresh() {
 }
 
 function installTriggers() {
-  const names = ['liveTick', 'dailySync'];
+  const names = ['liveTick', 'dailySync', 'analysisTick'];
   ScriptApp.getProjectTriggers().filter(t => names.indexOf(t.getHandlerFunction()) >= 0).forEach(t => ScriptApp.deleteTrigger(t));
+  ScriptApp.newTrigger('analysisTick').timeBased().everyMinutes(5).create();
   let every = cfgNum_('sync.live_minutes') || 15;
   every = [1, 5, 10, 15, 30].filter(v => v <= every).pop() || 15;
   ScriptApp.newTrigger('liveTick').timeBased().everyMinutes(every).create();
@@ -1932,7 +1934,7 @@ function installTriggers() {
   alert_('التحديث التلقائي شغال ✅\nكل ' + every + ' دقيقة خلال اليوم، ومزامنة كاملة الساعة 12:30 بالليل.');
 }
 function pauseTriggers() {
-  ScriptApp.getProjectTriggers().filter(t => ['liveTick', 'dailySync'].indexOf(t.getHandlerFunction()) >= 0).forEach(t => ScriptApp.deleteTrigger(t));
+  ScriptApp.getProjectTriggers().filter(t => ['liveTick', 'dailySync', 'analysisTick'].indexOf(t.getHandlerFunction()) >= 0).forEach(t => ScriptApp.deleteTrigger(t));
   PropertiesService.getDocumentProperties().setProperty('TRIGGERS_PAUSED', nowText_());
   alert_('التحديث التلقائي اتوقف ⏸');
 }
@@ -3273,7 +3275,13 @@ function todayClosing_(g, today, sum, rows, gap) {
   };
   const platform = (label, color, list, totalLabel, totalStyle, key, plus) => {
     const first = r, items = list.length ? list : [{ name: '', spend: 0, orders: 0, value: 0 }];
-    items.forEach(a => { line(r, a.name, a.spend, a.orders, a.value, {}, key === 'META'); r++; });
+    items.forEach(a => {
+      line(r, a.name, a.spend, a.orders, a.value, {}, key === 'META');
+      // A messages-only account (accounts.messages_only, Chance 26): its orders come from chats and aren't tracked yet, so
+      // only its spend shows (no pixel orders, CPP, ROAS or AOV) until they are.
+      if (key === 'META' && a.id && isMsgAccount_(a.id)) [4, 5, 6, 7].forEach(c => { g.cell(r, c).v = ''; });
+      r++;
+    });
     g.set(first, 1, label, { bg: color, fc: '#ffffff', b: 'bold', al: 'center' });
     for (let i = first + 1; i < r; i++) g.cell(i, 1).bg = color;
     if (items.length > 1) g.merge(first, 1, items.length, 1);
@@ -3317,6 +3325,63 @@ function todayClosing_(g, today, sum, rows, gap) {
   const aov = aovCard && typeof aovCard.values[0] === 'number' && isFinite(aovCard.values[0]) ? Math.round(aovCard.values[0] * 100) / 100 : '';
   g.cell(r, 7).v = aov !== '' ? aov : ratioOrBlank_(net.total.net, net.total.n, 2);
   return r;
+}
+
+/*
+ * Under the accounts: the campaigns to follow closely, from their names in every Meta and TikTok account (the messages
+ * account's left out: its orders aren't tracked).
+ *  - Offers, every campaign of a kind together: FLASH SALE (flash sale / فلاش) and BUNDLES (bundle / باندل).
+ *  - NEW TESTING: campaigns with "new testing" or "new product" (new test, new products ...) in the name, one row per
+ *    product (the product in the campaign's name, else the name itself), so a product on test is followed on its own.
+ * Spend from Ads Raw, orders and sales = the Shopify orders whose UTM is the campaign's (like Duplication; DIRECT isn't
+ * shared out here), CPP = spend ÷ orders, Shopify ROAS = sales ÷ spend, AOV = sales ÷ orders. Returns the last row.
+ */
+const TODAY_OFFERS = {
+  GROUPS: [['FLASH SALE', /flash[\s_-]*sales?|فلاش/i], ['BUNDLES', /bundles?|باندل|بندل/i]],
+  TEST_RX: /new[\s_-]*test(ing)?|new[\s_-]*products?/i, OFFER: '#fde68a', TEST: '#c7d2fe'
+};
+function todayOffers_(g, r, title, from, to) {
+  const S = TODAY, d = dupData_(from, to), msg = msgAccounts_(), camps = [];
+  ['META', 'TIKTOK'].forEach(p => d[p].camps.forEach(c => { if (c.name && !msg.has(String(c.acc)) && (c.sum.spend > 0 || c.sum.utm > 0)) camps.push(c); }));
+  const zero = () => ({ spend: 0, orders: 0, rev: 0, n: 0 }), add = (t, c) => { t.spend += c.sum.spend; t.orders += c.sum.utm; t.rev += c.sum.rev; t.n++; };
+  const offers = TODAY_OFFERS.GROUPS.map(x => ({ name: x[0], t: zero() })), tests = new Map();
+  camps.forEach(c => {
+    const i = TODAY_OFFERS.GROUPS.findIndex(x => x[1].test(c.name));
+    if (i >= 0) { add(offers[i].t, c); return; }
+    if (!TODAY_OFFERS.TEST_RX.test(c.name)) return;
+    const target = campaignTarget_(c.name), name = target.kind === 'PRODUCT' ? target.title
+      : c.name.split('|').map(x => x.replace(TODAY_OFFERS.TEST_RX, '').trim()).filter(Boolean)[0] || c.name;
+    if (!tests.has(name)) tests.set(name, zero());
+    add(tests.get(name), c);
+  });
+  g.set(r, 1, title, { bg: S.DARK, fc: '#ffffff', b: 'bold', al: 'center' });
+  g.fill(r, 2, 6, { bg: S.DARK });
+  g.merge(r, 1, 1, 7);
+  r++;
+  ['GROUP', 'CAMPAIGNS', 'AMOUNT SPENT', 'ORDERS (SHOPIFY UTM)', 'CPP', 'SHOPIFY ROAS', 'AOV']
+    .forEach((h, i) => g.set(r, 1 + i, h, { bg: S.YELLOW, b: 'bold', al: 'center' }));
+  r++;
+  const line = (name, t, color) => {
+    g.set(r, 2, name + (t.n ? ' (' + t.n + (t.n === 1 ? ' CAMPAIGN)' : ' CAMPAIGNS)') : ''), { wr: true, va: 'middle' });
+    g.set(r, 3, Math.round(t.spend * 100) / 100, { nf: S.MONEY, al: 'right', va: 'middle' });
+    g.set(r, 4, t.orders, { nf: S.COUNT, al: 'right', va: 'middle' });
+    g.set(r, 5, ratioOrBlank_(t.spend, t.orders, 2), { nf: S.MONEY, al: 'right', bg: S.METRIC, va: 'middle' });
+    g.set(r, 6, ratioOrBlank_(t.rev, t.spend, 2), { nf: S.RATIO, al: 'right', bg: S.METRIC, va: 'middle' });
+    g.set(r, 7, ratioOrBlank_(t.rev, t.orders, 2), { nf: S.MONEY, al: 'right', bg: S.METRIC, va: 'middle' });
+    r++;
+  };
+  const block = (label, color, list, empty) => {
+    const first = r;
+    if (!list.length) { g.set(r, 2, empty, { fc: '#6b7280', va: 'middle' }); g.merge(r, 2, 1, 6); r++; }
+    list.forEach(x => line(x.name, x.t, color));
+    g.set(first, 1, label, { bg: color, b: 'bold', al: 'center', va: 'middle' });
+    for (let i = first + 1; i < r; i++) g.cell(i, 1).bg = color;
+    if (r - first > 1) g.merge(first, 1, r - first, 1);
+  };
+  block('OFFERS', TODAY_OFFERS.OFFER, offers, '');
+  const testList = Array.from(tests.keys()).map(k => ({ name: k, t: tests.get(k) })).sort((a, b) => b.t.spend - a.t.spend);
+  block('NEW TESTING', TODAY_OFFERS.TEST, testList, 'مفيش كامبين في اسمها new testing أو new product صرفت في الفترة دي');
+  return r - 1;
 }
 
 /*
@@ -3519,7 +3584,9 @@ function writeToday_() {
   const p = today.split('-').map(Number), noon = new Date(Date.UTC(p[0], p[1] - 1, p[2], 12));
   const shown = Utilities.formatDate(noon, 'UTC', 'dd-MMM-yyyy'), month = Utilities.formatDate(noon, 'UTC', 'MMM-yyyy');
   const gap = todayCardRows_(), cards = gap && todayCardsReady_(), view = cards ? todayCardCells_(g) : gap ? todayCardNote_(g) : null;
-  todayCampaignWarning_(g, todayStockCover_(g, todayBalances_(g, todayClosing_(g, today, sum, rows, gap) + 2, today) + 1, today) + 1);
+  let left = todayClosing_(g, today, sum, rows, gap) + 2;
+  try { left = todayOffers_(g, left, 'OFFERS & NEW TESTING — TODAY | ' + shown, today, today) + 2; } catch (e) { console.error('today offers: ' + errText_(e)); }
+  todayCampaignWarning_(g, todayStockCover_(g, todayBalances_(g, left, today) + 1, today) + 1);
   let r = todaySlots_(g, 1, today) + 1;
   r = todayBenchmark_(g, r, today, shown) + 1;
   const orders = todayOrders_(today.slice(0, 8) + '01', true), bundles = orderBundlesMap_();
@@ -4927,12 +4994,26 @@ function shopTabCardModel_(fast, spend) {
   const f = Number(Utilities.formatDate(now, tz, 'm')) / 60, today = fast.today, y = shiftKey_(today, -1), w = shiftKey_(today, -7);
   const a = shopTabCut_(fast.hours, today, H, 1), b = shopTabCut_(fast.hours, y, H, f), c = shopTabCut_(fast.hours, w, H, f);
   const hs = (spend || {}).hours || {};
-  const cut = (d, part) => { const x = hs[d]; if (!x) return ''; let t = 0; for (let h = 0; h <= H; h++) t += num_(x[h]) * (h < H ? 1 : part); return round2_(t); };
+  // Today's spend: Meta's hourly breakdown comes in hours late, so the live total of today (Ads Raw, read in the same update,
+  // like the accounts table in Today) is taken when it's bigger. The days we compare with are whole by then.
+  const live = spend ? shopTabLiveSpend_(today) : 0;
+  const cut = (d, part) => {
+    const x = hs[d]; if (!x) return d === today && live ? round2_(live) : '';
+    let t = 0; for (let h = 0; h <= H; h++) t += num_(x[h]) * (h < H ? 1 : part);
+    return round2_(d === today ? Math.max(t, live) : t);
+  };
   const wName = S.DAY_NAMES[shopTabWeekday_(w)] + ' اللي فات';
   return { day: today, atMs: fast.atMs, at: Utilities.formatDate(now, tz, 'HH:mm'), wName: wName, wDate: Number(w.slice(8, 10)) + '/' + Number(w.slice(5, 7)),
     cards: shopTabCardsOf_([a, b, c], spend ? [cut(today, 1), cut(y, f), cut(w, f)] : null),
     month: shopTabMonthModel_(fast, spend, H, f, a, cut),
     diag: [['قدام إمبارح: ', shopTabDiagnose_(a, b)], ['قدام ' + wName + ': ', shopTabDiagnose_(a, c)]] };
+}
+/* Meta spend today from Ads Raw (every Meta account, read with every update and ⚡): the same number as META TOTAL in Today. */
+function shopTabLiveSpend_(today) {
+  let t = 0;
+  try { recentRows_(APP.T.ADS, ADS_HEADERS.length, 1, asKey_, today).forEach(a => { if (asKey_(a[0]) === today && a[1] === 'META') t += num_(a[10]); }); }
+  catch (e) { return 0; }
+  return t;
 }
 /* The cards for three periods' numbers: [{key, title, values [3], pct, up: up is good (null: neither)}]. spend: [3] or null (no spend card). */
 function shopTabCardsOf_(periods, spend) {
@@ -7167,7 +7248,7 @@ function dupPeriod_(choice) {
       : choice === DUP.PERIODS[5] ? { from: e.slice(0, 8) + '01', to: e } : { from: t, to: t };
 }
 
-function dupZero_() { return { spend: 0, pixel: 0, utm: 0, direct: 0 }; }
+function dupZero_() { return { spend: 0, pixel: 0, utm: 0, direct: 0, rev: 0 }; } // rev: the UTM orders' sales (Today's offers table)
 
 /*
  * Both platforms for the period: {META, TIKTOK}, each {camps: [campaign nodes], all: sums, utmLost, directLost}.
@@ -7227,7 +7308,7 @@ function dupData_(from, to) {
       const k = p + '|', u = String(o[13] || '').trim(), a = String(o[14] || '') || (adRow.has(k + u) ? u : ''), s = String(o[17] || ''), c = String(o[16] || '');
       const byName = P[p].byName.get(norm_(o[12])) || P[p].byName.get(norm_(o[11]));
       const n = a && adRow.has(k + a) ? ad(p, a) : s && setRow.has(k + s) ? set(p, s) : c && campRow.has(k + c) ? camp(p, c) : byName ? camp(p, byName) : null;
-      if (n) n.t.utm++; else P[p].utmLost++;
+      if (n) { n.t.utm++; n.t.rev += num_(o[7]); } else P[p].utmLost++;
     });
   }
   directs.forEach(x => {
@@ -7433,17 +7514,35 @@ function dupEdit_(name, a1) { if (name === DUP.TAB && a1 === 'B2') writeDupTab_(
 const ANA = {
   TAB: 'Actions', TAB2: 'Analysis', OLD_TAB: 'Analysis & Actions', SNAP: 'Intraday Ads', GROUPS: 'ANA_GROUPS',
   /* Analysis: 15 columns, F and L narrow gaps between the small tables at the top; the tables under them skip the gaps. */
-  W2: [190, 85, 85, 85, 85, 14, 240, 85, 85, 85, 85, 14, 90, 420, 95], LC: [1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 13, 14], BACK: 60, WIDTH: 18, TOP: 4, MIN_ROWS: 12, SPARE: 4,
-  R: 7, BA: 12, // tasks start at column G (5 columns), before / after at column L (7 columns); the left side is A–E
+  W2: [190, 85, 85, 85, 85, 14, 240, 85, 85, 85, 85, 14, 90, 420, 95], LC: [1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 13, 14], BACK: 60, WIDTH: 20, TOP: 4, MIN_ROWS: 12, SPARE: 4,
+  R: 7, TCOLS: 14, // the tasks table starts at column G (14 columns, G–T); the actions are A–E
+  /* The tasks table: [header, key] in order (G–T). The numbers (P–T) are drawn; the rest is typed or chosen. */
+  TASK_COLS: [['التاسك', 'text'], ['الأولوية', 'pri'], ['الحالة', 'status'], ['اتضافت يوم', 'added'], ['ملاحظات', 'note'], ['الكامبين', 'camp'],
+    ['المتريكس اللي تظهر', 'metrics'], ['الأوبتيمايز على', 'opt'], ['اتعملت يوم', 'doneAt'], ['قبل: آخر 3 أيام', 'b3'], ['قبل: آخر 7 أيام', 'b7'],
+    ['بعد: 3 أيام', 'a3'], ['بعد: 7 أيام', 'a7'], ['النتيجة', 'res']],
+  LAYOUT_KEY: 'ANA_LAYOUT', TASK_FROZEN_KEY: 'ANA_TASK_FROZEN', TASK_META_KEY: 'ANA_TASK_META',
   FUNNEL_KEY: 'ANA_FUNNEL', DONE_KEY: 'ANA_DONE', ROWS_KEY: 'ANA_ROWS', FIND_KEY: 'ANA_FINDS', PENDING_KEY: 'ANA_PENDING', DONE_DAYS: 7,
-  STOCK_COLOR: 5, STOCK_NO_ADS: 30, STOCK_ACT: 15, STOCK_ROWS: 15, ACT_GOOD: 5, TOP_LIST: 8,
+  AT_KEY: 'ANA_AT', STALE_MIN: 14,
+  STOCK_COLOR: 5, STOCK_NO_ADS: 30, STOCK_ACT: 15, STOCK_ROWS: 15, ACT_GOOD: 5, ACT_ITEMS: 15, TOP_LIST: 8,
   MIN_SPEND: 1000, DROP: 0.2, WORSE: 0.15, WINDOW_LOW: 0.7, WINDOW_MIN: 500, DUP: 0.5, DUP_MIN: 3, DUP_SPEND: 1000,
   PRI: { 1: '🔴 عاجل', 2: '🟠 مهم', 3: '🟡 راقب', 4: '🟢 فرصة' },
   PRI_BG: { 1: '#f4cccc', 2: '#fce5cd', 3: '#fff2cc', 4: '#d9ead3' },
   STATUS: ['لسه', 'شغال فيها', 'خلصت'],
   METRICS: ['Shopify ROAS', 'CPP', 'الأوردرات في اليوم', 'الصرف في اليوم', 'نسبة الإلغاء'],
+  /*
+   * The metrics a task can show before / after: [name, kind, better (1 up, -1 down, 0 neither), other names typed for it].
+   * kind: money, ratio, pct, freq. Hook rate and the frequency are read from Meta for the task's campaign (refreshTaskMeta_).
+   */
+  TMETRICS: [['الصرف في اليوم', 'money', 0, ['الصرف', 'spend', 'amount spent', 'ad spend']], ['الأوردرات في اليوم', 'count', 1, ['الأوردرات', 'orders', 'اوردرات']],
+    ['CPP', 'money', -1, ['cost per purchase']], ['Shopify ROAS', 'ratio', 1, ['roas', 'رؤاس']], ['Meta ROAS', 'ratio', 1, ['pixel roas']],
+    ['AOV', 'money', 1, ['متوسط الأوردر']], ['CPM', 'money', -1, []], ['CTR', 'pct', 1, ['link ctr']], ['CPC', 'money', -1, ['link cpc']],
+    ['التحويل', 'pct', 1, ['cvr', 'conversion rate', 'conversion']], ['Hook rate', 'pct', 1, ['hook', 'هوك']], ['الفريكونسي', 'freq', -1, ['frequency', 'freq']],
+    ['نسبة الإلغاء', 'pct', -1, ['الإلغاء', 'cancel', 'cancellation']]],
+  ALL_METRICS: 'كل المتريكس',
+  DEFAULT_METRICS: ['الصرف في اليوم', 'الأوردرات في اليوم', 'CPP', 'Shopify ROAS'],
+  METRIC_SETS: ['الصرف، الأوردرات، CPP، Shopify ROAS', 'CPM، CTR، CPC، Hook rate', 'CTR، Hook rate، الفريكونسي', 'Shopify ROAS، AOV، التحويل'],
   BIZ: 'البيزنس كله',
-  WIDTHS: [95, 400, 440, 95, 70, 16, 240, 90, 90, 95, 150, 240, 95, 120, 130, 95, 95, 95],
+  WIDTHS: [95, 400, 440, 95, 70, 16, 240, 90, 90, 95, 150, 220, 170, 120, 95, 160, 160, 160, 160, 190],
   DARK: '#1f2937', LABEL: '#f3f4f6', INPUT: '#fffbe6', GREEN: '#d9ead3', RED: '#f4cccc', AMBER: '#fff2cc', GREY: '#6b7280', BLUE: '#e8eefc',
   MONEY: '#,##0', RATIO: '0.00', PCT: '0.0%', COUNT: '0',
   /* What to do when a metric is worse, by its name in Today's benchmark or the Daily Account Funnel. */
@@ -7527,7 +7626,7 @@ function anaBe_(F) {
  * governorate, last 30 days), times (each order of the last 8 days with its hour, platform and campaign), okIds (orders not
  * cancelled or returned, for the colors), cat (catalog ads' orders and spend per product, last 14 days).
  */
-function anaFacts_(today) {
+function anaFacts_(today, since) {
   const from = shiftKey_(today, -ANA.BACK), F = { today: today, from: from, month0: today.slice(0, 8) + '01', biz: {}, acc: {}, accName: {}, accPlat: {},
     pix: {}, camp: {}, campName: {}, campAcc: {}, prod: {}, items: {}, gov: {}, times: [], okIds: {}, cat: {}, catSpend: {}, msg: msgAccounts_() };
   const day = (map, k, d) => { const x = map[k] = map[k] || {}; return x[d] = x[d] || anaZero_(); };
@@ -7541,7 +7640,8 @@ function anaFacts_(today) {
   ['META', 'TIKTOK'].forEach(p => accounts_(p).forEach(a => { F.accName[a.id] = a.name || a.id; F.accPlat[a.id] = p; }));
   // Ads and store orders: this month or the last 31 days, whichever is longer (every 15 minutes, so not more); the business
   // and the products (Daily Log, already read) go back ANA.BACK days, for last month and the before / after table.
-  const near = [F.month0, shiftKey_(today, -30)].sort()[0];
+  // since: the first day an open task's before / after needs (ANA.BACK days back at most).
+  const near = [F.month0, shiftKey_(today, -30), since ? (since > from ? since : from) : today].sort()[0];
   const biz = bizDays_(from, today);
   Object.keys(biz).forEach(d => {
     const t = biz[d];
@@ -7555,16 +7655,17 @@ function anaFacts_(today) {
     if ((p !== 'META' && p !== 'TIKTOK') || !d) return;
     const acc = String(a[2]), cid = String(a[4] || ''), k = p + '|' + cid, s = num_(a[10]);
     if (!F.accName[acc]) { F.accName[acc] = String(a[3] || acc); F.accPlat[acc] = p; }
-    const x = day(F.pix, acc, d);
-    x.spend += s; x.orders += num_(a[13]); x.revenue += num_(a[14]);
-    day(F.acc, acc, d).spend += s;
+    const x = day(F.pix, acc, d), imp = num_(a[11]), clicks = num_(a[12]), pval = num_(a[14]);
+    x.spend += s; x.orders += num_(a[13]); x.revenue += pval;
+    const ac = day(F.acc, acc, d);
+    ac.spend += s; ac.imp = (ac.imp || 0) + imp; ac.clicks = (ac.clicks || 0) + clicks; ac.pval = (ac.pval || 0) + pval;
     if (!cid) return;
     if (!F.campName[k]) { F.campName[k] = String(a[5] || cid); F.campAcc[k] = acc; }
     if (a[5] && !byName[p + '|' + norm_(a[5])]) byName[p + '|' + norm_(a[5])] = k;
     if (a[8]) adCamp[p + '|' + a[8]] = k;
     if (a[6]) setCamp[p + '|' + a[6]] = k;
     const c = day(F.camp, k, d);
-    c.spend += s; c.pixel += num_(a[13]);
+    c.spend += s; c.pixel += num_(a[13]); c.imp = (c.imp || 0) + imp; c.clicks = (c.clicks || 0) + clicks; c.pval = (c.pval || 0) + pval;
   });
   const campOf = o => {
     const p = o[3];
@@ -7655,7 +7756,8 @@ function anaMerge_(finds) {
     out.push({ id: k.split('|')[0] + '|' + sha_(list.map(item).sort().join('|')).slice(0, 12), kind: list[0].kind, pri: list[0].pri, area: list[0].area,
       title: list.length + ' ' + m[0], detail: list.slice(0, 6).map(f => '• ' + item(f) + (f.short ? '\n     ' + f.short : '')).join('\n') + more,
       action: m[1] + ':\n' + anaList_(list.slice(0, 6).map(item)) + more, impact: list.reduce((s, f) => s + f.impact, 0),
-      metric: list[0].metric, scope: scopes.length === 1 ? scopes[0] : ANA.BIZ, n: list.length });
+      metric: list[0].metric, scope: scopes.length === 1 ? scopes[0] : ANA.BIZ, n: list.length,
+      head: list.length + ' ' + m[0], verb: m[1], subs: list.map(f => Object.assign({}, f, { label: item(f) })) });
   });
   return out.sort((a, b) => (a.pri - b.pri) || (b.impact - a.impact));
 }
@@ -8158,35 +8260,115 @@ function anaScopeDays_(F, scope) {
     Object.keys(Object.assign({}, a, b)).forEach(d => { out[d] = Object.assign(anaZero_(), a[d] || {}, { cancelled: (b[d] || {}).cancelled || 0, decided: (b[d] || {}).decided || 0 }); });
     return out;
   }
-  const camp = Object.keys(F.campName).find(k => norm_(F.campName[k]) === n);
+  const camp = anaScopeCamp_(F, s);
   return camp ? F.camp[camp] || {} : null;
 }
-/* A metric over [from..to] of a scope's days, or null. */
-function anaMetric_(days, metric, from, to) {
-  if (!days || to < from) return null;
-  const t = anaSum_(days, from, to), n = Math.round((Date.parse(to) - Date.parse(from)) / 86400000) + 1;
-  if (metric === 'CPP') return t.orders > 0 ? t.spend / t.orders : null;
-  if (metric === 'الأوردرات في اليوم') return t.orders / n;
-  if (metric === 'الصرف في اليوم') return t.spend / n;
-  if (metric === 'نسبة الإلغاء') return anaCancel_(t);
-  return anaRoas_(t);
+/* ---------- The tasks table: a campaign's numbers before and after a task ---------- */
+
+/* A task metric by its name (or another name typed for it): [name, kind, better, other names], or null. */
+function anaTMetric_(name) {
+  const n = norm_(name);
+  if (!n) return null;
+  return ANA.TMETRICS.find(m => norm_(m[0]) === n || m[3].some(x => norm_(x) === n)) || null;
 }
-/* Before = the 7 days before the day it was done, after = from that day until yesterday (7 days at most). */
-function anaBeforeAfter_(F, x) {
-  const d = anaDate_(x.done, F.today), metric = ANA.METRICS.indexOf(x.metric) >= 0 ? x.metric : ANA.METRICS[0];
-  if (!d) return { before: '', after: x.done ? 'اكتب التاريخ كده: ' + F.today : '', change: '' };
-  const days = anaScopeDays_(F, x.scope);
-  if (!days) return { before: '', after: 'مش لاقي "' + x.scope + '"', change: '' };
-  const y = shiftKey_(F.today, -1), to = shiftKey_(d, 6) < y ? shiftKey_(d, 6) : y;
-  const b = anaMetric_(days, metric, shiftKey_(d, -7), shiftKey_(d, -1)), a = d > y ? null : anaMetric_(days, metric, d, to);
-  const better = metric === 'CPP' || metric === 'نسبة الإلغاء' ? -1 : metric === 'الصرف في اليوم' ? 0 : 1;
-  let change = '', good = null;
-  if (typeof a === 'number' && typeof b === 'number') {
-    if (metric === 'نسبة الإلغاء') { change = Math.round((a - b) * 1000) / 10 + ' نقطة'; good = better * (a - b) > 0.005 ? true : better * (a - b) < -0.005 ? false : null; }
-    else if (b > 0) { const c = a / b - 1; change = anaPct_(c); good = better === 0 ? null : better * c > 0.03 ? true : better * c < -0.03 ? false : null; }
+/* The metrics a task shows: what's typed or chosen (separated by ، , + or new lines; "كل المتريكس" = all), else the usual ones; the optimized one always. */
+function anaTaskMetrics_(text, opt) {
+  const s = String(text || '').trim(), out = [];
+  if (norm_(s) === norm_(ANA.ALL_METRICS)) ANA.TMETRICS.forEach(m => out.push(m[0]));
+  else s.split(/[،,+\n|]+/).forEach(x => { const m = anaTMetric_(x); if (m && out.indexOf(m[0]) < 0) out.push(m[0]); });
+  if (!out.length) ANA.DEFAULT_METRICS.forEach(m => out.push(m));
+  const o = anaTMetric_(opt);
+  if (o && out.indexOf(o[0]) < 0) out.push(o[0]);
+  return out;
+}
+/* The campaign key (PLATFORM|id) of a scope written as a campaign's name, or ''. The one that spent most when two share a name. */
+function anaScopeCamp_(F, scope) {
+  const n = norm_(scope);
+  if (!n) return '';
+  const keys = Object.keys(F.campName).filter(k => norm_(F.campName[k]) === n);
+  return keys.sort((a, b) => anaSum_(F.camp[b], F.from, F.today).spend - anaSum_(F.camp[a], F.from, F.today).spend)[0] || '';
+}
+/*
+ * A task's 4 windows. Not done yet: before = the last 3 and 7 full days (until yesterday), no after. Done on day d: before =
+ * the 3 and 7 days before d, after = from d for 3 and 7 days, until today at most (today live). n = days in the window so
+ * far (today counts by the hours gone), full = the window is over.
+ */
+function anaTaskWindows_(t, today, dayPart) {
+  const done = !!t.doneAt && t.doneAt <= today, d = done ? t.doneAt : today, w = (from, to) => ({ from: from, to: to });
+  const after = len => {
+    const end = shiftKey_(d, len - 1), to = end < today ? end : today, full = end < today;
+    const n = Math.round((Date.parse(to) - Date.parse(d)) / 86400000) + (to === today ? dayPart : 1);
+    return { from: d, to: to, n: Math.max(n, 0.05), full: full, len: len, day: Math.round((Date.parse(to) - Date.parse(d)) / 86400000) + 1 };
+  };
+  return { done: done, d: d, b3: Object.assign(w(shiftKey_(d, -3), shiftKey_(d, -1)), { n: 3, full: true }),
+    b7: Object.assign(w(shiftKey_(d, -7), shiftKey_(d, -1)), { n: 7, full: true }), a3: done ? after(3) : null, a7: done ? after(7) : null };
+}
+/* A metric of a window's sum t (n days; meta: Meta's impressions, reach and 3-second plays of the campaign), or null. */
+function anaTaskValue_(name, t, n, meta) {
+  const r = (a, b) => (b > 0 ? a / b : null);
+  switch (name) {
+    case 'الصرف في اليوم': return t.spend / n;
+    case 'الأوردرات في اليوم': return t.orders / n;
+    case 'CPP': return r(t.spend, t.orders);
+    case 'Shopify ROAS': return r(t.revenue, t.spend);
+    case 'Meta ROAS': return t.pval === undefined ? null : r(t.pval || 0, t.spend);
+    case 'AOV': return r(t.revenue, t.orders);
+    case 'CPM': return t.imp ? r(t.spend * 1000, t.imp) : null;
+    case 'CTR': return t.imp ? r(t.clicks || 0, t.imp) : null;
+    case 'CPC': return t.clicks ? r(t.spend, t.clicks) : null;
+    case 'التحويل': return t.clicks ? r(t.orders, t.clicks) : null;
+    case 'Hook rate': return meta ? r(meta.v3, meta.imp) : null;
+    case 'الفريكونسي': return meta ? r(meta.imp, meta.reach) : null;
+    case 'نسبة الإلغاء': return anaCancel_(t);
   }
-  return { before: b === null ? '—' : b, after: d > y ? 'من بكره' : a === null ? '—' : a, change: change, good: good, metric: metric,
-    nf: metric === 'نسبة الإلغاء' ? ANA.PCT : metric === 'Shopify ROAS' ? ANA.RATIO : ANA.MONEY };
+  return null;
+}
+/* A metric's value as text: money with commas, percentages with 2 decimals. */
+function anaTaskFmt_(name, v) {
+  if (typeof v !== 'number' || !isFinite(v)) return '—';
+  const kind = (anaTMetric_(name) || [])[1];
+  if (kind === 'pct') return (Math.round(v * 10000) / 100).toFixed(2) + '%';
+  if (kind === 'ratio' || kind === 'freq') return v.toFixed(2);
+  if (kind === 'count') return String(Math.round(v * 10) / 10);
+  return anaMoney_(v);
+}
+/* "21/11" */
+function anaShortDay_(k) { return Number(k.slice(8, 10)) + '/' + Number(k.slice(5, 7)); }
+/*
+ * A task's numbers: {b3, b7, a3, a7, res, good, full}. Each window cell: its days on the first line, then a line per
+ * metric. res: the optimized metric after against before (3 days and 7 days), and whether it got better (good: true /
+ * false / null). full: the 7 days after are over (the numbers don't change anymore). metaOf(campKey, window) → Meta's numbers.
+ */
+function anaTaskNums_(F, t, metaOf, dayPart) {
+  const empty = { b3: '', b7: '', a3: '', a7: '', res: '', good: null, full: false };
+  if (!String(t.camp || '').trim()) return Object.assign(empty, { b3: 'اختار الكامبين' });
+  const days = anaScopeDays_(F, t.camp);
+  if (!days) return Object.assign(empty, { b3: 'مش لاقي "' + t.camp + '" في آخر ' + ANA.BACK + ' يوم' });
+  const camp = anaScopeCamp_(F, t.camp), W = anaTaskWindows_(t, F.today, dayPart), list = anaTaskMetrics_(t.metrics, t.opt);
+  const vals = w => {
+    const sum = anaSum_(days, w.from, w.to), meta = camp && metaOf ? metaOf(camp, w) : null, out = {};
+    list.forEach(m => { out[m] = anaTaskValue_(m, sum, w.n, meta); });
+    return out;
+  };
+  const cell = (w, head) => { const v = vals(w); return { v: v, text: head + '\n' + list.map(m => m + ': ' + anaTaskFmt_(m, v[m])).join('\n') }; };
+  const b3 = cell(W.b3, anaShortDay_(W.b3.from) + ' → ' + anaShortDay_(W.b3.to)), b7 = cell(W.b7, anaShortDay_(W.b7.from) + ' → ' + anaShortDay_(W.b7.to));
+  const out = Object.assign({}, empty, { b3: b3.text, b7: b7.text });
+  if (!W.done) return Object.assign(out, { a3: 'لما الحالة تبقى خلصت', a7: 'لما الحالة تبقى خلصت' });
+  const live = w => anaShortDay_(w.from) + ' → ' + (w.full ? anaShortDay_(w.to) : 'النهارده (يوم ' + w.day + ' من ' + w.len + ')');
+  const a3 = cell(W.a3, live(W.a3)), a7 = cell(W.a7, live(W.a7));
+  Object.assign(out, { a3: a3.text, a7: a7.text, full: W.a7.full });
+  const opt = (anaTMetric_(t.opt) || [])[0];
+  if (!opt) return Object.assign(out, { res: 'اختار الأوبتيمايز على' });
+  const better = anaTMetric_(opt)[2];
+  const change = (a, b) => {
+    if (typeof a !== 'number' || typeof b !== 'number' || !(b > 0)) return { text: '—', good: null };
+    const c = a / b - 1, good = better === 0 ? null : better * c > 0.03 ? true : better * c < -0.03 ? false : null;
+    const word = better === 0 ? (c > 0.03 ? 'زاد' : c < -0.03 ? 'قل' : 'زي ما هو') : good === true ? 'اتحسن ✅' : good === false ? 'وقع ❌' : 'زي ما هو';
+    return { text: anaPct_(c) + ' ' + word, good: good };
+  };
+  const c3 = change(a3.v[opt], b3.v[opt]), c7 = change(a7.v[opt], b7.v[opt]);
+  const pick = W.a7.full ? c7 : c3;
+  return Object.assign(out, { res: opt + '\n3 أيام: ' + c3.text + (W.a3.full ? '' : ' (لسه)') + '\n7 أيام: ' + c7.text + (W.a7.full ? '' : ' (لسه)'), good: pick.good });
 }
 
 /* ======== 39_analysis_tab.gs ======== */
@@ -8234,20 +8416,44 @@ function takeIntraAds_() {
 
 /* ---------- What's typed in the tab ---------- */
 
-/* The tasks and the before / after rows typed in the tab, and the ✅ ones not written yet. */
+/*
+ * A task row of the tab (G–T, ANA.TASK_COLS) as {text, pri, status, added, note, camp, metrics, opt, doneAt}. doneAt: the
+ * day it was done (typed, or today when the status became خلصت), '' while it isn't done.
+ */
+function anaTaskOf_(r, today) {
+  const status = ANA.STATUS.indexOf(String(r[2]).trim()) >= 0 ? String(r[2]).trim() : ANA.STATUS[0];
+  return { text: String(r[0] || '').trim(), pri: anaPri_(r[1]), status: status, added: anaDate_(r[3], today) || today, note: String(r[4] || '').trim(),
+    camp: String(r[5] || '').trim(), metrics: String(r[6] || '').trim(), opt: String(r[7] || '').trim(),
+    doneAt: status === ANA.STATUS[2] ? anaDate_(r[8], today) || today : '' };
+}
+/* What a task's numbers depend on: once its 7 days after are over, the numbers are kept under this (ANA.TASK_FROZEN_KEY). */
+function anaTaskKey_(t) { return sha_(JSON.stringify([t.text, t.camp, t.metrics, t.opt, t.doneAt])).slice(0, 16); }
+function anaJson_(key, big) {
+  try { return JSON.parse((big ? propGetBig_(key) : PropertiesService.getDocumentProperties().getProperty(key)) || '{}') || {}; } catch (e) { return {}; }
+}
+
+/*
+ * The tasks typed in the tab, and the ones added with ➕ that had no free row yet. The tab of version 1.79 and before had
+ * the tasks in G–K and a before / after table in L–O: its tasks stay, and each before / after row becomes a done task
+ * (its metric is the optimized one, and what it was on the campaign).
+ */
 function anaReadManual_(sh, today) {
-  const props = PropertiesService.getDocumentProperties(), n = Number(props.getProperty(ANA.ROWS_KEY) || 0), out = { tasks: [], ba: [], n: n };
+  const props = PropertiesService.getDocumentProperties(), n = Number(props.getProperty(ANA.ROWS_KEY) || 0), out = { tasks: [], n: n };
+  const old = props.getProperty(ANA.LAYOUT_KEY) !== '2';
   if (n > 0 && sh.getLastRow() >= ANA.TOP + 2) {
-    sh.getRange(ANA.TOP + 2, ANA.R, n, 12).getValues().forEach(v => {
-      if (String(v[0]).trim()) out.tasks.push({ text: String(v[0]).trim(), pri: anaPri_(v[1]),
-        status: ANA.STATUS.indexOf(String(v[2]).trim()) >= 0 ? String(v[2]).trim() : ANA.STATUS[0], added: anaDate_(v[3], today) || today, note: String(v[4] || '').trim() });
-      if (String(v[5]).trim()) out.ba.push({ text: String(v[5]).trim(), done: v[6] instanceof Date ? dayKey_(v[6]) : String(v[6] || '').trim() || today,
-        metric: String(v[7] || '').trim() || ANA.METRICS[0], scope: String(v[8] || '').trim() || ANA.BIZ });
+    sh.getRange(ANA.TOP + 2, ANA.R, n, old ? 12 : ANA.TCOLS).getValues().forEach(v => {
+      if (!old) { if (String(v[0]).trim()) out.tasks.push(anaTaskOf_(v, today)); return; }
+      if (String(v[0]).trim()) out.tasks.push(anaTaskOf_([v[0], v[1], v[2], v[3], v[4]], today));
+      if (String(v[5]).trim()) {
+        const done = anaDate_(v[6], today) || today;
+        out.tasks.push(anaTaskOf_([v[5], '', ANA.STATUS[2], done, 'من جدول قبل وبعد القديم', String(v[8] || '').trim() || ANA.BIZ, '',
+          String(v[7] || '').trim() || ANA.METRICS[0], done], today));
+      }
     });
   }
   let pend = [];
   try { pend = JSON.parse(props.getProperty(ANA.PENDING_KEY) || '[]'); } catch (e) { pend = []; }
-  pend.forEach(p => { if (!out.ba.some(x => x.text === p.text && x.done === p.done)) out.ba.push(p); });
+  pend.forEach(p => { if (Array.isArray(p) && !out.tasks.some(x => x.text === String(p[0]).trim())) out.tasks.push(anaTaskOf_(p, today)); });
   props.deleteProperty(ANA.PENDING_KEY);
   return out;
 }
@@ -8255,33 +8461,85 @@ function anaDone_() {
   try { return JSON.parse(PropertiesService.getDocumentProperties().getProperty(ANA.DONE_KEY) || '{}'); } catch (e) { return {}; }
 }
 
-/* EXT.edit: ✅ next to an action. It goes to the before / after table and is hidden for ANA.DONE_DAYS days. */
+/*
+ * EXT.edit on the Actions tab.
+ * ➕ next to an action (column E): it becomes a task in the first free row of the tasks table (its name = what to do + the
+ * campaign or product, the campaign and the metric to optimize filled in) and is hidden from the actions for ANA.DONE_DAYS days.
+ * The status of a task (column I) set to خلصت: "اتعملت يوم" becomes today, so its after starts counting; set back: emptied.
+ */
 function anaEdit_(name, a1) {
   if (name !== ANA.TAB) return;
-  const m = String(a1).match(/^E(\d+)$/);
+  const m = String(a1).match(/^([A-Z]+)(\d+)$/);
   if (!m) return;
-  const sh = tab_(ANA.TAB), row = Number(m[1]);
-  if (sh.getRange(row, 5).getValue() !== true) return;
+  const sh = tab_(ANA.TAB), row = Number(m[2]), today = todayKey_(), props = PropertiesService.getDocumentProperties(), first = ANA.TOP + 2;
+  const n = Number(props.getProperty(ANA.ROWS_KEY) || 0);
+  if (m[1] === 'I' && row >= first && row < first + n) {
+    const st = String(sh.getRange(row, ANA.R + 2).getValue()).trim(), cell = sh.getRange(row, ANA.R + 8);
+    if (st === ANA.STATUS[2] && !String(cell.getValue()).trim()) cell.setNumberFormat('@').setValue(today);
+    if (st !== ANA.STATUS[2] && String(cell.getValue()).trim()) cell.setValue('');
+    return;
+  }
+  if (m[1] !== 'E' || sh.getRange(row, 5).getValue() !== true) return;
   let finds = [];
   try { finds = JSON.parse(propGetBig_(ANA.FIND_KEY) || '[]'); } catch (e) { finds = []; }
   const f = finds.find(x => x.row === row);
-  if (!f) return;
-  const props = PropertiesService.getDocumentProperties(), today = todayKey_(), done = anaDone_();
+  if (!f || !f.task) return;
+  const done = anaDone_();
   done[f.id] = today;
   Object.keys(done).forEach(k => { if (done[k] < shiftKey_(today, -30)) delete done[k]; });
   props.setProperty(ANA.DONE_KEY, JSON.stringify(done));
-  const item = { text: f.action, done: today, metric: f.metric || ANA.METRICS[0], scope: f.scope || ANA.BIZ };
-  const n = Number(props.getProperty(ANA.ROWS_KEY) || 0), first = ANA.TOP + 2;
-  const free = n ? sh.getRange(first, ANA.BA, n, 1).getValues().findIndex(v => !String(v[0]).trim()) : -1;
-  if (free >= 0) sh.getRange(first + free, ANA.BA, 1, 4).setValues([[item.text, item.done, item.metric, item.scope]]);
-  else {
+  const item = [f.task, ANA.PRI[f.pri] || ANA.PRI[3], ANA.STATUS[0], today, f.note || '', f.camp || '', '', f.opt || ''];
+  const free = n ? sh.getRange(first, ANA.R, n, 1).getValues().findIndex(v => !String(v[0]).trim()) : -1;
+  if (free >= 0) {
+    sh.getRange(first + free, ANA.R + 3).setNumberFormat('@');
+    sh.getRange(first + free, ANA.R, 1, item.length).setValues([item]);
+  } else {
     let pend = [];
     try { pend = JSON.parse(props.getProperty(ANA.PENDING_KEY) || '[]'); } catch (e) { pend = []; }
     pend.push(item);
     props.setProperty(ANA.PENDING_KEY, JSON.stringify(pend));
   }
-  if (f.trow) sh.getRange(f.trow, ANA.R + 2).setValue(ANA.STATUS[2]);
   sh.getRange(row, 1, 1, 5).setBackground('#e5e7eb');
+}
+
+/*
+ * EXT.live: Hook rate and the frequency of the tasks' campaigns (Meta only, read-only), for each before / after window,
+ * kept in ANA.TASK_META_KEY {campaign id|from|to: {imp, reach, v3}}. A window that ended is read once; one with today in
+ * it every update. Only tasks that show one of the two, and whose numbers aren't kept for good yet.
+ */
+function refreshTaskMeta_() {
+  const props = PropertiesService.getDocumentProperties(), sh = ss_().getSheetByName(ANA.TAB), n = Number(props.getProperty(ANA.ROWS_KEY) || 0);
+  if (!sh || !n || props.getProperty(ANA.LAYOUT_KEY) !== '2' || !accounts_('META').length || !timeLeft_()) return;
+  const today = todayKey_(), frozen = anaJson_(ANA.TASK_FROZEN_KEY, true), cache = anaJson_(ANA.TASK_META_KEY, true), keep = {}, reqs = [], what = [];
+  const tasks = sh.getRange(ANA.TOP + 2, ANA.R, n, ANA.TCOLS).getValues().map(r => anaTaskOf_(r, today))
+    .filter(t => t.text && t.camp && !frozen[anaTaskKey_(t)] && anaTaskMetrics_(t.metrics, t.opt).some(x => x === 'Hook rate' || x === 'الفريكونسي'));
+  if (!tasks.length) { propSetBig_(ANA.TASK_META_KEY, '{}'); return; }
+  const ids = {};
+  recentRows_(APP.T.ADS, ADS_HEADERS.length, 1, asKey_, shiftKey_(today, -ANA.BACK)).forEach(a => {
+    if (a[1] !== 'META' || !a[4] || !a[5]) return;
+    const k = norm_(a[5]), x = ids[k] = ids[k] || {};
+    x[a[4]] = (x[a[4]] || 0) + num_(a[10]);
+  });
+  tasks.forEach(t => {
+    const by = ids[norm_(t.camp)];
+    if (!by) return;
+    const cid = Object.keys(by).sort((a, b) => by[b] - by[a])[0], W = anaTaskWindows_(t, today, 1);
+    [W.b3, W.b7, W.a3, W.a7].filter(Boolean).forEach(w => {
+      const k = cid + '|' + w.from + '|' + w.to;
+      if (k in keep) return;
+      keep[k] = cache[k] || null;
+      if (cache[k] && w.to < today) return;
+      reqs.push({ path: cid + '/insights', params: { fields: 'impressions,reach,actions', time_range: JSON.stringify({ since: w.from, until: w.to }) } });
+      what.push(k);
+    });
+  });
+  if (reqs.length) metaMany_(reqs.slice(0, 60)).forEach((x, i) => {
+    if (x.error) return;
+    const r = (x.payload.data || [])[0] || {}, v = (r.actions || []).find(a => a.action_type === 'video_view');
+    keep[what[i]] = { imp: num_(r.impressions), reach: num_(r.reach), v3: v ? num_(v.value) : 0 };
+  });
+  Object.keys(keep).forEach(k => { if (!keep[k]) delete keep[k]; });
+  propSetBig_(ANA.TASK_META_KEY, JSON.stringify(keep));
 }
 
 /* ---------- Drawing ---------- */
@@ -8291,112 +8549,183 @@ function writeAnalysisTab_() {
   // The tab of version 1.68 becomes Actions (what's typed in it stays); its numbers move to Analysis.
   if (!ss_().getSheetByName(ANA.TAB) && ss_().getSheetByName(ANA.OLD_TAB)) ss_().getSheetByName(ANA.OLD_TAB).setName(ANA.TAB);
   const sh = ensureTab_(ANA.TAB), today = todayKey_();
-  const manual = anaReadManual_(sh, today), F = anaFacts_(today), ctx = { mc: MC_LAST_ ? MC_LAST_.camps : null };
+  const manual = anaReadManual_(sh, today), frozen = anaJson_(ANA.TASK_FROZEN_KEY, true);
+  // The Ads Raw days the tasks' before / after need (the 7 days before each one, until its numbers are kept for good).
+  const since = manual.tasks.filter(t => t.camp && !frozen[anaTaskKey_(t)]).map(t => shiftKey_(t.doneAt || today, -7)).sort()[0] || '';
+  const F = anaFacts_(today, since), ctx = { mc: MC_LAST_ ? MC_LAST_.camps : null };
   ctx.be = anaBe_(F);
   const P = {}, errors = [];
   [['acc', () => anaAccounts_(F, ctx)], ['win', () => anaThreeHours_(F, ctx)], ['bench', () => anaBench_(F, ctx)], ['funnel', () => anaFunnel_(F)],
     ['camps', () => anaCampaigns_(F, ctx)], ['stock', () => anaStock_(F)], ['cancel', () => anaCancelPart_(F, ctx)], ['dup', () => anaDup_(F, ctx)],
     ['shop', () => anaShopify_(F)], ['prod', () => anaProducts_(F, ctx)], ['gov', () => anaGov_(F)], ['cat', () => anaCatalog_(F, ctx)]]
     .forEach(x => { try { P[x[0]] = x[1](); } catch (e) { P[x[0]] = { find: [] }; errors.push(x[0] + ': ' + errText_(e)); } });
-  const done = anaDone_(), since = shiftKey_(today, -ANA.DONE_DAYS);
+  const done = anaDone_(), hideFrom = shiftKey_(today, -ANA.DONE_DAYS);
   let finds = [];
   Object.keys(P).forEach(k => { finds = finds.concat(P[k].find || []); });
-  const seen = {};
-  finds = anaMerge_(finds.filter(f => !seen[f.id] && (seen[f.id] = true))).filter(f => !(done[f.id] && done[f.id] > since));
+  const seen = {}, hidden = f => !!(done[f.id] && done[f.id] > hideFrom);
+  // What was made a task (➕) is hidden before the merging, so a merged action lists only what's left.
+  finds = anaMerge_(finds.filter(f => !seen[f.id] && (seen[f.id] = true)).filter(f => !hidden(f))).filter(f => !hidden(f));
   const M = { bad: finds.filter(f => f.kind === 'bad' && f.pri <= 2), good: finds.filter(f => f.kind === 'good'), watch: finds.filter(f => f.pri === 3) };
   if (errors.length) console.error('Analysis: ' + errors.join(' | '));
-  anaDrawActions_(sh, today, manual, F, M, errors);
+  anaDrawActions_(sh, today, manual, F, M, errors, frozen);
   try { todayProblemsRefresh_(M); } catch (e) { setStatus_('TODAY_CARDS', '✗ كروت المشاكل: ' + errText_(e)); } // the cards in Today
   anaDrawAnalysis_(ensureTab_(ANA.TAB2), F, P, M, ctx, errors);
+  PropertiesService.getDocumentProperties().setProperty(ANA.AT_KEY, String(Date.now()));
   return true;
 }
 
-/* Tab Actions: the urgent and important actions, the best opportunities and your open tasks; your tasks; before / after. */
-function anaDrawActions_(sh, today, manual, F, M, errors) {
+/*
+ * Trigger every 5 minutes: the 15-minute update draws Actions and Analysis last, and skips them when its run has no time
+ * left, so they could stay hours old. This draws them in a run of their own when they're ANA.STALE_MIN minutes old or more
+ * and no update is running (LIVE_AT), so they're never older than about 20 minutes. Reads the sheet's tabs only.
+ */
+function analysisTick() {
+  const props = PropertiesService.getDocumentProperties(), start = Date.now();
+  const fresh = () => Date.now() - Number(props.getProperty(ANA.AT_KEY) || 0) < ANA.STALE_MIN * 60000;
+  const busy = Number(props.getProperty('LIVE_AT') || 0);
+  if (props.getProperty('TRIGGERS_PAUSED') || fresh() || (busy && start - busy < 6 * 60000)) return;
+  try {
+    tryLock_(() => {
+      if (fresh()) return;
+      DEADLINE_ = start + 5 * 60000;
+      resetCaches_();
+      try { writeMetaCamps_(); } catch (e) { console.error('meta camps: ' + errText_(e)); }
+      writeAnalysisTab_();
+    }, 60000);
+  } catch (e) { console.error('analysisTick: ' + errText_(e)); }
+}
+
+/* What a task made from an action is called: what to do, then the campaign or product on its own line. */
+function anaTaskText_(f, verb) {
+  if (verb) return verb + '\n' + (f.label || f.item || f.scope || f.title);
+  const m = ANA_MERGE[String(f.id).split('|')[0]];
+  if (m && (f.item || f.label)) return m[1] + '\n' + (f.label || f.item);
+  return f.action + (f.item ? '\n' + f.item : '');
+}
+/* An action's row in ANA.FIND_KEY (for ➕): what the task gets. */
+function anaFindRow_(row, f, verb) {
+  const opt = anaTMetric_(f.metric);
+  return { row: row, id: f.id, pri: f.pri, task: anaTaskText_(f, verb), note: String(f.short || f.title || '').replace(/:$/, '').trim().split(/،\s*/).join('\n'), // one thing a line
+    camp: f.scope && f.scope !== ANA.BIZ ? f.scope : '', opt: opt ? opt[0] : '' };
+}
+
+/*
+ * Tab Actions: the urgent and important actions, the best opportunities and your open tasks, with ➕ to make an action a
+ * task (a merged action: a title row, then a row with ➕ for each campaign or product in it); and the tasks table, where
+ * each task can follow a campaign's metrics before and after it was done.
+ */
+function anaDrawActions_(sh, today, manual, F, M, errors, frozen) {
   const props = PropertiesService.getDocumentProperties(), order = (a, b) => (a.pri - b.pri) || (b.impact - a.impact);
   const tasks = manual.tasks.slice().sort((a, b) => ((a.status === ANA.STATUS[2]) - (b.status === ANA.STATUS[2])) || (a.pri - b.pri));
-  const N = Math.max(ANA.MIN_ROWS, tasks.length + ANA.SPARE, manual.ba.length + ANA.SPARE), first = ANA.TOP + 2;
-  const actions = M.bad.concat(M.good.slice(0, ANA.ACT_GOOD), tasks.map((t, i) => ({ id: 'task|' + sha_(t.text).slice(0, 12), kind: 'task', pri: t.pri,
-    area: 'مهمة يدوية', title: t.note || 'مكتوبة بإيدك يوم ' + t.added, action: t.text, impact: 0, metric: ANA.METRICS[0], scope: ANA.BIZ, trow: first + i,
-    status: t.status })).filter(t => t.status !== ANA.STATUS[2])).sort(order);
-  const g = todayGrid_(), W = ANA.WIDTH, R = ANA.R, BA = ANA.BA, dark = { bg: ANA.DARK, fc: '#ffffff', b: 'bold' };
+  const N = Math.max(ANA.MIN_ROWS, tasks.length + ANA.SPARE), first = ANA.TOP + 2;
+  const actions = M.bad.concat(M.good.slice(0, ANA.ACT_GOOD), tasks.map(t => ({ id: 'task|' + sha_(t.text).slice(0, 12), kind: 'task', pri: t.pri,
+    area: 'تاسك', title: t.note || 'مكتوبة بإيدك يوم ' + t.added, action: t.text, impact: 0, status: t.status })).filter(t => t.status !== ANA.STATUS[2])).sort(order);
+  const g = todayGrid_(), W = ANA.WIDTH, R = ANA.R, C = ANA.TCOLS, dark = { bg: ANA.DARK, fc: '#ffffff', b: 'bold' };
   g.width = W;
   g.set(1, 1, 'ACTIONS — تعمل إيه النهارده بالترتيب' + (anaBe_(F) ? '' : ' | مفيش رؤاس تعادل: اكتب be.roas في Settings'), dark);
   g.fill(1, 2, W - 1, { bg: ANA.DARK });
   g.merge(1, 1, 1, W);
-  g.set(2, 1, 'هنا المهم بس: 🔴 عاجل (بيخسرك دلوقتي) و 🟠 مهم، وأحسن ' + ANA.ACT_GOOD + ' فرص 🟢، ومهامك. الحاجات اللي من نوع واحد (كامبينات توقفها، منتجات تطلب لها ستوك ...) في أكشن واحد. ' +
-    'علّم ✅ لما تعمله: بيتنقل لـ "قبل وبعد" ويستخبى ' + ANA.DONE_DAYS + ' أيام. اللي محتاج تراقبه بس (🟡) والأرقام كلها في تاب ' + ANA.TAB2 + '.' +
+  g.set(2, 1, 'هنا المهم بس: 🔴 عاجل (بيخسرك دلوقتي) و 🟠 مهم، وأحسن ' + ANA.ACT_GOOD + ' فرص 🟢، والتاسكات اللي لسه. ' +
+    'علّم ➕ جنب أي أكشن (أو أي كامبين أو منتج جواه) يبقى تاسك في جدول التاسكات، ويستخبى من هنا ' + ANA.DONE_DAYS + ' أيام. ' +
+    'في التاسك اختار الكامبين والمتريكس والأوبتيمايز على إيه، ولما الحالة تبقى خلصت الشيت يقارن قبل وبعد. اللي محتاج تراقبه بس (🟡) والأرقام كلها في تاب ' + ANA.TAB2 + '.' +
     (errors.length ? '   ⚠️ أجزاء ماتحسبتش: ' + errors.join(' | ') : ''), { fc: '#374151' });
   g.merge(2, 1, 1, W);
   g.set(3, 1, 'آخر تحديث ' + nowText_(), { fc: ANA.GREY });
   g.merge(3, 1, 1, 3);
-  let r = todayHead_(g, ANA.TOP, 1, 5, 'الأكشنز (' + actions.length + ')', ['الأولوية', 'الأكشن', 'ليه (بالأرقام)', 'القسم', '✅ اتعملت']);
-  const findRows = [];
+  const count = actions.reduce((t, f) => t + (f.n || 1), 0);
+  let r = todayHead_(g, ANA.TOP, 1, 5, 'الأكشنز (' + count + ')', ['الأولوية', 'الأكشن', 'ليه (بالأرقام)', 'القسم', '➕ تاسك']);
+  const findRows = [], pri = f => g.set(r, 1, ANA.PRI[f.pri], { bg: ANA.PRI_BG[f.pri], b: 'bold', al: 'center' });
   if (!actions.length) { g.set(r, 1, 'مفيش حاجة عاجلة دلوقتي ✅', { fc: ANA.GREY }); g.merge(r, 1, 1, 5); r++; }
   actions.forEach(f => {
-    g.set(r, 1, ANA.PRI[f.pri], { bg: ANA.PRI_BG[f.pri], b: 'bold', al: 'center' });
-    g.set(r, 2, f.kind === 'task' ? f.action : anaDo_(f), { b: 'bold' });
-    g.set(r, 3, f.kind === 'task' ? f.title : anaWhy_(f), {});
-    g.set(r, 4, f.area, { al: 'center', fc: ANA.GREY });
-    g.set(r, 5, false, { al: 'center' });
-    findRows.push({ row: r, id: f.id, action: f.action + (f.item ? '\n' + f.item : ''), metric: f.metric, scope: f.scope, trow: f.trow || 0 });
+    if (f.kind === 'task') {
+      pri(f);
+      g.set(r, 2, f.action, { b: 'bold' }); g.set(r, 3, f.title, {}); g.set(r, 4, f.area, { al: 'center', fc: ANA.GREY });
+      r++;
+      return;
+    }
+    if (!f.subs) {
+      pri(f);
+      g.set(r, 2, anaDo_(f), { b: 'bold' }); g.set(r, 3, anaWhy_(f), {}); g.set(r, 4, f.area, { al: 'center', fc: ANA.GREY });
+      g.set(r, 5, false, { al: 'center' });
+      findRows.push(anaFindRow_(r, f));
+      r++;
+      return;
+    }
+    // A merged action: its title, then each campaign / product on its own row with its own ➕.
+    g.set(r, 1, '', { bg: ANA.PRI_BG[f.pri] });
+    g.set(r, 2, f.head + ':', { b: 'bold', bg: ANA.LABEL }); g.set(r, 3, '', { bg: ANA.LABEL }); g.set(r, 4, '', { bg: ANA.LABEL }); g.set(r, 5, '', { bg: ANA.LABEL });
     r++;
+    f.subs.slice(0, ANA.ACT_ITEMS).forEach(x => {
+      pri(f);
+      g.set(r, 2, f.verb + '\n' + x.label, { b: 'bold' }); g.set(r, 3, anaWhy_(x), {}); g.set(r, 4, x.area, { al: 'center', fc: ANA.GREY });
+      g.set(r, 5, false, { al: 'center' });
+      findRows.push(anaFindRow_(r, x, f.verb));
+      r++;
+    });
+    if (f.subs.length > ANA.ACT_ITEMS) { g.set(r, 2, 'و ' + (f.subs.length - ANA.ACT_ITEMS) + ' كمان في تاب ' + ANA.TAB2, { fc: ANA.GREY }); r++; }
   });
   if (M.watch.length) { g.set(r, 1, '🟡 ' + M.watch.length + ' حاجة تتراقب بس (من غير أكشن دلوقتي): في تاب ' + ANA.TAB2, { fc: ANA.GREY }); g.merge(r, 1, 1, 5); }
 
-  todayHead_(g, ANA.TOP, R, 5, 'مهامي — اكتب هنا', ['المهمة', 'الأولوية', 'الحالة', 'اتضافت يوم', 'ملاحظات']);
-  todayHead_(g, ANA.TOP, BA, 7, 'قبل وبعد — الأكشنز اللي اتعملت', ['الأكشن', 'اتعمل يوم', 'المقياس', 'على', 'قبل (7 أيام)', 'بعد', 'التغيير']);
+  todayHead_(g, ANA.TOP, R, C, 'التاسكات — اكتب التاسك هنا، أو علّم ➕ جنب أي أكشن', ANA.TASK_COLS.map(x => x[0]));
+  const H = Number(Utilities.formatDate(new Date(), tz_(), 'H')), Mi = Number(Utilities.formatDate(new Date(), tz_(), 'm')), dayPart = (H + Mi / 60) / 24;
+  const meta = anaJson_(ANA.TASK_META_KEY, true), keepFrozen = {};
+  const metaOf = (camp, w) => { const p = camp.split('|'); return p[0] === 'META' ? meta[p[1] + '|' + w.from + '|' + w.to] || null : null; };
   for (let i = 0; i < N; i++) {
-    const t = tasks[i], row = first + i, inp = { bg: ANA.INPUT };
+    const t = tasks[i], row = first + i, inp = { bg: ANA.INPUT, va: 'middle' }, mid = { va: 'middle' };
     if (t) {
-      const closed = t.status === ANA.STATUS[2], st = closed ? { bg: '#e5e7eb', fc: ANA.GREY } : inp;
-      g.set(row, R, t.text, Object.assign({ b: closed ? 'normal' : 'bold' }, st));
-      g.set(row, R + 1, ANA.PRI[t.pri], Object.assign({ al: 'center' }, closed ? st : { bg: ANA.PRI_BG[t.pri] }));
+      const closed = t.status === ANA.STATUS[2], st = closed ? { bg: '#e5e7eb', fc: ANA.GREY, va: 'middle' } : inp, key = anaTaskKey_(t);
+      let v = frozen[key];
+      if (!v) { v = anaTaskNums_(F, t, metaOf, dayPart); if (v.full) keepFrozen[key] = v; } else keepFrozen[key] = v;
+      g.set(row, R, t.text, Object.assign({ b: closed ? 'normal' : 'bold', wr: true }, st));
+      g.set(row, R + 1, ANA.PRI[t.pri], Object.assign({ al: 'center' }, closed ? st : { bg: ANA.PRI_BG[t.pri], va: 'middle' }));
       g.set(row, R + 2, t.status, Object.assign({ al: 'center' }, st));
       g.set(row, R + 3, t.added, Object.assign({ al: 'center' }, st));
-      g.set(row, R + 4, t.note, st);
-    } else g.fill(row, R, 5, inp);
-    const x = manual.ba[i];
-    if (x) {
-      const v = anaBeforeAfter_(F, x), bg = v.good === true ? ANA.GREEN : v.good === false ? ANA.RED : null;
-      g.set(row, BA, x.text, Object.assign({ b: 'bold' }, inp));
-      g.set(row, BA + 1, anaDate_(x.done, today) || x.done, Object.assign({ al: 'center' }, inp));
-      g.set(row, BA + 2, v.metric || x.metric, Object.assign({ al: 'center' }, inp));
-      g.set(row, BA + 3, x.scope, inp);
-      g.set(row, BA + 4, typeof v.before === 'number' ? anaNum_(v.before, 4) : v.before, { nf: v.nf, al: 'center' });
-      g.set(row, BA + 5, typeof v.after === 'number' ? anaNum_(v.after, 4) : v.after, { nf: v.nf, al: 'center' });
-      g.set(row, BA + 6, v.change, { al: 'center', b: 'bold', bg: bg });
-    } else { g.fill(row, BA, 4, inp); }
+      g.set(row, R + 4, t.note, Object.assign({ wr: true }, st));
+      g.set(row, R + 5, t.camp, Object.assign({ wr: true }, inp));
+      g.set(row, R + 6, t.metrics, Object.assign({ wr: true }, inp));
+      g.set(row, R + 7, t.opt, Object.assign({ al: 'center' }, inp));
+      g.set(row, R + 8, t.doneAt, Object.assign({ al: 'center' }, inp));
+      ['b3', 'b7', 'a3', 'a7'].forEach((k, j) => g.set(row, R + 9 + j, v[k], Object.assign({ wr: true, fc: /^(اختار|مش لاقي|لما)/.test(v[k]) ? ANA.GREY : '#000000' }, mid)));
+      g.set(row, R + 13, v.res, { wr: true, b: 'bold', va: 'middle', bg: v.good === true ? ANA.GREEN : v.good === false ? ANA.RED : null });
+    } else { g.fill(row, R, 9, inp); g.fill(row, R + 9, 5, mid); }
     g.cell(row, R + 3).nf = '@'; // dates stay as typed text (2026-11-21)
-    g.cell(row, BA + 1).nf = '@';
+    g.cell(row, R + 8).nf = '@';
   }
+  propSetBig_(ANA.TASK_FROZEN_KEY, JSON.stringify(keepFrozen));
   g.live = [[3, 1]];
   anaRtl_(g);
   const oldN = Number(props.getProperty(ANA.ROWS_KEY) || 0);
   let oldFinds = [];
   try { oldFinds = JSON.parse(propGetBig_(ANA.FIND_KEY) || '[]'); } catch (e) { oldFinds = []; }
-  const drew = writeGrid_(sh, g);
+  const drew = writeGrid_(sh, g), relaid = props.getProperty(ANA.LAYOUT_KEY) !== '2';
   props.setProperty(ANA.ROWS_KEY, String(N));
+  props.setProperty(ANA.LAYOUT_KEY, '2');
   propSetBig_(ANA.FIND_KEY, JSON.stringify(findRows));
-  if (!drew) return;
-  // The ✅ boxes and the lists to choose from, where the rows are now.
+  if (!drew && !relaid) return;
+  // The ➕ boxes and the lists to choose from, where the rows are now.
   const lastOld = Math.max(oldFinds.length ? oldFinds[oldFinds.length - 1].row : 0, sh.getLastRow());
   if (lastOld >= ANA.TOP) sh.getRange(ANA.TOP, 5, lastOld - ANA.TOP + 1, 1).setDataValidation(null);
-  if (findRows.length) sh.getRange(findRows[0].row, 5, findRows.length, 1).insertCheckboxes();
-  if (oldN > N) sh.getRange(first + N, R, oldN - N, 12).setDataValidation(null);
+  for (let i = 0; i < findRows.length;) { // consecutive rows in one go
+    let k = i + 1;
+    while (k < findRows.length && findRows[k].row === findRows[k - 1].row + 1) k++;
+    sh.getRange(findRows[i].row, 5, k - i, 1).insertCheckboxes();
+    i = k;
+  }
+  sh.getRange(first, R, Math.max(N, oldN), C).setDataValidation(null);
   const list = (vals, bad) => SpreadsheetApp.newDataValidation().requireValueInList(vals.slice(0, 500), true).setAllowInvalid(!!bad).build();
-  const scopes = [ANA.BIZ].concat(Object.keys(F.accName).map(id => F.accName[id]),
-    Object.keys(F.items).filter(n => anaSum_(F.items[n], shiftKey_(today, -30), today).orders >= 3).sort(),
-    Object.keys(F.campName).filter(k => anaSum_(F.camp[k], shiftKey_(today, -14), today).spend > 0).map(k => F.campName[k]));
+  const spent = k => anaSum_(F.camp[k], shiftKey_(today, -14), today).spend;
+  const scopes = Object.keys(F.campName).filter(k => spent(k) > 0).sort((a, b) => spent(b) - spent(a)).map(k => F.campName[k])
+    .concat([ANA.BIZ], Object.keys(F.accName).map(id => F.accName[id]),
+      Object.keys(F.items).filter(n => anaSum_(F.items[n], shiftKey_(today, -30), today).orders >= 3).sort());
   sh.getRange(first, R + 1, N, 1).setDataValidation(list([1, 2, 3, 4].map(k => ANA.PRI[k])));
   sh.getRange(first, R + 2, N, 1).setDataValidation(list(ANA.STATUS));
-  sh.getRange(first, BA + 2, N, 1).setDataValidation(list(ANA.METRICS));
-  sh.getRange(first, BA + 3, N, 1).setDataValidation(list(Array.from(new Set(scopes)), true));
+  sh.getRange(first, R + 5, N, 1).setDataValidation(list(Array.from(new Set(scopes)), true));
+  sh.getRange(first, R + 6, N, 1).setDataValidation(list(ANA.METRIC_SETS.concat([ANA.ALL_METRICS], ANA.TMETRICS.map(x => x[0])), true));
+  sh.getRange(first, R + 7, N, 1).setDataValidation(list(ANA.TMETRICS.map(x => x[0])));
   ANA.WIDTHS.forEach((w, i) => sh.setColumnWidth(i + 1, w));
   sh.getRange(1, 2, sh.getMaxRows(), 2).setWrap(true);
-  sh.getRange(first, R, N, 1).setWrap(true);
-  sh.getRange(first, BA, N, 1).setWrap(true);
   anaLook_(sh, g, W);
+  sh.getRange(first, R, N, C).setVerticalAlignment('middle');
 }
 
 /*
@@ -9245,7 +9574,7 @@ const EXT = {
   edit: [(name, a1) => chanceEdit_(name, a1), (name, a1) => campaignMapEdit_(name, a1), (name, a1) => dupEdit_(name, a1), (name, a1) => anaEdit_(name, a1)],
   setup: [() => chanceSetup_()],
   live: [() => syncShopifyStatus_(), () => fillGrossSales_(), () => fillOrderVariants_(), () => fillOrderBundles_(), () => checkShopifyOrders_(), () => syncShopifyStock_(false), () => syncShopifyCollections_(), () => refreshAccountNames_(), () => discoverAccounts_(), () => chanceLive_(), () => refreshTodayFunnel_(), () => refreshFunnel_(false),
-    () => refreshShopTab_(false), () => refreshShopNet_(), () => refreshMetaCamps_(false)],
+    () => refreshShopTab_(false), () => refreshShopNet_(), () => refreshMetaCamps_(false), () => refreshTaskMeta_()],
   today: [() => refreshTodayFunnel_(), () => refreshBalances_(), () => refreshShopCards_(), () => refreshShopNet_()],
   menu: [['📦 تحديث المنتجات والستوك وتوب 100', 'refreshProductsNow'], ['📈 تحديث Daily Account Funnel و Actual ROAS', 'refreshFunnelNow'], ['📊 تحديث Meta Campaigns', 'refreshMetaCampsNow'],
     ['🗄 أرشيف Closing لشهر خلص', 'archiveClosingMonth'], ['🛍 تحديث تاب Shopify', 'refreshShopTabNow'], ['🔑 ربط أبليكيشن شوبيفاي', 'shopifyConnect'], ['🧭 تحديث تاب Actions و Analysis', 'refreshAnalysisNow']]

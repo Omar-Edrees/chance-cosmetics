@@ -29,7 +29,7 @@ function dupPeriod_(choice) {
       : choice === DUP.PERIODS[5] ? { from: e.slice(0, 8) + '01', to: e } : { from: t, to: t };
 }
 
-function dupZero_() { return { spend: 0, pixel: 0, utm: 0, direct: 0 }; }
+function dupZero_() { return { spend: 0, pixel: 0, utm: 0, direct: 0, rev: 0 }; } // rev: the UTM orders' sales (Today's offers table)
 
 /*
  * Both platforms for the period: {META, TIKTOK}, each {camps: [campaign nodes], all: sums, utmLost, directLost}.
@@ -89,7 +89,7 @@ function dupData_(from, to) {
       const k = p + '|', u = String(o[13] || '').trim(), a = String(o[14] || '') || (adRow.has(k + u) ? u : ''), s = String(o[17] || ''), c = String(o[16] || '');
       const byName = P[p].byName.get(norm_(o[12])) || P[p].byName.get(norm_(o[11]));
       const n = a && adRow.has(k + a) ? ad(p, a) : s && setRow.has(k + s) ? set(p, s) : c && campRow.has(k + c) ? camp(p, c) : byName ? camp(p, byName) : null;
-      if (n) n.t.utm++; else P[p].utmLost++;
+      if (n) { n.t.utm++; n.t.rev += num_(o[7]); } else P[p].utmLost++;
     });
   }
   directs.forEach(x => {

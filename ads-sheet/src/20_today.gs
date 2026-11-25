@@ -265,6 +265,63 @@ function todayClosing_(g, today, sum, rows, gap) {
 }
 
 /*
+ * Under the accounts: the campaigns to follow closely, from their names in every Meta and TikTok account (the messages
+ * account's left out: its orders aren't tracked).
+ *  - Offers, every campaign of a kind together: FLASH SALE (flash sale / فلاش) and BUNDLES (bundle / باندل).
+ *  - NEW TESTING: campaigns with "new testing" or "new product" (new test, new products ...) in the name, one row per
+ *    product (the product in the campaign's name, else the name itself), so a product on test is followed on its own.
+ * Spend from Ads Raw, orders and sales = the Shopify orders whose UTM is the campaign's (like Duplication; DIRECT isn't
+ * shared out here), CPP = spend ÷ orders, Shopify ROAS = sales ÷ spend, AOV = sales ÷ orders. Returns the last row.
+ */
+const TODAY_OFFERS = {
+  GROUPS: [['FLASH SALE', /flash[\s_-]*sales?|فلاش/i], ['BUNDLES', /bundles?|باندل|بندل/i]],
+  TEST_RX: /new[\s_-]*test(ing)?|new[\s_-]*products?/i, OFFER: '#fde68a', TEST: '#c7d2fe'
+};
+function todayOffers_(g, r, title, from, to) {
+  const S = TODAY, d = dupData_(from, to), msg = msgAccounts_(), camps = [];
+  ['META', 'TIKTOK'].forEach(p => d[p].camps.forEach(c => { if (c.name && !msg.has(String(c.acc)) && (c.sum.spend > 0 || c.sum.utm > 0)) camps.push(c); }));
+  const zero = () => ({ spend: 0, orders: 0, rev: 0, n: 0 }), add = (t, c) => { t.spend += c.sum.spend; t.orders += c.sum.utm; t.rev += c.sum.rev; t.n++; };
+  const offers = TODAY_OFFERS.GROUPS.map(x => ({ name: x[0], t: zero() })), tests = new Map();
+  camps.forEach(c => {
+    const i = TODAY_OFFERS.GROUPS.findIndex(x => x[1].test(c.name));
+    if (i >= 0) { add(offers[i].t, c); return; }
+    if (!TODAY_OFFERS.TEST_RX.test(c.name)) return;
+    const target = campaignTarget_(c.name), name = target.kind === 'PRODUCT' ? target.title
+      : c.name.split('|').map(x => x.replace(TODAY_OFFERS.TEST_RX, '').trim()).filter(Boolean)[0] || c.name;
+    if (!tests.has(name)) tests.set(name, zero());
+    add(tests.get(name), c);
+  });
+  g.set(r, 1, title, { bg: S.DARK, fc: '#ffffff', b: 'bold', al: 'center' });
+  g.fill(r, 2, 6, { bg: S.DARK });
+  g.merge(r, 1, 1, 7);
+  r++;
+  ['GROUP', 'CAMPAIGNS', 'AMOUNT SPENT', 'ORDERS (SHOPIFY UTM)', 'CPP', 'SHOPIFY ROAS', 'AOV']
+    .forEach((h, i) => g.set(r, 1 + i, h, { bg: S.YELLOW, b: 'bold', al: 'center' }));
+  r++;
+  const line = (name, t, color) => {
+    g.set(r, 2, name + (t.n ? ' (' + t.n + (t.n === 1 ? ' CAMPAIGN)' : ' CAMPAIGNS)') : ''), { wr: true, va: 'middle' });
+    g.set(r, 3, Math.round(t.spend * 100) / 100, { nf: S.MONEY, al: 'right', va: 'middle' });
+    g.set(r, 4, t.orders, { nf: S.COUNT, al: 'right', va: 'middle' });
+    g.set(r, 5, ratioOrBlank_(t.spend, t.orders, 2), { nf: S.MONEY, al: 'right', bg: S.METRIC, va: 'middle' });
+    g.set(r, 6, ratioOrBlank_(t.rev, t.spend, 2), { nf: S.RATIO, al: 'right', bg: S.METRIC, va: 'middle' });
+    g.set(r, 7, ratioOrBlank_(t.rev, t.orders, 2), { nf: S.MONEY, al: 'right', bg: S.METRIC, va: 'middle' });
+    r++;
+  };
+  const block = (label, color, list, empty) => {
+    const first = r;
+    if (!list.length) { g.set(r, 2, empty, { fc: '#6b7280', va: 'middle' }); g.merge(r, 2, 1, 6); r++; }
+    list.forEach(x => line(x.name, x.t, color));
+    g.set(first, 1, label, { bg: color, b: 'bold', al: 'center', va: 'middle' });
+    for (let i = first + 1; i < r; i++) g.cell(i, 1).bg = color;
+    if (r - first > 1) g.merge(first, 1, r - first, 1);
+  };
+  block('OFFERS', TODAY_OFFERS.OFFER, offers, '');
+  const testList = Array.from(tests.keys()).map(k => ({ name: k, t: tests.get(k) })).sort((a, b) => b.t.spend - a.t.spend);
+  block('NEW TESTING', TODAY_OFFERS.TEST, testList, 'مفيش كامبين في اسمها new testing أو new product صرفت في الفترة دي');
+  return r - 1;
+}
+
+/*
  * Net Sales (32_shopify_orders.gs: products after discounts, no shipping) of the day's store orders: {by: {platform: {net, n}},
  * total: {net, n}}, n = the orders that have it. Platforms as in Daily Log; the outside account's orders (META OUT) aren't in the total.
  */
@@ -464,7 +521,9 @@ function writeToday_() {
   const p = today.split('-').map(Number), noon = new Date(Date.UTC(p[0], p[1] - 1, p[2], 12));
   const shown = Utilities.formatDate(noon, 'UTC', 'dd-MMM-yyyy'), month = Utilities.formatDate(noon, 'UTC', 'MMM-yyyy');
   const gap = todayCardRows_(), cards = gap && todayCardsReady_(), view = cards ? todayCardCells_(g) : gap ? todayCardNote_(g) : null;
-  todayCampaignWarning_(g, todayStockCover_(g, todayBalances_(g, todayClosing_(g, today, sum, rows, gap) + 2, today) + 1, today) + 1);
+  let left = todayClosing_(g, today, sum, rows, gap) + 2;
+  try { left = todayOffers_(g, left, 'OFFERS & NEW TESTING — TODAY | ' + shown, today, today) + 2; } catch (e) { console.error('today offers: ' + errText_(e)); }
+  todayCampaignWarning_(g, todayStockCover_(g, todayBalances_(g, left, today) + 1, today) + 1);
   let r = todaySlots_(g, 1, today) + 1;
   r = todayBenchmark_(g, r, today, shown) + 1;
   const orders = todayOrders_(today.slice(0, 8) + '01', true), bundles = orderBundlesMap_();

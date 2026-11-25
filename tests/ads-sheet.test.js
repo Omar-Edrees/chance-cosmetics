@@ -2760,3 +2760,29 @@ test('PRODUCT PERFORMANCE: بيتطلب مع إيه أكتر، ولو في با�
     '=HYPERLINK("https://chance-cosmetics.com/products/lip-compo","Lip liner and gloss compo (2 أوردر)")']);
   assert.deepEqual(row('Blush'), ['• Glass Gloss: 2\n• True Stain Liner: 1\nلوحده في 0 من 2 أوردر', ''], 'Blush مش في الباندل');
 });
+
+test('Today: صف Chance 26 (حساب المسجات) الصرف بس، وتحت الحسابات جدول العروض (الفلاش سيل والباندلز متجمعين) و NEW TESTING (كل منتج لوحده)', () => {
+  const probe = env(), today = probe.c.todayKey_(), B = '(blank)';
+  const ad = (acc, camp, name, adId, spend) => Object.assign(adRow(today, adId, spend), { campaign_id: camp, campaign_name: name, adset_id: 'S' + camp, adset_name: 'Set ' + camp, ad_name: 'Ad ' + adId });
+  const flow = (id, adId, total) => ['gid://shopify/Order/' + id, ' #' + id, ' N', B, total, ' ' + today + 'T10:00:00+03:00', B, B, B, B, B, 'facebook', 'x', adId, 'Facebook', 'Lip Oil x1', '4655075'];
+  const e = env({ msg: true, orderHead: FLOW_HEAD.slice(0, 17),
+    ads: { [A1]: [ad(A1, 'M1', 'Messages | Flash Sale', '1200000000101', 100)],
+      [A2]: [ad(A2, 'F1', 'Flash Sale | 25-11', '1200000000511', 300), ad(A2, 'F2', 'FLASH-SALE Blush', '1200000000512', 100),
+        ad(A2, 'B1', 'Bundle Offer | ABO', '1200000000521', 200), ad(A2, 'T1', 'Lip Oil | New Testing', '1200000000531', 150),
+        ad(A2, 'T2', 'Lip Oil | new test 2', '1200000000532', 50), ad(A2, 'T3', 'Blush | New Product', '1200000000541', 80), ad(A2, 'X1', 'Lip Oil | ABO', '1200000000551', 500)] },
+    orders: [flow(1, '1200000000511', 400), flow(2, '1200000000512', 600), flow(3, '1200000000531', 500)] });
+  e.c.setupAll(); e.c.liveTick(); e.c.liveTick();
+  // Chance 26: الصرف بس، من غير أوردرات ولا CPP ولا ROAS ولا AOV
+  const msg = todayRow(e, 'Chance 26', 2);
+  assert.equal(msg[2], 100);
+  assert.deepEqual(msg.slice(3, 7), ['', '', '', '']);
+  // العروض: كل الفلاش سيل مع بعض، وكل الباندلز مع بعض (حساب المسجات مش داخل)
+  const v = e.ss.getSheetByName('Today').getDataRange().getValues(), at = v.findIndex(r => /^OFFERS & NEW TESTING — TODAY/.test(String(r[0])));
+  assert.ok(at > v.findIndex(r => r[0] === 'GRAND TOTAL'), 'تحت جدول الحسابات');
+  assert.deepEqual(v[at + 1].slice(0, 7), ['GROUP', 'CAMPAIGNS', 'AMOUNT SPENT', 'ORDERS (SHOPIFY UTM)', 'CPP', 'SHOPIFY ROAS', 'AOV']);
+  assert.deepEqual(v[at + 2].slice(0, 7), ['OFFERS', 'FLASH SALE (2 CAMPAIGNS)', 400, 2, 200, 2.5, 500]);
+  assert.deepEqual(v[at + 3].slice(1, 7), ['BUNDLES (1 CAMPAIGN)', 200, 0, '', 0, '']);
+  // NEW TESTING: كل منتج لوحده، بالأكتر صرفًا
+  assert.deepEqual(v[at + 4].slice(0, 7), ['NEW TESTING', 'Lip Oil (2 CAMPAIGNS)', 200, 1, 200, 2.5, 500]);
+  assert.deepEqual(v[at + 5].slice(1, 4), ['Blush (1 CAMPAIGN)', 80, 0]);
+});
