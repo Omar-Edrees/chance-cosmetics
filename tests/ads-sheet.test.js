@@ -1257,9 +1257,11 @@ function fakeShopify(e, orders, opt) {
           pageInfo: { hasNextPage: (page + 1) * size < v.length, endCursor: String(page + 1) } } } });
       }
       if (/graphql\.json$/.test(url) && /agreements/.test(JSON.parse(p.payload).query)) { // الجروس سيلز وقت الأوردر
-        return json(200, { data: { nodes: JSON.parse(p.payload).variables.ids.map(id => ((o.gross || {})[id]
+        // اتمسح من شوبيفاي (o.deleted) = null، ومن غير جروس معروف = أوردر من غير اتفاق بيع
+        return json(200, { data: { nodes: JSON.parse(p.payload).variables.ids.map(id => ((o.deleted || []).indexOf(id) >= 0 ? null : (o.gross || {})[id]
           ? { id, agreements: { nodes: [{ reason: 'ORDER', sales: { nodes: o.gross[id].map(x => ({ lineType: x[0],
-            totalAmount: { shopMoney: { amount: String(x[1]) } }, totalDiscountAmountBeforeTaxes: { shopMoney: { amount: String(x[2]) } } })) } }] } } : null)) } });
+            totalAmount: { shopMoney: { amount: String(x[1]) } }, totalDiscountAmountBeforeTaxes: { shopMoney: { amount: String(x[2]) } } })) } }] } }
+          : { id, agreements: { nodes: [] } })) } });
       }
       if (/graphql\.json$/.test(url) && /nodes\(ids/.test(JSON.parse(p.payload).query) && /currentQuantity/.test(JSON.parse(p.payload).query)) { // أوردرات اتعدلت
         return json(200, { data: { nodes: JSON.parse(p.payload).variables.ids.map(id => ((o.editedNow || {})[id]
@@ -1272,9 +1274,17 @@ function fakeShopify(e, orders, opt) {
         if (o.addrError) return json(403, { errors: 'not approved to access the ShippingAddress' });
         return json(200, { data: { nodes: JSON.parse(p.payload).variables.ids.map(id => (o.provinces || {})[id] ? { id, shippingAddress: { province: o.provinces[id] } } : { id, shippingAddress: null }) } });
       }
-      if (/graphql\.json$/.test(url) && /ordersCount/.test(JSON.parse(p.payload).query)) { // مطابقة العدد
-        const v = JSON.parse(p.payload).variables, n = q => { const m = q.match(/'([^']+)'.*'([^']+)'/); return (o.created || []).filter(x => x.createdAt >= m[1] && x.createdAt < m[2]).length + ((o.extraCount || {})[m[1]] || 0); };
-        return json(200, { data: { a: { count: n(v.a) }, b: { count: n(v.b) } } });
+      const live = () => (o.created || []).filter(x => (o.deleted || []).indexOf(x.id) < 0);
+      if (/graphql\.json$/.test(url) && /ordersCount/.test(JSON.parse(p.payload).query)) { // مطابقة العدد، يوم يوم
+        const out = {}, re = /(d\d+):ordersCount\(query:"created_at:>='([^']+)' created_at:<'([^']+)'"/g;
+        let m;
+        while ((m = re.exec(JSON.parse(p.payload).query))) out[m[1]] = { count: live().filter(x => x.createdAt >= m[2] && x.createdAt < m[3]).length + ((o.extraCount || {})[m[2]] || 0) };
+        return json(200, { data: out });
+      }
+      if (/graphql\.json$/.test(url) && /nodes\{id\}/.test(JSON.parse(p.payload).query)) { // أرقام أوردرات يوم
+        const m = JSON.parse(p.payload).variables.q.match(/'([^']+)'.*'([^']+)'/);
+        return json(200, { data: { orders: { nodes: live().filter(x => x.createdAt >= m[1] && x.createdAt < m[2]).map(x => ({ id: x.id })),
+          pageInfo: { hasNextPage: false, endCursor: null } } } });
       }
       if (/graphql\.json$/.test(url) && /collections\(first/.test(JSON.parse(p.payload).query)) { // الكوليكشنز
         return json(200, { data: { collections: { nodes: o.collections || [], pageInfo: { hasNextPage: false, endCursor: null } } } });
@@ -1285,7 +1295,7 @@ function fakeShopify(e, orders, opt) {
       if (/graphql\.json$/.test(url) && /^created_at/.test(JSON.parse(p.payload).variables.q || '')) { // الأوردرات نفسها
         if (o.ordersError) return json(403, { errors: 'no access' });
         const body = JSON.parse(p.payload), since = body.variables.q.match(/'(.*)'/)[1], size = o.createdPage || 40;
-        const list = (o.created || []).filter(x => x.createdAt >= since).sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
+        const list = live().filter(x => x.createdAt >= since).sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
         const page = Number(body.variables.after || 0);
         return json(200, { data: { orders: { nodes: list.slice(page * size, page * size + size),
           pageInfo: { hasNextPage: (page + 1) * size < list.length, endCursor: String(page + 1) } } } });
@@ -1465,7 +1475,7 @@ test('الأوردرات من أبليكيشن شوبيفاي: بتحل محل �
   const health = e.ss.getSheetByName('Health').getDataRange().getValues().map(r => r.join(' ')).join('\n');
   assert.match(health, /مصدر الأوردرات أبليكيشن شوبيفاي ✓/);
   assert.match(health, /الأوردرات من شوبيفاي \(الأبليكيشن\) .*✓ 4 أوردر اتقرا/);
-  assert.match(health, /مطابقة الأوردرات مع شوبيفاي .*✓ .*شوبيفاي 0 والشيت 0/);
+  assert.match(health, /مطابقة الأوردرات مع شوبيفاي .*✓ آخر 7 أيام/);
   assert.match(health, /محافظة الأوردرات .*✓ المحافظة من عنوان الشحن/);
   // لو شوبيفاي عنده أوردر الشيت مافيهوش، Health بيقول
   const y = e.c.shiftKey_(today, -1), yUtc = e.c.Utilities.parseDate(y + ' 00:00', 'Africa/Cairo', 'yyyy-MM-dd HH:mm').toISOString().replace(/\.\d+Z$/, 'Z');
@@ -1939,6 +1949,40 @@ test('Closing: GROSS SALES (المنتجات قبل الخصم ومن غير ا�
   e.c.writeClosing_();
   const late = closingRow(e.ss.getSheetByName('Closing'), dayLabel(e.c, today));
   assert.deepEqual([late['GROSS SALES'], late['NET SALES']], ['', 898], 'NET SALES من شوبيفاي نفسه، مش من الأوردرات اللي اتقرت');
+});
+
+test('أوردر اتمسح من شوبيفاي: بيتشال من الشيت كله، و GROSS SALES اليوم مايفضلش فاضي، ومطابقة آخر 7 أيام بتلاقي اللي اتمسح بعد كده', () => {
+  const probe = env(), today = probe.c.todayKey_(), y = probe.c.shiftKey_(today, -2);
+  const order = (id, day, hm, total) => ({ id: 'gid://shopify/Order/' + id, createdAt: day + 'T' + hm + ':00Z', sourceName: 'web', cancelledAt: null,
+    originalTotalPriceSet: { shopMoney: { amount: String(total) } }, customAttributes: [], lineItems: { nodes: [{ title: 'Lip Oil', quantity: 1, currentQuantity: 1 }] },
+    customerJourneySummary: { lastVisit: null } });
+  const e = env({ orderHead: FLOW_HEAD.slice(0, 17), orders: [] });
+  const g = n => [['PRODUCT', n, 0], ['SHIPPING', 85, 0]];
+  const opt = { created: [order(1, today, '06:00', 385), order(2, today, '07:00', 2454), order(3, y, '08:00', 485), order(4, y, '09:00', 585)],
+    gross: { 'gid://shopify/Order/1': g(300), 'gid://shopify/Order/3': g(400), 'gid://shopify/Order/4': g(500) } };
+  fakeShopify(e, [], opt);
+  Object.assign(e.user, { SHOPIFY_TOKEN: 'TOKEN1', SHOPIFY_TOKEN_EXP: String(Date.now() + 3600000) });
+  e.c.setupAll();
+  e.c.liveTick();
+  // أوردر 2 اتمسح من شوبيفاي قبل ما الجروس بتاعه يتقري
+  opt.deleted = ['gid://shopify/Order/2'];
+  e.c.liveTick(); e.c.liveTick();
+  const ids = () => e.ss.getSheetByName('Shopify Orders').getDataRange().getValues().slice(1).map(r => r[0].split('/').pop()).sort();
+  assert.deepEqual(ids(), ['1', '3', '4'], 'اتشال من تاب Shopify Orders');
+  const raw = () => e.ss.getSheetByName('Orders Raw').getDataRange().getValues().slice(1).map(r => r[0].split('/').pop()).sort();
+  assert.deepEqual(raw(), ['1', '3', '4'], 'واتشال من Orders Raw');
+  const day = closingRow(e.ss.getSheetByName('Closing'), dayLabel(e.c, today));
+  assert.deepEqual([day['TOTAL ORDERS'], day['GROSS SALES']], [1, 300]);
+  // أوردر 4 اتمسح بعد ما الجروس بتاعه اتقرا: مطابقة آخر 7 أيام بتلاقيه
+  opt.deleted.push('gid://shopify/Order/4');
+  e.c.checkShopifyOrders_();
+  assert.match(e.doc.STATUS_SHOP_ORDERS_CHECK, /1 أوردر اتمسح من شوبيفاي واتشال من الشيت/);
+  e.c.liveTick();
+  assert.deepEqual(raw(), ['1', '3']);
+  e.c.checkShopifyOrders_();
+  assert.match(e.doc.STATUS_SHOP_ORDERS_CHECK, /✓ آخر 7 أيام/);
+  const past = closingRow(e.ss.getSheetByName('Closing'), dayLabel(e.c, y));
+  assert.deepEqual([past['TOTAL ORDERS'], past['GROSS SALES']], [1, 400]);
 });
 
 test('Meta Campaigns: الكامبين وتحتها الأد سيتس وتحتها الإعلانات، والقرار بـ Shopify ROAS لآخر 3 أيام قدام الـ 7 والـ 14، والمترك الواقع، واللي مفتوح بيفضل مفتوح', () => {

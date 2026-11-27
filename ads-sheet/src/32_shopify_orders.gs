@@ -36,7 +36,9 @@ const SHOP_ORDERS = {
   EDITED_QUERY: 'query($ids:[ID!]!){nodes(ids:$ids){... on Order{id cancelledAt lineItems(first:50){pageInfo{hasNextPage endCursor} nodes{title quantity currentQuantity variant{id} lineItemGroup{title productId}}}}}}',
   EDITED: 'SHOP_ORDERS_EDITED',
   ADDR_QUERY: 'query($ids:[ID!]!){nodes(ids:$ids){... on Order{id shippingAddress{province}}}}',
-  COUNT_QUERY: 'query($a:String!,$b:String!){a:ordersCount(query:$a,limit:null){count} b:ordersCount(query:$b,limit:null){count}}'
+  // The check (checkShopifyOrders_): the orders Shopify counts for each of the last CHECK_DAYS full days, and the IDs of a day that differs.
+  CHECK_DAYS: 7, DELETED: 'SHOP_ORDERS_DELETED',
+  IDS_QUERY: 'query($q:String!,$after:String){orders(first:100,after:$after,query:$q){pageInfo{hasNextPage endCursor} nodes{id}}}'
 };
 
 /* Orders Raw reads the app tab once the first read is over (and the sheet is connected to the app). */
@@ -188,20 +190,67 @@ function shopOrderProvinces_(orders) {
 }
 
 /*
- * Check, every update: the orders of the last two full days in Orders Raw = the orders Shopify itself counts for those days.
- * Only once Orders Raw reads the app (before that it's the Flow sheet). The result is in Health.
+ * Check, every update: the orders of each of the last SHOP_ORDERS.CHECK_DAYS full days in Orders Raw = the orders Shopify
+ * itself counts for that day. A day with more orders in the sheet than in Shopify = an order deleted in Shopify (the sheet
+ * kept it: a deleted order never comes back in a read): that day's IDs are read from Shopify, and the ones it doesn't have
+ * any more leave the sheet (dropDeletedOrders_). Only once Orders Raw reads the app (before that it's the Flow sheet).
+ * The result is in Health.
  */
 function checkShopifyOrders_() {
   if (!shopifyProps_().getProperty('SHOPIFY_TOKEN') || !appOrdersReady_() || !ss_().getSheetByName(APP.T.ORDERS)) return;
-  const today = todayKey_(), days = [shiftKey_(today, -1), shiftKey_(today, -2)];
+  const today = todayKey_(), days = [];
+  for (let i = 1; i <= SHOP_ORDERS.CHECK_DAYS; i++) days.push(shiftKey_(today, -i));
   const utc = d => Utilities.parseDate(d + ' 00:00', tz_(), 'yyyy-MM-dd HH:mm').toISOString().replace(/\.\d+Z$/, 'Z');
   const q = d => "created_at:>='" + utc(d) + "' created_at:<'" + utc(shiftKey_(d, 1)) + "'";
   try {
-    const r = shopifyGql_(SHOP_ORDERS.COUNT_QUERY, { a: q(days[0]), b: q(days[1]) }), shop = [r.a.count, r.b.count], have = [0, 0];
-    recentRows_(APP.T.ORDERS, ORDERS_HEADERS.length, 2, sortKey_, days[1]).forEach(o => { const i = days.indexOf(asKey_(o[2])); if (i >= 0) have[i]++; });
-    const ok = shop[0] === have[0] && shop[1] === have[1];
-    setStatus_('SHOP_ORDERS_CHECK', (ok ? '✓ ' : '⚠️ مش متطابق: ') + days.map((d, i) => d + ' شوبيفاي ' + shop[i] + ' والشيت ' + have[i]).join('، '));
+    const r = shopifyGql_('query{' + days.map((d, i) => 'd' + i + ':ordersCount(query:' + JSON.stringify(q(d)) + ',limit:null){count}').join(' ') + '}');
+    const shop = days.map((d, i) => r['d' + i].count), have = days.map(() => 0), ids = days.map(() => []);
+    recentRows_(APP.T.ORDERS, ORDERS_HEADERS.length, 2, sortKey_, days[days.length - 1]).forEach(o => {
+      const i = days.indexOf(asKey_(o[2]));
+      if (i >= 0) { have[i]++; ids[i].push(String(o[0])); }
+    });
+    const gone = [];
+    days.forEach((d, i) => {
+      if (have[i] <= shop[i]) return;
+      const there = new Set();
+      let after = null;
+      do {
+        const page = shopifyGql_(SHOP_ORDERS.IDS_QUERY, { q: q(d), after: after }).orders;
+        (page.nodes || []).forEach(n => there.add(String(n.id)));
+        after = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
+      } while (after);
+      // Only the app's own orders (gid://shopify/Order/…): a row from somewhere else isn't Shopify's to judge.
+      ids[i].forEach(id => { if (/^gid:\/\/shopify\/Order\//.test(id) && !there.has(id)) gone.push(id); });
+    });
+    const dropped = dropDeletedOrders_(gone);
+    const bad = days.map((d, i) => (shop[i] === have[i] ? '' : d + ' شوبيفاي ' + shop[i] + ' والشيت ' + have[i])).filter(String);
+    setStatus_('SHOP_ORDERS_CHECK', (bad.length ? '⚠️ مش متطابق: ' + bad.join('، ') : '✓ آخر ' + days.length + ' أيام') +
+      (dropped ? ' — ' + dropped + ' أوردر اتمسح من شوبيفاي واتشال من الشيت (بيتظبط في التحديث الجاي)' : ''));
   } catch (e) { setStatus_('SHOP_ORDERS_CHECK', '✗ ' + errText_(e)); }
+}
+
+/*
+ * Orders deleted in Shopify (it doesn't have them any more): their rows leave the "Shopify Orders" tab, and Orders Raw is
+ * read again in full on the next update (ORDERS_SRC goes), so every tab drops them: counts, sales, ROAS, Daily Log.
+ * Returns how many rows went.
+ */
+function dropDeletedOrders_(ids) {
+  const sh = ss_().getSheetByName(SHOP_ORDERS.TAB);
+  if (!ids.length || !sh || sh.getLastRow() < 2) return 0;
+  const gone = new Set(ids.map(String));
+  let n = 0;
+  withLock_(() => {
+    const col = sh.getRange(2, 1, sh.getLastRow() - 1, 1).getValues();
+    for (let i = col.length - 1; i >= 0; i--) if (gone.has(String(col[i][0]))) { sh.deleteRows(i + 2, 1); n++; }
+    if (!n) return;
+    dropRaw_(SHOP_ORDERS.TAB);
+    const props = PropertiesService.getDocumentProperties();
+    props.deleteProperty('ORDERS_SRC');
+    let log = [];
+    try { log = JSON.parse(props.getProperty(SHOP_ORDERS.DELETED) || '[]'); } catch (e) { log = []; }
+    props.setProperty(SHOP_ORDERS.DELETED, JSON.stringify(log.concat(Array.from(gone)).slice(-200)));
+  });
+  return n;
 }
 
 /*
@@ -246,11 +295,13 @@ function fillGrossSales_() {
   if (String(sh.getRange(1, N).getValue()) !== 'Net Sales') sh.getRange(1, N).setValue('Net Sales');
   const ids = sh.getRange(2, 1, L - 1, 2).getValues(), col = sh.getRange(2, G, L - 1, 2).getValues();
   const cut = new Date(Date.now() - 59 * 86400000).toISOString();
+  // Empty = not read yet. "-" inside the last 59 days = read before this check existed (maybe a deleted order): asked again.
   const need = [];
   for (let i = ids.length - 1; i >= 0 && need.length < 300; i--) {
-    if ((col[i][0] === '' || col[i][1] === '') && ids[i][0]) need.push(i);
+    const unread = col[i][0] === '' || col[i][1] === '' || ((col[i][0] === '-' || col[i][1] === '-') && String(ids[i][1]) >= cut);
+    if (unread && ids[i][0]) need.push(i);
   }
-  const got = {};
+  const got = {}, deleted = [];
   try {
     for (let i = 0; i < need.length && timeLeft_(); i += 10) {
       const chunk = need.slice(i, i + 10);
@@ -259,16 +310,21 @@ function fillGrossSales_() {
       if (!ask.length) continue;
       const nodes = shopifyGql_(SHOP_ORDERS.GROSS_QUERY, { ids: ask.map(j => String(ids[j][0])) }).nodes || [];
       ask.forEach((j, n) => {
+        // No order inside the last 59 days = deleted in Shopify: it leaves the sheet (dropDeletedOrders_), else the
+        // day's GROSS SALES in Closing would stay empty for good. The first agreement is the order as it was made.
         const o = nodes[n], a = o && o.agreements && (o.agreements.nodes || [])[0];
-        if (!o || !a || a.reason !== 'ORDER') { got[j] = ['-', '-']; return; }
+        if (!o) { deleted.push(String(ids[j][0])); return; }
+        if (!a) { got[j] = ['-', '-']; return; }
         const amt = x => num_(((x || {}).shopMoney || {}).amount), lines = (a.sales.nodes || []).filter(s => s.lineType === 'PRODUCT');
         const net = lines.reduce((t, s) => t + amt(s.totalAmount), 0);
         got[j] = [round2_(net + lines.reduce((t, s) => t + amt(s.totalDiscountAmountBeforeTaxes), 0)), round2_(net)];
       });
     }
   } catch (e) { setStatus_('SHOP_GROSS', '✗ ' + errText_(e)); }
+  const dropped = dropDeletedOrders_(deleted);
+  if (dropped) setStatus_('SHOP_ORDERS_CHECK', '✓ ' + dropped + ' أوردر اتمسح من شوبيفاي واتشال من الشيت (بيتظبط في التحديث الجاي)');
   const n = Object.keys(got).length;
-  if (!n) return 0;
+  if (!n) return dropped;
   withLock_(() => {
     // Rows may have moved if new orders came in meanwhile: write by order ID. A cell read before keeps what it has.
     const now = sh.getRange(2, 1, sh.getLastRow() - 1, 1).getValues(), at = new Map(now.map((r, i) => [String(r[0]), i]));
@@ -276,7 +332,7 @@ function fillGrossSales_() {
     Object.keys(got).forEach(j => {
       const i = at.get(String(ids[j][0]));
       if (i === undefined) return;
-      [0, 1].forEach(c => { if (out[i][c] === '') out[i][c] = got[j][c]; });
+      [0, 1].forEach(c => { if (out[i][c] === '' || out[i][c] === '-') out[i][c] = got[j][c]; });
     });
     sh.getRange(2, G, out.length, 2).setNumberFormat('0.00').setValues(out);
     dropRaw_(SHOP_ORDERS.TAB);
