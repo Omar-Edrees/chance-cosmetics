@@ -80,8 +80,15 @@ class FakeRange {
     return f;
   }
 }
+/* الدمج: [صف، عمود، صفوف، أعمدة] في sheet.merges، و breakApart بيفك اللي جوه المساحة */
+FakeRange.prototype.merge = function () { (this.sheet.merges = this.sheet.merges || []).push([this.row, this.col, this.rows, this.cols]); return this; };
+FakeRange.prototype.breakApart = function () {
+  const r0 = this.row, c0 = this.col, r1 = this.row + this.rows - 1, c1 = this.col + this.cols - 1;
+  this.sheet.merges = (this.sheet.merges || []).filter(m => m[0] > r1 || m[0] + m[2] - 1 < r0 || m[1] > c1 || m[1] + m[3] - 1 < c0);
+  return this;
+};
 /* تنسيقات مش بنتابعها */
-['merge', 'setHorizontalAlignment', 'removeCheckboxes', 'setWrap', 'setFontSize', 'breakApart', 'setDataValidation', 'setBorder',
+['setHorizontalAlignment', 'removeCheckboxes', 'setWrap', 'setFontSize', 'setDataValidation', 'setBorder',
   'setVerticalAlignment', 'activate', 'setTextDirection', 'setHorizontalAlignments', 'setVerticalAlignments'].forEach(m => {
   FakeRange.prototype[m] = function () { return this; };
 });

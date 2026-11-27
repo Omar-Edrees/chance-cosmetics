@@ -156,6 +156,7 @@ function todayMakeRoom_(g) {
   const L = TODAY.GAP_COL - 1, right = g.rows.map(line => line.slice(L));
   g.rows.forEach(line => { if (line.length > L) line.length = L; });
   right.forEach((cells, i) => cells.forEach((cell, k) => { if (cell) { const c = g.cell(at(i + 1), L + 1 + k); Object.assign(c, cell); } }));
-  g.merges.forEach(m => { if (m[1] > L) m[0] = at(m[0]); });
+  // A merge down several rows (a product next to its BOUGHT WITH rows) still ends on its last row.
+  g.merges.forEach(m => { if (m[1] > L) { const end = at(m[0] + m[2] - 1); m[0] = at(m[0]); m[2] = end - m[0] + 1; } });
   (g.live || []).forEach(x => { if (x[1] > L) x[0] = at(x[0]); });
 }

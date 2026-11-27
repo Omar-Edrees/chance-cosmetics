@@ -158,6 +158,20 @@ function sideBlock(sheet, title) {
   assert.fail('مش لاقي البلوك: ' + title);
 }
 
+/*
+ * جدول PRODUCT PERFORMANCE في Today من بعد صف العناوين (index head): صف لكل منتج لحد TOTAL. سطور BOUGHT WITH كل واحد في صف
+ * لوحده تحت المنتج (وخانات المنتج مدموجة عليهم)، فهنا بيتجمعوا تاني نص واحد في خانة 15.
+ */
+function prodRows(v, head) {
+  const out = [];
+  for (let r = head + 1; r < v.length; r++) {
+    if (v[r][8] !== '') { out.push(v[r].slice()); if (v[r][8] === 'TOTAL') break; continue; }
+    const last = out[out.length - 1];
+    if (last && v[r][15] !== '') last[15] = last[15] + '\n' + v[r][15];
+  }
+  return out;
+}
+
 function scenario() {
   const probe = env();
   const today = probe.c.todayKey_(), yest = probe.c.shiftKey_(today, -1);
@@ -308,17 +322,18 @@ test('Today: أداء المنتجات بالقطع والمبيعات و AOV ل
   // كل قطعة على منتجها، ومبيعات الأوردر 1001 (750) متقسمة بسعر Lip Oil (300) و Blush (250). أوردر TikTok داخل.
   // AOV المنتج = مبيعاته ÷ الأوردرات اللي فيها، مش الأوردر كله: Lip Oil 829.41 على أوردرين = 414.71.
   const i = values.findIndex(r => r[8] === 'PRODUCT');
-  assert.deepEqual(values.slice(i + 1, i + 4).map(r => r.slice(8, 15)), [
+  assert.deepEqual(prodRows(values, i).map(r => r.slice(8, 15)), [
     ['Lip Oil', 3, '', 829.41, '', 414.71, ''],
     ['Blush', 2, '', 470.59, '', 235.29, ''],
     ['TOTAL', 5, 3, 1300, 1100, 433.33, 1.18],
   ]);
   // بيتطلب مع إيه: كل منتج اتطلب مع التاني في الأوردر 1001، وفي أوردر تاني لوحده. مفيش باندل.
-  assert.deepEqual(values.slice(i + 1, i + 4).map(r => r.slice(15, 17)), [['• Blush: 1\nلوحده في 1 من 2 أوردر', ''], ['• Lip Oil: 1\nلوحده في 1 من 2 أوردر', ''], ['', '']]);
-  // كلام كتير في خانة = سطور تحت بعض، والخانة بتلف (wrap)
+  assert.deepEqual(prodRows(values, i).map(r => r.slice(15, 17)), [['• Blush: 1\nلوحده في 1 من 2 أوردر', ''], ['• Lip Oil: 1\nلوحده في 1 من 2 أوردر', ''], ['', '']]);
+  // كل سطر في BOUGHT WITH في صف لوحده (مفيش خانة طويلة تكبّر الجداول اللي على الشمال)، وخانات المنتج مدموجة على صفوفه
+  assert.deepEqual(values.slice(i + 1, i + 3).map(r => [r[8], r[15]]), [['Lip Oil', '• Blush: 1'], ['', 'لوحده في 1 من 2 أوردر']]);
   const today = e.ss.getSheetByName('Today');
-  assert.equal(today.attr(i + 2, 16).wr, true, 'BOUGHT WITH بيلف');
-  assert.equal(today.attr(i + 2, 13).wr, false, 'باقي الخانات زي ما هي');
+  assert.notEqual(today.attr(i + 2, 16).wr, true, 'BOUGHT WITH مابيلفش');
+  assert.ok(today.merges.some(m => m[0] === i + 2 && m[1] === 9 && m[2] === 2 && m[3] === 1), 'اسم المنتج مدموج على صفين');
 });
 
 test('ربط الإعلانات بالمنتجات من لينك صفحة المنتج، والكوليكشن مش مربوط طول ما دومين المتجر فاضي', () => {
@@ -580,7 +595,7 @@ test('الكتالوج: Today فيه صف CATALOG واحد بصرفه وأورد
   const between = (v, col, from, to) => { const i = v.findIndex(r => r[col] === from); return v.slice(i + 1, v.findIndex((r, j) => j > i && r[col] === to) + 1); };
   const v = e.ss.getSheetByName('Today').getDataRange().getValues();
   // Today: قطع أوردرات الكتالوج كلها في صف واحد، والباقي كل قطعة على منتجها (Blush مالوش سعر: المبيعات بالقطع)
-  assert.deepEqual(between(v, 8, 'PRODUCT', 'TOTAL').map(r => r.slice(8, 15)), [
+  assert.deepEqual(between(v, 8, 'PRODUCT', 'TOTAL').filter(r => r[8] !== '').map(r => r.slice(8, 15)), [
     ['CATALOG (كل إعلانات الكتالوج)', 1, '', 250, '', 250, ''],
     ['Blush', 2, '', 200, '', 200, ''],
     ['Lip Oil', 1, '', 100, '', 100, ''],
@@ -705,7 +720,7 @@ test('أوردرات من حساب Meta مش معانا: صف لوحدها بر�
   assert.equal(row('GRAND TOTAL')[3], 2, 'أوردرات الحساب التاني برا GRAND TOTAL');
   const i = v.findIndex(r => r[8] === 'PRODUCT');
   // أوردر 2 جه من إعلان Lip Oil ومافيهوش Lip Oil: كل قطعة على منتجها
-  assert.deepEqual(v.slice(i + 1, i + 6).map(r => r.slice(8, 15)), [
+  assert.deepEqual(prodRows(v, i).map(r => r.slice(8, 15)), [
     ['Blush', 2, '', 360, '', 360, ''], ['Mascara', 2, '', 360, '', 360, ''], ['Lip Oil', 1, '', 300, '', 300, ''],
     ['Primer', 1, '', 180, '', 180, ''], ['TOTAL', 6, 2, 1200, 600, 600, 2]]);
   const t = e.ss.getSheetByName('الكتالوج').getDataRange().getValues(), j = t.findIndex(r => r[7] === 'CAMPAIGN');
@@ -1003,7 +1018,7 @@ test('PRODUCT PERFORMANCE: أوردرات DIRECT والمانيول (Draft) دا
   e.c.setupAll();
   e.c.liveTick(); e.c.liveTick();
   const v = e.ss.getSheetByName('Today').getDataRange().getValues(), i = v.findIndex(r => /^PRODUCT PERFORMANCE — TODAY/.test(String(r[8])));
-  assert.deepEqual(v.slice(i + 2, i + 5).map(r => r.slice(8, 15)), [
+  assert.deepEqual(prodRows(v, i + 1).map(r => r.slice(8, 15)), [
     ['Blush', 3, '', 1000, '', 500, ''], ['Lip Oil', 2, '', 1000, '', 500, ''], ['TOTAL', 5, 4, 2000, 600, 500, 3.33]],
     'أوردر Meta + أوردر DIRECT لنفس المنتج، وأوردر Draft داخل');
   const cl = closingRow(e.ss.getSheetByName('Closing'), dayLabel(e.c, today));
@@ -2803,7 +2818,10 @@ test('PRODUCT PERFORMANCE: بيتطلب مع إيه أكتر، ولو في با�
   const rg = e.ss.getSheetByName('Today').getDataRange(), v = rg.getValues(), f = rg.getFormulas();
   const i = v.findIndex(r => /^PRODUCT PERFORMANCE — TODAY/.test(String(r[8])));
   // لينك الباندل معادلة HYPERLINK (اسم الباندل ولينكه)، من غير لينك لو الصفحة مش معروفة
-  const row = n => { const k = v.findIndex((r, j) => j > i && r[8] === n); return [v[k][15], f[k][16] || v[k][16]]; };
+  // سطور BOUGHT WITH كل واحد في صف لوحده تحت المنتج
+  const row = n => { const k = v.findIndex((r, j) => j > i && r[8] === n), lines = [v[k][15]];
+    for (let j = k + 1; v[j][8] === '' && v[j][15] !== ''; j++) lines.push(v[j][15]);
+    return [lines.join('\n'), f[k][16] || v[k][16]]; };
   assert.deepEqual(row('True Stain Liner'), ['• Glass Gloss: 2 (منهم 2 باندل)\n• Blush: 1\nلوحده في 1 من 3 أوردر',
     '=HYPERLINK("https://chance-cosmetics.com/products/lip-compo","Lip liner and gloss compo (2 أوردر)")']);
   assert.deepEqual(row('Glass Gloss'), ['• Blush: 2\n• True Stain Liner: 2 (منهم 2 باندل)\nلوحده في 0 من 3 أوردر',

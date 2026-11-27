@@ -11,7 +11,7 @@
  * Ad accounts and stores are read-only from here: no writes to Meta, TikTok or order sources.
  */
 const APP = {
-  VERSION: '1.83.0',
+  VERSION: '1.84.0',
   T: {
     SETTINGS: 'Settings', ACCOUNTS: 'Accounts', PRODUCTS: 'Products', ADMAP: 'Ad Map',
     ADS: 'Ads Raw', ACC_RAW: 'Account Raw', ORDERS: 'Orders Raw', DAILY: 'Daily Log',
@@ -3548,8 +3548,16 @@ function todayProducts_(g, r, title, from, to, rows, orders, bundles) {
       num(c + 2, t.orders, S.COUNT); num(c + 4, money(t.spend), S.MONEY); num(c + 5, ratioOrBlank_(t.revenue, t.orders, 2), S.MONEY);
       num(c + 6, ratioOrBlank_(t.revenue, t.spend, 2), S.RATIO);
     } else num(c + 5, ratioOrBlank_(t.revenue, t.inOrders, 2), S.MONEY);
-    if (along[name]) { g.set(r, c + 7, along[name].text, Object.assign({ wr: true }, style)); g.set(r, c + 8, along[name].bundle, Object.assign({ wr: true }, style)); }
-    r++;
+    // BOUGHT WITH: each product on a row of its own (never one tall cell, which would stretch the tables on the left), and
+    // the product's own cells merged down those rows.
+    const lines = along[name] ? along[name].lines : [], n = Math.max(lines.length, 1);
+    lines.forEach((x, i) => g.set(r + i, c + 7, x, Object.assign({}, style, { b: style.b === 'bold' && !i ? 'bold' : 'normal' })));
+    if (along[name]) g.set(r, c + 8, along[name].bundle, Object.assign({ wr: n > 1 }, style)); // one row: never taller than the others
+    if (n > 1) {
+      for (let i = 1; i < n; i++) [0, 1, 2, 3, 4, 5, 6, 8].forEach(k => { g.set(r + i, c + k, '', style.bg ? { bg: style.bg } : {}); });
+      [0, 1, 2, 3, 4, 5, 6, 8].forEach(k => g.merge(r, c + k, n, 1));
+    }
+    r += n;
   };
   if (by[APP.CATALOG]) line(APP.CATALOG, by[APP.CATALOG], { bg: S.CATALOG, b: 'bold' });
   Object.keys(by).filter(n => n !== APP.CATALOG)
@@ -3561,9 +3569,10 @@ function todayProducts_(g, r, title, from, to, rows, orders, bundles) {
 }
 
 /*
- * Product → { text, bundle } over the orders of its row (catalog orders aren't on a product row): the products most often in
- * the same orders, one a line ("• Gloss: 12 (منهم 10 باندل)" = in 12 of its orders, 10 of them in one Shopify bundle with it), and how many of its
- * orders had it alone; bundle = the Shopify bundle it was most often bought in, a link to its page (bundles: orderBundlesMap_).
+ * Product → { lines, text, bundle } over the orders of its row (catalog orders aren't on a product row): the products most
+ * often in the same orders, one a line ("• Gloss: 12 (منهم 10 باندل)" = in 12 of its orders, 10 of them in one Shopify bundle
+ * with it), and how many of its orders had it alone (lines: each on a row of its own in Today; text: the same, one cell);
+ * bundle = the Shopify bundle it was most often bought in, a link to its page (bundles: orderBundlesMap_).
  */
 function boughtWith_(orders, bundles) {
   const per = {}, urls = bundleUrls_(), out = {};
@@ -3593,7 +3602,7 @@ function boughtWith_(orders, bundles) {
       const label = t.bundles[best].title + ' (' + t.bundles[best].n + ' أوردر)', url = urls[best];
       bundle = url ? '=HYPERLINK("' + url.replace(/"/g, '%22') + '","' + label.replace(/"/g, '""') + '")' : label;
     }
-    out[n] = { text: parts.join('\n'), bundle: bundle };
+    out[n] = { lines: parts, text: parts.join('\n'), bundle: bundle };
   });
   return out;
 }
@@ -4242,7 +4251,8 @@ function todayMakeRoom_(g) {
   const L = TODAY.GAP_COL - 1, right = g.rows.map(line => line.slice(L));
   g.rows.forEach(line => { if (line.length > L) line.length = L; });
   right.forEach((cells, i) => cells.forEach((cell, k) => { if (cell) { const c = g.cell(at(i + 1), L + 1 + k); Object.assign(c, cell); } }));
-  g.merges.forEach(m => { if (m[1] > L) m[0] = at(m[0]); });
+  // A merge down several rows (a product next to its BOUGHT WITH rows) still ends on its last row.
+  g.merges.forEach(m => { if (m[1] > L) { const end = at(m[0] + m[2] - 1); m[0] = at(m[0]); m[2] = end - m[0] + 1; } });
   (g.live || []).forEach(x => { if (x[1] > L) x[0] = at(x[0]); });
 }
 
