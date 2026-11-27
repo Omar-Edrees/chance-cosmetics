@@ -120,18 +120,26 @@ function anaEdit_(name, a1) {
   done[f.id] = today;
   Object.keys(done).forEach(k => { if (done[k] < shiftKey_(today, -30)) delete done[k]; });
   props.setProperty(ANA.DONE_KEY, JSON.stringify(done));
-  const item = [f.task, ANA.PRI[f.pri] || ANA.PRI[3], ANA.STATUS[0], today, f.note || '', f.camp || '', '', f.opt || ''];
+  anaAddTask_([f.task, ANA.PRI[f.pri] || ANA.PRI[3], ANA.STATUS[0], today, f.note || '', f.camp || '', '', f.opt || '']);
+  sh.getRange(row, 3, 1, 3).setBackground('#e5e7eb'); // its campaign / product row (A–B may be merged with the rows next to it)
+}
+/*
+ * A new task (the first 8 columns of the tasks table: text, priority, status, added, note, campaign, metrics, optimized on)
+ * in the first free row of the tasks table in Actions; with no free row (or no tab yet), kept until the tab is drawn again.
+ */
+function anaAddTask_(item) {
+  const sh = ss_().getSheetByName(ANA.TAB), props = PropertiesService.getDocumentProperties(), first = ANA.TOP + 2;
+  const n = sh ? Number(props.getProperty(ANA.ROWS_KEY) || 0) : 0;
   const free = n ? sh.getRange(first, ANA.R, n, 1).getValues().findIndex(v => !String(v[0]).trim()) : -1;
   if (free >= 0) {
     sh.getRange(first + free, ANA.R + 3).setNumberFormat('@');
     sh.getRange(first + free, ANA.R, 1, item.length).setValues([item]);
-  } else {
-    let pend = [];
-    try { pend = JSON.parse(props.getProperty(ANA.PENDING_KEY) || '[]'); } catch (e) { pend = []; }
-    pend.push(item);
-    props.setProperty(ANA.PENDING_KEY, JSON.stringify(pend));
+    return;
   }
-  sh.getRange(row, 3, 1, 3).setBackground('#e5e7eb'); // its campaign / product row (A–B may be merged with the rows next to it)
+  let pend = [];
+  try { pend = JSON.parse(props.getProperty(ANA.PENDING_KEY) || '[]'); } catch (e) { pend = []; }
+  pend.push(item);
+  props.setProperty(ANA.PENDING_KEY, JSON.stringify(pend));
 }
 
 /*
@@ -574,7 +582,7 @@ function anaDrawAnalysis_(sh, F, P, M, ctx, errors) {
 }
 
 /*
- * Draws the tab with its + / − from row `first` (ids: [key, depth, has kids] per row), like the Duplication tab: when the
+ * Draws the tab with its + / − from row `first` (ids: [key, depth, has kids] per row), like Meta Campaigns: when the
  * rows changed or the groups on the sheet aren't what was drawn, every row from `first` down is deleted and the groups are
  * made again, closed, and the ones that were open opened again.
  */

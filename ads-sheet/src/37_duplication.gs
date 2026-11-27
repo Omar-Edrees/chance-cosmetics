@@ -1,6 +1,6 @@
 /*
- * Tab "Duplication": the orders each platform says it brought (Meta pixel purchases, TikTok complete payments: Ads Raw)
- * against the store orders Shopify has for it, in a period chosen in B2 (today by default).
+ * Duplication: the orders each platform says it brought (Meta pixel purchases, TikTok complete payments: Ads Raw)
+ * against the store orders Shopify has for it, in a period (drawn in Meta Campaigns since 1.85; the tab of its own is gone).
  *  - Shopify for Meta = META TOTAL in Today: our Meta ads' orders by UTM + DIRECT (orders with no source, most likely ads).
  *    MANUAL (draft), BIO (link in bio) and GOOGLE (Google search), both sure organic, and the outside account's orders aren't in it. TikTok = TIKTOK TOTAL.
  *  - One table per platform: a summary line, then the campaigns running now (Meta: an ACTIVE ad now; TikTok: spent today
@@ -14,22 +14,10 @@
  *    to every Meta ad that spent that day; when no Meta ad spent that day, it stays in a row of its own.
  * What's open stays open when the tab is drawn again. Everything is read from the sheet's own tabs: nothing from Meta here.
  */
-const DUP = {
-  TAB: 'Duplication', GROUPS: 'DUP_GROUPS', HIGH: 0.2,
-  PERIODS: ['النهارده', 'إمبارح', 'آخر 3 أيام', 'آخر 7 أيام', 'الشهر ده', 'الشهر اللي فات'],
-  HEADERS: ['الكامبين / الأد سيت / الإعلان', 'الحساب', 'الحالة', 'الصرف', 'أوردرات المنصة', 'أوردرات شوبيفاي (UTM)',
-    '+ من غير مصدر (تقديري)', 'أوردرات شوبيفاي (الإجمالي)', 'الفرق (المنصة − شوبيفاي)', 'نسبة الدوبليكيشن']
-};
+const DUP = { TAB: 'Duplication', HIGH: 0.2 };
 
-/* The period chosen in B2 → {from, to}. */
-function dupPeriod_(choice) {
-  const t = todayKey_(), m = t.slice(0, 8) + '01', y = shiftKey_(t, -1), e = shiftKey_(m, -1);
-  return choice === DUP.PERIODS[1] ? { from: y, to: y } : choice === DUP.PERIODS[2] ? { from: shiftKey_(t, -2), to: t }
-    : choice === DUP.PERIODS[3] ? { from: shiftKey_(t, -6), to: t } : choice === DUP.PERIODS[4] ? { from: m, to: t }
-      : choice === DUP.PERIODS[5] ? { from: e.slice(0, 8) + '01', to: e } : { from: t, to: t };
-}
-
-function dupZero_() { return { spend: 0, pixel: 0, utm: 0, direct: 0, rev: 0 }; } // rev: the UTM orders' sales (Today's offers table)
+/* rev: the UTM orders' sales (Today's offers table, ROAS in Meta Campaigns); imp and clicks for CPM / CTR / conversion. */
+function dupZero_() { return { spend: 0, pixel: 0, utm: 0, direct: 0, rev: 0, imp: 0, clicks: 0 }; }
 
 /*
  * Both platforms for the period: {META, TIKTOK}, each {camps: [campaign nodes], all: sums, utmLost, directLost}.
@@ -71,7 +59,7 @@ function dupData_(from, to) {
     const d = asKey_(a[0]), p = a[1], spend = num_(a[10]), pix = num_(a[13]);
     if (!P[p] || !a[8] || !a[4] || d < from || d > to || (!spend && !pix)) return;
     const n = ad(p, String(a[8]));
-    n.t.spend += spend; n.t.pixel += pix;
+    n.t.spend += spend; n.t.pixel += pix; n.t.imp += num_(a[11]); n.t.clicks += num_(a[12]);
     if (p !== 'META' || !(spend > 0)) return;
     const m = catAds.has('META|' + a[8]) ? { product: APP.CATALOG } : idx.get(adKey_('META', String(a[8]), a[5], a[7], a[9]));
     (dayAds[d] = dayAds[d] || []).push({ n: n, spend: spend, product: m ? m.product : '' });
@@ -123,148 +111,15 @@ function dupData_(from, to) {
   return out;
 }
 
-/* EXT.views and B2: draws the tab. */
-function writeDupTab_() {
-  const sh = ensureTab_(DUP.TAB), W = DUP.HEADERS.length, props = PropertiesService.getDocumentProperties();
-  let choice = String(sh.getRange('B2').getValue() || '').trim();
-  if (DUP.PERIODS.indexOf(choice) < 0) choice = DUP.PERIODS[0];
-  const per = dupPeriod_(choice), data = dupData_(per.from, per.to), accs = accounts_('META').concat(accounts_('TIKTOK'));
-  const accName = id => { const a = accs.find(x => String(x.id) === String(id)); return a ? a.name || a.id : id; };
-  const g = todayGrid_(), dark = { bg: '#1f2937', fc: '#ffffff', b: 'bold' };
-  g.width = W;
-  g.set(1, 1, 'DUPLICATION — أوردرات المنصة قدام أوردرات شوبيفاي', dark);
-  g.fill(1, 2, W - 1, { bg: '#1f2937' });
-  g.merge(1, 1, 1, W);
-  g.set(2, 1, 'الفترة', { bg: '#f3f4f6', b: 'bold' });
-  g.set(2, 2, choice, { bg: '#fff2cc', b: 'bold', al: 'center' });
-  g.set(2, 3, per.from === per.to ? per.from : 'من ' + per.from + ' لـ ' + per.to, { fc: '#374151' });
-  g.merge(2, 3, 1, 2);
-  g.set(3, 1, 'نسبة الدوبليكيشن = (أوردرات المنصة − أوردرات شوبيفاي) ÷ أوردرات شوبيفاي. 🔴 المنصة بتعد أكتر بـ 20% أو أكتر، 🟡 بتعد أقل بـ 20% أو أكتر. ' +
-    'أوردرات شوبيفاي لـ Meta = META TOTAL في Today (بالـ UTM + DIRECT اللي من غير مصدر)، و DIRECT متوزعة تقديري على الإعلانات اللي صرفت على نفس المنتج في نفس اليوم بنسبة صرفها. ' +
-    'اضغط + جنب الكامبين تشوف الأد سيتس، و + جنب الأد سيت تشوف الإعلانات.', { fc: '#374151' });
-  g.merge(3, 1, 1, W);
-
-  const fmt1 = v => Math.round(v * 10) / 10;
-  const cells = (r, s, st, tiktok) => {
-    const shop = s.utm + s.direct, gap = s.pixel - shop, dup = shop > 0 ? gap / shop : null;
-    const n = (c, v, nf, extra) => g.set(r, c, v, Object.assign({ nf: nf, al: 'center' }, st, extra || {}));
-    n(4, Math.round(s.spend), '#,##0');
-    n(5, s.pixel, '0');
-    n(6, s.utm, '0');
-    n(7, tiktok ? '' : fmt1(s.direct), '0.0');
-    n(8, fmt1(shop), '0.0', { b: 'bold' });
-    n(9, fmt1(gap), '+0.0;-0.0;0');
-    if (dup !== null) n(10, Math.round(dup * 1000) / 1000, '+0%;-0%;0%', { b: 'bold', bg: dup >= DUP.HIGH ? '#f4cccc' : dup <= -DUP.HIGH ? '#fff2cc' : '#d9ead3' });
-    else n(10, s.pixel > 0 ? 'مفيش في شوبيفاي' : '', '@', s.pixel > 0 ? { bg: '#f4cccc', b: 'bold' } : {});
-  };
-
-  let r = 5, head = 0, first = 0;
-  const info = {}; // row → [key, depth, rows under it] for the rows with a + (and the ones inside them)
-  const table = (p, label) => {
-    const x = data[p], tiktok = p === 'TIKTOK', shop = x.all.utm + x.all.direct;
-    g.set(r, 1, label + ' | ' + (per.from === per.to ? per.from : per.from + ' → ' + per.to), dark);
-    g.fill(r, 2, W - 1, { bg: '#1f2937' });
-    g.merge(r, 1, 1, W);
-    r++;
-    // The summary: the platform's orders next to Shopify's.
-    const sumHead = ['أوردرات ' + label + ' من المنصة', 'أوردرات ' + label + ' من شوبيفاي' + (tiktok ? '' : ' (شامل DIRECT)'), 'منها بالـ UTM',
-      tiktok ? '' : 'منها DIRECT (من غير مصدر)', 'الفرق (المنصة − شوبيفاي)', 'نسبة الدوبليكيشن'];
-    sumHead.forEach((h, i) => g.set(r, 1 + i, h, { bg: '#e8eefc', b: 'bold', al: 'center' }));
-    r++;
-    const gap = x.all.pixel - shop, dup = shop > 0 ? gap / shop : null;
-    [x.all.pixel, fmt1(shop), x.all.utm, tiktok ? '' : fmt1(x.all.direct), fmt1(gap)].forEach((v, i) =>
-      g.set(r, 1 + i, v, { nf: i === 4 ? '+0.0;-0.0;0' : i === 0 || i === 2 ? '0' : '0.0', al: 'center', b: 'bold' }));
-    g.set(r, 6, dup === null ? (x.all.pixel > 0 ? 'مفيش في شوبيفاي' : '') : Math.round(dup * 1000) / 1000, { nf: '+0%;-0%;0%', al: 'center', b: 'bold',
-      bg: dup === null ? null : dup >= DUP.HIGH ? '#f4cccc' : dup <= -DUP.HIGH ? '#fff2cc' : '#d9ead3' });
-    r += 2;
-    DUP.HEADERS.forEach((h, i) => g.set(r, 1 + i, h, { bg: '#fff200', b: 'bold', al: 'center' }));
-    if (!first) { head = r; first = r + 1; }
-    r++;
-    const line = (n, depth) => {
-      const st = n.level === 'campaign' ? { b: 'bold', bg: '#f9fafb' } : n.level === 'adset' ? {} : { fc: '#4b5563' };
-      const pre = n.level === 'adset' ? '↳ ' : n.level === 'ad' ? '        • ' : '';
-      g.set(r, 1, pre + (n.name || n.id), st);
-      g.set(r, 2, n.level === 'campaign' ? accName(n.acc) : '', st);
-      g.set(r, 3, n.on ? '🟢 شغال' : '⏸ واقف', Object.assign({}, st, { al: 'center', fc: n.on ? '#38761d' : '#6b7280' }));
-      cells(r, n.sum, st, tiktok);
-      info[r] = [p + '|' + n.key, depth, n.kids.length];
-      r++;
-      n.kids.forEach(k => line(k, depth + 1));
-    };
-    const running = x.camps.filter(c => c.on), stopped = x.camps.filter(c => !c.on);
-    running.forEach(c => line(c, 0));
-    if (!running.length) { g.set(r, 1, 'مفيش كامبينات شغالة دلوقتي صرفت أو جابت أوردرات في الفترة دي', { fc: '#6b7280' }); r++; }
-    if (stopped.length) {
-      const s = dupZero_(), st = { b: 'bold', bg: '#e5e7eb' };
-      stopped.forEach(c => Object.keys(s).forEach(f => { s[f] += c.sum[f]; }));
-      g.set(r, 1, '⏸ كامبينات واقفة دلوقتي (' + stopped.length + ')', st);
-      g.fill(r, 2, 2, st);
-      cells(r, s, st, tiktok);
-      info[r] = [p + '|stopped', 0, stopped.length];
-      r++;
-      stopped.forEach(c => line(c, 1));
-    }
-    const other = (text, s) => {
-      const st = { bg: '#f3f4f6' };
-      g.set(r, 1, text, st); g.fill(r, 2, 2, st);
-      cells(r, Object.assign(dupZero_(), s), st, tiktok);
-      r++;
-    };
-    if (x.utmLost) other('أوردرات ' + label + ' بالـ UTM من غير كامبين معروفة', { utm: x.utmLost });
-    if (x.directLost) other('DIRECT مااتوزعتش (مفيش إعلان Meta صرف في يومها)', { direct: x.directLost });
-    const tot = { bg: '#e8eefc', b: 'bold' };
-    g.set(r, 1, 'TOTAL', tot); g.fill(r, 2, 2, tot);
-    cells(r, x.all, tot, tiktok);
-    r++;
-  };
-  table('META', 'Meta');
-  r += 2;
-  table('TIKTOK', 'TikTok');
-  const ids = [];
-  for (let i = first; i < r; i++) ids.push(info[i] || ['', 0, 0]);
-
-  // Draw: when the rows changed, or the + / − on the sheet aren't what was drawn last time, every row from the first table
-  // row down is deleted (and every group with it) and the groups are made again from zero (like Meta Campaigns).
-  const sig = sha_(JSON.stringify([first, ids.map(x => x[0] + '/' + x[1])]));
-  let old = null;
-  try { old = JSON.parse(props.getProperty(DUP.GROUPS) || 'null'); } catch (e) { old = null; }
-  const ok = mcGroupsOk_(sh, head, first, ids);
-  const same = old && old.sig === sig && sh.getLastRow() > 0 && ok;
-  const open = new Set();
-  if (!same) {
-    if (old && sh.getLastRow() >= old.first && (ok || mcGroupsOk_(sh, old.first - 1, old.first, old.ids))) {
-      old.ids.forEach((x, i) => {
-        if (!x[2] || !x[0]) return;
-        try { const grp = sh.getRowGroup(old.first + i + 1, x[1] + 1); if (grp && !grp.isCollapsed()) open.add(x[0]); } catch (e) { /* مفيش جروب */ }
-      });
-    }
-    mcUngroupAbove_(sh, first);
-    if (sh.getMaxRows() >= first) sh.deleteRows(first, sh.getMaxRows() - first + 1);
-    sh.insertRowsAfter(first - 1, ids.length + 50);
-    props.deleteProperty(DUP.GROUPS);
-    props.deleteProperty('GH_' + DUP.TAB);
-  }
-  const drew = writeGrid_(sh, g);
-  sh.getRange('B2').setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(DUP.PERIODS, true).setAllowInvalid(false).build());
-  if (!drew && same) return;
-  if (!same) {
-    try { sh.setRowGroupControlPosition(SpreadsheetApp.GroupControlTogglePosition.BEFORE); } catch (e) { /* قديم */ }
-    ids.forEach((x, i) => {
-      if (!x[2]) return;
-      let k = i + 1;
-      while (k < ids.length && ids[k][1] > x[1]) k++;
-      if (k > i + 1) sh.getRange(first + i + 1, 1, k - i - 1, 1).shiftRowGroupDepth(1);
-    });
-    if (ids.some(x => x[1] > 0)) {
-      sh.collapseAllRowGroups();
-      ids.forEach((x, i) => { if (open.has(x[0]) && x[2]) { try { sh.getRowGroup(first + i + 1, x[1] + 1).expand(); } catch (e) { /* اتغير */ } } });
-    }
-    props.setProperty(DUP.GROUPS, JSON.stringify({ sig: sig, first: first, ids: ids }));
-  }
-  sh.getRange(3, 1, 1, W).setWrap(true);
-  sh.getRange(head, 1, 1, W).setWrap(true);
-  [[1, 380], [2, 140], [3, 90], [4, 90], [5, 110], [6, 120], [7, 130], [8, 130], [9, 130], [10, 120]].forEach(x => sh.setColumnWidth(x[0], x[1]));
+/*
+ * The tab "Duplication" of version 1.84 and before: its numbers are in Meta Campaigns now (the platform's orders, Shopify's
+ * by UTM and the estimate from DIRECT, and the duplication, for the period chosen there). Deleted once: it was all drawn.
+ */
+function dupDropTab_() {
+  const props = PropertiesService.getDocumentProperties();
+  if (props.getProperty('DUP_TAB_GONE')) return;
+  const sh = ss_().getSheetByName(DUP.TAB);
+  if (sh && ss_().getSheets().length > 1) ss_().deleteSheet(sh);
+  ['DUP_GROUPS', 'GH_' + DUP.TAB, 'GM_' + DUP.TAB].forEach(k => props.deleteProperty(k));
+  props.setProperty('DUP_TAB_GONE', '1');
 }
-
-/* EXT.edit: the period in B2. */
-function dupEdit_(name, a1) { if (name === DUP.TAB && a1 === 'B2') writeDupTab_(); }

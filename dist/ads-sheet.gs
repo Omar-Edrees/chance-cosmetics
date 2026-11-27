@@ -11,7 +11,7 @@
  * Ad accounts and stores are read-only from here: no writes to Meta, TikTok or order sources.
  */
 const APP = {
-  VERSION: '1.84.0',
+  VERSION: '1.85.0',
   T: {
     SETTINGS: 'Settings', ACCOUNTS: 'Accounts', PRODUCTS: 'Products', ADMAP: 'Ad Map',
     ADS: 'Ads Raw', ACC_RAW: 'Account Raw', ORDERS: 'Orders Raw', DAILY: 'Daily Log',
@@ -6562,8 +6562,10 @@ function todayCampaignWarning_(g, r) {
  * ad's UTM ÷ spend): the last 3 full days (yesterday and the 2 days before) against the 7 days before them and the 14 days
  * before them (both end the day before the 3 days start, so they never overlap the 3 days).
  *
- * Simple from the outside: one row per campaign. The + next to a campaign opens its ad sets (with their budgets), and the
- * + next to an ad set opens its ads, with the same columns. What's open stays open when the tab is drawn again.
+ * Simple from the outside: one row per campaign. The + next to a campaign opens its ad sets, and the + next to an ad set
+ * opens its ads, with the same columns. What's open stays open when the tab is drawn again. The numbers on a row are for
+ * the period chosen in B2 (writeMetaCamps_); the decision (its color) is always the 3 days against the 7 and the 14.
+ * TikTok's campaigns under Meta's, the same way (from the sheet's own tabs).
  *
  * Each row: a decision (🔴 stop, 🟠 dropped, 🔁 bring it back, 🟢 scale, 🟡 keep, ⏳ too early, ⏸ off), the metric that
  * dropped (the one of CPM, CTR, conversion (orders ÷ link clicks) and order value that moved ROAS down the most:
@@ -6585,7 +6587,7 @@ const MC = {
   WINDOWS: [['3', 3, 1], ['7', 10, 4], ['14', 17, 4]],
   LEVELS: ['campaign', 'adset', 'ad'],
   FIELDS: 'spend,impressions,reach,inline_link_clicks,actions',
-  DROP: 0.2, SCALE: 1.2, MIN_ORDERS: 3, ID_COL: 21,
+  DROP: 0.2, SCALE: 1.2, MIN_ORDERS: 3,
   ORDER: { '🔴': 0, '🟠': 1, '🔁': 2, '🟢': 3, '🟡': 4, '⏳': 5, '💬': 6, '⏸': 7 },
   BG: { '🔴': '#f4cccc', '🟠': '#fce5cd', '🔁': '#cfe2f3', '🟢': '#d9ead3', '🟡': '#fff2cc', '⏳': '#f3f4f6', '💬': '#e8eefc', '⏸': '#e5e7eb' },
   WORDS: {
@@ -6593,11 +6595,6 @@ const MC = {
     adset: { '🔴': 'وقّفه', '🟠': 'وقع', '🔁': 'رجّعه', '🟢': 'كسبان', '🟡': 'سيبه', '⏳': 'لسه بدري', '💬': 'مسجات', '⏸': 'واقف' },
     ad: { '🔴': 'وقّفه', '🟠': 'وقع', '🔁': 'رجّعه', '🟢': 'كسبان، ابني عليه', '🟡': 'سيبه', '⏳': 'لسه بدري', '💬': 'مسجات', '⏸': 'واقف' }
   },
-  HEADERS: ['القرار', 'الكامبين / الأد سيت / الإعلان', 'الحساب', 'الحالة', 'الميزانية في اليوم', 'المنتج', 'صرف 3 أيام',
-    'أوردرات 3 أيام', 'رؤاس 3 أيام', 'رؤاس الـ 7 أيام قبلها', 'رؤاس الـ 14 يوم قبلها', 'رؤاس التعادل', 'المترك الواقع',
-    'السبب وتعمل إيه', 'CPM', 'CTR', 'Hook', 'الفريكونسي', 'التحويل', 'متوسط الأوردر', 'ID'],
-  /* The metric columns (3 days, colored against the 7 days): [key, number format, lower is better] */
-  METRICS: [['cpm', '#,##0.0', true], ['ctr', '0.00%'], ['hook', '0.0%'], ['freq', '0.00', true], ['cvr', '0.00%'], ['aov', '#,##0']]
 };
 const MC_RAW_HEADERS = ['Window', 'Level', 'Account ID', 'Campaign ID', 'Campaign', 'Ad set ID', 'Ad set', 'Ad ID', 'Ad',
   'Spend', 'Impressions', 'Reach', 'Link clicks', 'Video 3s', 'From', 'To'];
@@ -6673,6 +6670,21 @@ function refreshMetaCamps_(force) {
       props.setProperty(MC.DAY_KEY, todayKey_());
     }
     setStatus_('MCAMP', (got.failed.length ? '⚠️ ماقدرتش أقرا: ' + got.failed.join('، ') : '✓') + ' — ' + got.rows.length + ' صف من Meta');
+  }
+  // The period chosen in the tab, every update (its numbers move all day): Hook rate, frequency and content views.
+  if (force || !DEADLINE_ || DEADLINE_ - Date.now() > 60000) {
+    const per = mcPeriod_(mcChoice_());
+    try {
+      const x = fetchMcPeriod_(per);
+      if (x.ok) propSetBig_(MCP.DATA, JSON.stringify({ from: per.from, to: per.to, at: nowText_(), by: x.by }));
+    } catch (e) { console.error('meta camps period: ' + errText_(e)); }
+  }
+  // Every campaign's spend since it started, once a day (the stopped ones that were good their whole life).
+  if (props.getProperty(MCP.LIFE_DAY) !== todayKey_() && (force || !DEADLINE_ || DEADLINE_ - Date.now() > 60000)) {
+    try {
+      const x = fetchMcLife_();
+      if (x.ok) { propSetBig_(MCP.LIFE, JSON.stringify(x.by)); props.setProperty(MCP.LIFE_DAY, todayKey_()); }
+    } catch (e) { console.error('meta camps life: ' + errText_(e)); }
   }
   const raw = rawRows_(MC.RAW, MC_RAW_HEADERS.length), ids = new Set();
   raw.forEach(r => { if (r[3]) ids.add(String(r[3])); if (r[5]) ids.add(String(r[5])); });
@@ -6847,8 +6859,8 @@ function mcJudge_(n, tgt, accBase, stock) {
     }
     const why = mcWhy_(s3, accBase);
     return out('🔴', !why ? '' : /[↑↓]/.test(why.label) ? why.label.replace(/[↑↓]/, m => (m === '↑' ? 'أعلى ' : 'أقل ')) + ' من الحساب' : why.label,
-      'تحت التعادل في الـ 3 أيام وقبلها (رؤاس ' + fx(s3.roas) + ' والتعادل ' + fx(T) + ') ← ' + stop +
-      (why ? '. أكتر حاجة مقارنة بالحساب: ' + why.text.split(' ←')[0] : ''));
+      'تحت التعادل في الـ 3 أيام وقبلها (رؤاس ' + fx(s3.roas) + ' والتعادل ' + fx(T) + ')' +
+      (why ? '. أكتر حاجة مقارنة بالحساب: ' + why.text.split(' ←')[0] : '') + ' ← ' + stop);
   }
   const why = mcWhy_(s3, enough(s7) ? s7 : s14);
   return out('🟡', why ? why.label : '', 'حوالين التعادل (رؤاس ' + fx(s3.roas) + ' والتعادل ' + fx(T) + ')' + (why ? '. ' + why.text : ''));
@@ -6857,72 +6869,267 @@ function mcJudge_(n, tgt, accBase, stock) {
 /* Children sorted by spend: the 3 days, then the 14 days. */
 function mcBySpend_(a, b) { return (b.w[3].spend - a.w[3].spend) || (b.w[14].spend - a.w[14].spend); }
 
+/* ---------- The tab: a period chosen in B2 (today by default), Meta then TikTok ---------- */
+
+const MCP = {
+  PERIODS: ['النهارده', 'إمبارح', 'آخر 3 أيام', 'آخر 7 أيام', 'آخر 14 يوم', 'الشهر ده'],
+  DATA: 'MCAMP_PERIOD_DATA', LIFE: 'MCAMP_LIFE', LIFE_DAY: 'MCAMP_LIFE_DAY', ROWS: 'MCAMP_ROWS',
+  HEADERS: ['الحساب', 'المؤشر', 'الحالة', 'الكامبين / الأد سيت / الإعلان', 'المنتج', 'الصرف', 'أوردرات المنصة', 'أوردرات شوبيفاي (UTM)',
+    '+ تقديري (من غير مصدر)', 'الدوبليكيشن', 'Shopify ROAS', 'AOV', 'التحويل', 'Cost / content view', 'CPM', 'CTR', 'Hook rate', 'الفريكونسي',
+    'المترك الواقع', 'السبب', 'القرار (تعمل إيه)', '➕ تاسك', 'ID'],
+  NAME_COL: 4, TASK_COL: 22, ID_COL: 23,
+  WIDTHS: [120, 34, 60, 300, 140, 80, 70, 80, 80, 85, 75, 70, 65, 80, 65, 60, 65, 65, 110, 320, 260, 60],
+  LEGEND: '🟥 وقّفها (تحت التعادل)  🟧 وقعت (كانت كويسة ونزلت)  🟨 سيبها (حوالين التعادل)  🟩 زوّد (فوق التعادل بـ 20%)  🟦 رجّعها (واقفة وكانت كويسة)  ⬜ لسه بدري / واقفة / مسجات',
+  PRI: { '🔴': 1, '🟠': 2, '🔁': 4, '🟢': 4, '🟡': 3 }
+};
+
+/* The period chosen in B2 → {label, from, to}: every period but إمبارح ends today (so far). */
+function mcPeriod_(choice) {
+  const t = todayKey_(), P = MCP.PERIODS, i = Math.max(P.indexOf(choice), 0);
+  const from = [t, shiftKey_(t, -1), shiftKey_(t, -2), shiftKey_(t, -6), shiftKey_(t, -13), t.slice(0, 8) + '01'][i];
+  return { label: P[i], from: from, to: i === 1 ? from : t };
+}
+function mcChoice_() {
+  const sh = ss_().getSheetByName(MC.TAB), v = sh ? String(sh.getRange('B2').getValue() || '').trim() : '';
+  return MCP.PERIODS.indexOf(v) >= 0 ? v : MCP.PERIODS[0];
+}
+
+/* Insights requests [{path, params}] → one list of rows per request, the pages read; null for a request that failed. */
+function mcInsights_(reqs) {
+  return metaMany_(reqs).map(r => {
+    if (r.error) return null;
+    const list = (r.payload.data || []).slice();
+    let next = r.payload.paging && r.payload.paging.next, guard = 0;
+    try {
+      while (next && guard++ < 20) { const p = metaFetch_(next); (p.data || []).forEach(x => list.push(x)); next = p.paging && p.paging.next; }
+    } catch (e) { return null; }
+    return list;
+  });
+}
 /*
- * EXT.views: the tab. Drawn in place; when the rows change (a campaign / ad set / ad comes or goes, or moves), the old rows
- * from the table down are deleted (every group with them) and the groups are made again from zero, collapsed, with the ones
- * that were open opened again. The same happens when the + / − on the sheet are not what was drawn (they never pile up).
+ * What the sheet's own tabs don't have, for the chosen period, from Meta: impressions, reach (frequency), 3-second plays
+ * (Hook rate) and content views (cost per content view), for every campaign, ad set and ad: {ok, by: {'c|id' / 's|id' / 'a|id': {imp, reach, v3, cv}}}.
  */
-function writeMetaCamps_() {
-  if (!ss_().getSheetByName(MC.RAW)) return;
-  const tree = mcTree_(), W = MC.HEADERS.length, prods = products_(), stock = stockByName_().by, accs = accounts_('META'), msg = msgAccounts_();
-  let budgets = {};
-  try { budgets = JSON.parse(propGetBig_(MC.BUDGETS) || '{}'); } catch (e) { budgets = {}; }
-  const accName = id => { const a = accs.find(x => String(x.id) === String(id)); return a ? a.name || a.id : id; };
-  // The accounts: sums of their campaigns (and all of them).
+function fetchMcPeriod_(per) {
+  const reqs = [], what = [];
+  accounts_('META').forEach(a => MC.LEVELS.forEach(lv => {
+    const ids = ['campaign_id'].concat(lv === 'campaign' ? [] : ['adset_id'], lv === 'ad' ? ['ad_id'] : []);
+    reqs.push({ path: 'act_' + a.id + '/insights', params: { level: lv, time_range: JSON.stringify({ since: per.from, until: per.to }),
+      fields: ids.join(',') + ',impressions,reach,actions', limit: 500 } });
+    what.push(lv);
+  }));
+  const by = {}, act = (list, types) => { const x = (list || []).find(a => types.indexOf(a.action_type) >= 0); return x ? num_(x.value) : 0; };
+  let ok = 0;
+  mcInsights_(reqs).forEach((list, i) => {
+    if (!list) return;
+    ok++;
+    const lv = what[i];
+    list.forEach(x => {
+      const id = lv === 'campaign' ? x.campaign_id : lv === 'adset' ? x.adset_id : x.ad_id;
+      if (id) by[lv.charAt(0) + '|' + id] = { imp: num_(x.impressions), reach: num_(x.reach), v3: act(x.actions, ['video_view']),
+        cv: act(x.actions, ['offsite_conversion.fb_pixel_view_content', 'view_content', 'omni_view_content']) };
+    });
+  });
+  return { ok: ok > 0, by: by };
+}
+/* Every Meta campaign's spend since it started (once a day): {id: {name, acc, spend}}, for the stopped ones that were good. */
+function fetchMcLife_() {
+  const accs = accounts_('META'), out = {};
+  const lists = mcInsights_(accs.map(a => ({ path: 'act_' + a.id + '/insights',
+    params: { level: 'campaign', date_preset: 'maximum', fields: 'campaign_id,campaign_name,spend', limit: 500 } })));
+  lists.forEach((list, i) => (list || []).forEach(x => {
+    if (x.campaign_id) out[x.campaign_id] = { name: String(x.campaign_name || ''), acc: String(accs[i].id), spend: num_(x.spend) };
+  }));
+  return { ok: lists.some(Boolean), by: out };
+}
+/* Shopify orders and sales of every Meta campaign since the first order in the sheet: {campaign id: {orders, revenue}}. */
+function mcLifeShop_() {
+  const out = {}, adCamp = new Map();
+  if (ss_().getSheetByName(APP.T.ADMAP)) rawRows_(APP.T.ADMAP, ADMAP_HEADERS.length).forEach(r => { if (r[AM.ID] && r[21]) adCamp.set(String(r[AM.ID]), String(r[21])); });
+  if (ss_().getSheetByName(APP.T.ADS)) rawRows_(APP.T.ADS, ADS_HEADERS.length).forEach(a => { if (a[8] && a[4] && !adCamp.has(String(a[8]))) adCamp.set(String(a[8]), String(a[4])); });
+  if (!ss_().getSheetByName(APP.T.ORDERS)) return out;
+  rawRows_(APP.T.ORDERS, ORDERS_HEADERS.length).forEach(o => {
+    if (o[3] !== 'META') return;
+    const c = adCamp.get(String(o[14] || '')) || String(o[16] || '');
+    if (!c) return;
+    const x = out[c] = out[c] || { orders: 0, revenue: 0 };
+    x.orders++; x.revenue += num_(o[7]);
+  });
+  return out;
+}
+
+/*
+ * TikTok's campaigns, ad sets and ads like Meta's tree (mcTree_), from the sheet's own tabs (Ads Raw and the orders by UTM):
+ * the 3 days against the 7 and the 14 before them, running = spent today or yesterday, and the product from the Ad Map.
+ * No reach or video plays from TikTok here, so no Hook rate or frequency.
+ */
+function mcTikTok_() {
+  const t = todayKey_(), span = dupData_(shiftKey_(t, -17), t).TIKTOK, sums = {};
+  MC.WINDOWS.forEach(w => {
+    const walk = n => { sums[w[0] + '|' + n.key] = n.sum; n.kids.forEach(walk); };
+    dupData_(shiftKey_(t, -w[1]), shiftKey_(t, -w[2])).TIKTOK.camps.forEach(walk);
+  });
+  const idx = adMapIndex_(), toW = s => ({ spend: s ? s.spend : 0, imp: s ? s.imp : 0, reach: 0, clicks: s ? s.clicks : 0, v3: 0, orders: s ? s.utm : 0,
+    revenue: s ? s.rev : 0 });
+  const top = list => {
+    const by = {};
+    list.forEach(n => { if (n.product) by[n.product] = (by[n.product] || 0) + n.w[3].spend + n.w[14].spend + 1e-9; });
+    return Object.keys(by).sort((x, y) => by[y] - by[x])[0] || '';
+  };
+  const node = (n, acc) => {
+    const x = { id: n.id, level: n.level, name: n.name, acc: acc, active: n.on, kids: [], tiktok: true,
+      w: { 3: toW(sums['3|' + n.key]), 7: toW(sums['7|' + n.key]), 14: toW(sums['14|' + n.key]) } };
+    x.kids = n.kids.map(k => node(k, acc));
+    if (n.level === 'ad') { const m = idx.get(adKey_('TIKTOK', n.id, '', '', '')); x.product = m ? m.product : ''; } else x.product = top(x.kids);
+    return x;
+  };
+  return span.camps.map(c => node(c, c.acc));
+}
+
+/*
+ * What the period has that the tree doesn't (a campaign, ad set or ad newer than the 3 full days the decision reads): a
+ * running one is added with ⏳ (too early to judge), and under a campaign already there, any that spent or brought an
+ * order in the period too. d = the period's nodes (dupData_).
+ */
+function mcMergeNew_(list, dupList, acc, top) {
+  const have = new Map(list.map(n => [String(n.id), n])), idx = adMapIndex_();
+  const make = (d, plat) => {
+    const n = { id: d.id, level: d.level, name: d.name, acc: acc, active: d.on, kids: [], fresh: true,
+      w: { 3: mcZero_(), 7: mcZero_(), 14: mcZero_() }, target: { v: null } };
+    n.kids = d.kids.filter(k => k.on || k.sum.spend > 0 || k.sum.utm > 0).map(k => make(k, plat));
+    const m = d.level === 'ad' ? idx.get(adKey_(plat, d.id, '', '', '')) : null;
+    n.product = m ? m.product : n.kids.map(k => k.product).find(Boolean) || '';
+    n.verdict = { code: '⏳', word: MC.WORDS[d.level]['⏳'], metric: '', reason: 'جديدة: مالهاش 3 أيام كاملة لسه ← استنى' };
+    return n;
+  };
+  dupList.forEach(d => {
+    const n = have.get(String(d.id));
+    if (n) { mcMergeNew_(n.kids, d.kids, acc, false); return; }
+    if (top && !d.on) return; // a new campaign only while it runs
+    if (!top && !(d.on || d.sum.spend > 0 || d.sum.utm > 0)) return;
+    list.push(make(d, 'META'));
+  });
+}
+
+/* The verdict of every row of a tree (campaigns → ad sets → ads), against its account's 14 days. */
+function mcJudgeAll_(camps, prods, stock, budgets, msg) {
   const accSum = list => {
     const w = { 3: mcZero_(), 7: mcZero_(), 14: mcZero_() };
     list.forEach(c => [3, 7, 14].forEach(k => mcAdd_(w[k], Object.assign({}, c.w[k], { reach: 0 }))));
     return w;
   };
-  const byAcc = {};
-  tree.camps.forEach(c => { (byAcc[c.acc] = byAcc[c.acc] || []).push(c); });
-  const refOf = {};
-  Object.keys(byAcc).forEach(id => { const w = accSum(byAcc[id]); refOf[id] = { w: w, ref: mcStats_(w[14]) }; });
-  // Every row's decision.
+  const byAcc = {}, refOf = {};
+  camps.forEach(c => { (byAcc[c.acc] = byAcc[c.acc] || []).push(c); });
+  Object.keys(byAcc).forEach(id => { refOf[id] = mcStats_(accSum(byAcc[id])[14]); });
   const judge = (n, acc) => {
     n.budget = budgets[n.id] || 0;
-    const ref = refOf[acc].ref;
+    const ref = refOf[acc];
     n.target = mcTarget_(n, prods, ref);
     // A messages-only account (accounts.messages_only): its ads bring chats, not store orders, so Shopify ROAS doesn't judge them.
     n.verdict = msg.has(String(acc)) ? { code: '💬', word: MC.WORDS[n.level]['💬'], metric: '',
       reason: 'حساب مسجات: الأوردرات بتيجي من الشات ومش متتبعة، فمش بيتحكم عليها بـ Shopify ROAS' } : mcJudge_(n, n.target, ref, stock);
   };
-  tree.camps.forEach(c => {
+  camps.forEach(c => {
     judge(c, c.acc);
     c.kids.sort(mcBySpend_).forEach(s => { judge(s, c.acc); s.kids.sort(mcBySpend_).forEach(a => judge(a, c.acc)); });
     if (!c.budget) { const sum = c.kids.filter(s => s.active && s.budget > 0).reduce((x, s) => x + s.budget, 0); c.budget = sum; c.budgetSum = sum > 0; }
   });
-  tree.camps.sort((a, b) => (MC.ORDER[a.verdict.code] - MC.ORDER[b.verdict.code]) || mcBySpend_(a, b));
-  MC_LAST_ = { camps: tree.camps }; // for the Actions and Analysis tabs
+  camps.sort((a, b) => (MC.ORDER[a.verdict.code] - MC.ORDER[b.verdict.code]) || mcBySpend_(a, b));
+  return { byAcc: byAcc, accSum: accSum };
+}
 
-  const g = todayGrid_(), wins = tree.wins, day = k => {
-    const p = String(k || '').split('-').map(Number);
-    return p.length === 3 ? Utilities.formatDate(new Date(Date.UTC(p[0], p[1] - 1, p[2], 12)), 'UTC', 'd MMM') : '';
-  };
+/*
+ * Stopped Meta campaigns whose whole life was above break-even (spend since they started from Meta, orders from the
+ * sheet), that aren't 🔁 already: they get 🔁 too, so a campaign stopped by mistake isn't forgotten.
+ */
+function mcLifeGood_(camps, prods) {
+  let life = {};
+  try { life = JSON.parse(propGetBig_(MCP.LIFE) || '{}'); } catch (e) { life = {}; }
+  if (!Object.keys(life).length) return [];
+  const shop = mcLifeShop_(), seen = new Map(camps.map(c => [String(c.id), c])), out = [], msg = msgAccounts_();
+  Object.keys(life).forEach(id => {
+    const L = life[id], S = shop[id];
+    if (!S || !(L.spend > 0) || S.orders < MC.MIN_ORDERS || msg.has(String(L.acc))) return;
+    const have = seen.get(String(id));
+    if (have && (have.active || have.verdict.code === '🔁')) return;
+    const n = have || { id: id, level: 'campaign', name: L.name, acc: L.acc, active: false, kids: [], product: '', w: { 3: mcZero_(), 7: mcZero_(), 14: mcZero_() } };
+    const roas = S.revenue / L.spend, tgt = n.target && n.target.v ? n.target : mcTarget_(Object.assign({}, n, { w: { 3: { spend: 0, orders: S.orders, revenue: S.revenue },
+      7: mcZero_(), 14: mcZero_() } }), prods, { roas: null, aov: S.revenue / S.orders });
+    if (!tgt.v || roas < tgt.v) return;
+    n.target = tgt;
+    n.verdict = { code: '🔁', word: MC.WORDS.campaign['🔁'], metric: '', life: true,
+      reason: 'كانت كويسة على طول عمرها (رؤاس ' + round2_(roas) + ' والتعادل ' + round2_(tgt.v) + '، صرف ' + Math.round(L.spend) + ' و ' + S.orders + ' أوردر) ← رجّعها بميزانية صغيرة وراقب يومين' };
+    out.push(n);
+  });
+  return out.sort((a, b) => (life[b.id] ? life[b.id].spend : 0) - (life[a.id] ? life[a.id].spend : 0));
+}
+
+/*
+ * EXT.views and B2: the tab. On top the period (B2) and what the colors mean, then a line per Meta account (its 3 days
+ * against the 7 and the 14). Then Meta: the campaigns running now, the worst first, each with its ad sets and ads under
+ * a +; under them the stopped ones that were good (the last 7 or 14 days, or their whole life), to bring back. Then TikTok
+ * the same way. Every number of a row is for the period: spend, the platform's orders, Shopify's by UTM and the estimate
+ * from DIRECT, the duplication, Shopify ROAS, AOV, conversion (Shopify orders ÷ link clicks), cost per content view, CPM,
+ * CTR, Hook rate and frequency (cost per content view, Hook rate and frequency read from Meta for the period every update). The color (المؤشر), the
+ * metric that dropped, the reason and what to do are the decision of the 3 days against the 7 and 14 before them (mcJudge_).
+ * ➕ makes the row a task in Actions.
+ * When the rows change, the old rows from the table down are deleted (every group with them) and the groups are made again,
+ * with the ones that were open opened again.
+ */
+function writeMetaCamps_() {
+  const hasMeta = !!ss_().getSheetByName(MC.RAW), hasTT = accounts_('TIKTOK').length > 0;
+  if (!hasMeta && !hasTT) return;
+  try { dupDropTab_(); } catch (e) { console.error('duplication tab: ' + errText_(e)); }
+  const tree = hasMeta ? mcTree_() : { camps: [], wins: {} }, W = MCP.HEADERS.length, prods = products_(), stock = stockByName_().by;
+  const accs = accounts_('META').concat(accounts_('TIKTOK')), msg = msgAccounts_();
+  let budgets = {};
+  try { budgets = JSON.parse(propGetBig_(MC.BUDGETS) || '{}'); } catch (e) { budgets = {}; }
+  const accName = id => { const a = accs.find(x => String(x.id) === String(id)); return a ? a.name || a.id : id; };
+  const meta = mcJudgeAll_(tree.camps, prods, stock, budgets, msg);
+  MC_LAST_ = { camps: tree.camps }; // for the Actions and Analysis tabs
+  const tt = hasTT ? mcTikTok_() : [];
+  mcJudgeAll_(tt, prods, stock, {}, new Set());
+  const choice = mcChoice_(), per = mcPeriod_(choice), dup = dupData_(per.from, per.to), look = new Map();
+  dup.META.camps.forEach(d => { const c = tree.camps.find(x => String(x.id) === String(d.id)); if (!c) mcMergeNew_(tree.camps, [d], d.acc, true); else mcMergeNew_(c.kids, d.kids, c.acc, false); });
+  ['META', 'TIKTOK'].forEach(p => { const walk = n => { look.set(p + '|' + n.level + '|' + n.id, n.sum); n.kids.forEach(walk); }; dup[p].camps.forEach(walk); });
+  let pdata = null;
+  try { pdata = JSON.parse(propGetBig_(MCP.DATA) || 'null'); } catch (e) { pdata = null; }
+  if (pdata && (pdata.from !== per.from || pdata.to !== per.to)) pdata = null;
+
+  const g = todayGrid_(), wins = tree.wins, props = PropertiesService.getDocumentProperties(), readAt = Number(props.getProperty(MC.AT_KEY) || 0);
+  const day = k => { const p = String(k || '').split('-').map(Number); return p.length === 3 ? Utilities.formatDate(new Date(Date.UTC(p[0], p[1] - 1, p[2], 12)), 'UTC', 'd MMM') : ''; };
   const span = k => (wins[k] ? day(wins[k].from) + ' لـ ' + day(wins[k].to) : '');
+  const dark = { bg: '#1f2937', fc: '#ffffff', b: 'bold' };
   g.width = W;
-  const props = PropertiesService.getDocumentProperties(), readAt = Number(props.getProperty(MC.AT_KEY) || 0);
-  g.set(1, 1, 'META CAMPAIGNS — الحكم بـ Shopify ROAS: آخر 3 أيام (' + span(3) + ') قدام الـ 7 أيام (' + span(7) + ') والـ 14 يوم (' + span(14) + ') اللي قبلهم' +
-    (readAt ? ' | قراية Meta: ' + Utilities.formatDate(new Date(readAt), tz_(), 'yyyy-MM-dd HH:mm') : ''), { bg: '#1f2937', fc: '#ffffff', b: 'bold' });
+  g.set(1, 1, 'META & TIKTOK CAMPAIGNS — أرقام الفترة اللي في B2، والمؤشر (اللون) حكم آخر 3 أيام (' + span(3) + ') قدام الـ 7 (' + span(7) + ') والـ 14 يوم (' + span(14) + ') اللي قبلهم بـ Shopify ROAS' +
+    (readAt ? ' | قراية Meta: ' + Utilities.formatDate(new Date(readAt), tz_(), 'yyyy-MM-dd HH:mm') : ''), dark);
   g.fill(1, 2, W - 1, { bg: '#1f2937' });
   g.merge(1, 1, 1, W);
-  g.set(2, 1, '🔴 تحت التعادل من الأول  🟠 كانت كويسة ونزلت (المترك الواقع جنبها)  🔁 واقفة وكانت كويسة: تستاهل فرصة  🟢 فوق التعادل بـ 20% وأكتر  ' +
-    '🟡 حوالين التعادل  ⏳ صرفها لسه قليل  💬 حساب مسجات (accounts.messages_only في Settings): مش بيتحكم عليه  ⏸ واقفة. اضغط + جنب الكامبين تشوف الأد سيتس، و + جنب الأد سيت تشوف الإعلانات. ' +
-    'الكامبين اللي بدأت النهارده بتظهر من بكره. حط الماوس على أرقام CPM لحد متوسط الأوردر تشوف الـ 7 والـ 14 يوم.', { fc: '#374151' });
-  g.merge(2, 1, 1, W);
+  g.set(2, 1, 'الفترة', { bg: '#f3f4f6', b: 'bold' });
+  g.set(2, 2, choice, { bg: '#fff2cc', b: 'bold', al: 'center' });
+  g.merge(2, 2, 1, 3);
+  g.set(2, 5, (per.from === per.to ? per.from : 'من ' + per.from + ' لـ ' + per.to) + (per.to === todayKey_() ? ' (لحد دلوقتي)' : ''), { fc: '#374151' });
+  g.merge(2, 5, 1, 2);
+  g.set(2, 7, MCP.LEGEND, { fc: '#374151', b: 'bold' });
+  g.merge(2, 7, 1, W - 6);
+  g.set(3, 1, 'الصرف وأوردرات المنصة والكليكات من الشيت، وأوردرات شوبيفاي بالـ UTM (أوردر الإعلان، وإلا الأد سيت، وإلا الكامبين)، و "تقديري" = أوردرات DIRECT (من غير مصدر) متوزعة على الإعلانات اللي صرفت على نفس المنتج في نفس اليوم بنسبة صرفها. ' +
+    'الدوبليكيشن = (أوردرات المنصة − شوبيفاي بالتقديري) ÷ شوبيفاي. Shopify ROAS و AOV والتحويل بأوردرات الـ UTM. Hook rate والفريكونسي و Cost / content view بيتقروا من Meta للفترة دي مع كل تحديث' +
+    (pdata ? ' (آخر قراية ' + pdata.at + ')' : ' (لسه ماتقروش للفترة دي: في التحديث الجاي أو 📊 تحديث Meta Campaigns من المنيو)') + '. ' +
+    'اضغط + جنب الكامبين تشوف الأد سيتس، و + جنب الأد سيت تشوف الإعلانات. علّم ➕ جنب أي صف يبقى تاسك في تاب Actions.', { fc: '#374151' });
+  g.merge(3, 1, 1, W);
 
-  // The accounts card.
-  let r = 4;
+  // The accounts card (Meta).
+  let r = 5;
   const cardHead = { bg: '#e8eefc', b: 'bold', al: 'center' };
-  g.set(r, 1, 'الحساب', cardHead); g.set(r, 2, 'الرؤاس', cardHead);
+  g.set(r, 1, 'الحساب', cardHead); g.set(r, 4, 'الرؤاس', cardHead); g.fill(r, 2, 2, cardHead); g.fill(r, 5, 2, cardHead);
   ['صرف 3 أيام', 'أوردرات 3 أيام', 'رؤاس 3 أيام', 'رؤاس الـ 7 أيام قبلها', 'رؤاس الـ 14 يوم قبلها'].forEach((h, i) => g.set(r, 7 + i, h, cardHead));
-  g.set(r, 12, 'التغيير عن الـ 7', cardHead); g.set(r, 13, 'اللي موقّع الرؤس', cardHead); g.fill(r, 14, 1, cardHead);
-  g.merge(r, 13, 1, 2);
-  g.set(r, 15, 'تقدر تزوّد على', cardHead); g.fill(r, 16, 5, cardHead);
-  g.merge(r, 15, 1, 6);
+  g.set(r, 12, 'التغيير عن الـ 7', cardHead); g.set(r, 13, 'اللي موقّع الرؤس', cardHead); g.fill(r, 14, 6, cardHead);
+  g.merge(r, 13, 1, 7);
+  g.set(r, 20, 'تقدر تزوّد على', cardHead); g.fill(r, 21, 1, cardHead);
+  g.merge(r, 20, 1, 2);
   r++;
   const card = (label, camps) => {
-    const w = accSum(camps), s3 = mcStats_(w[3]), s7 = mcStats_(w[7]), s14 = mcStats_(w[14]);
+    const w = meta.accSum(camps), s3 = mcStats_(w[3]), s7 = mcStats_(w[7]), s14 = mcStats_(w[14]);
     const R = typeof s7.roas === 'number' ? s7.roas : s14.roas, S = s3.spend;
     const ch = typeof s3.roas === 'number' && R > 0 ? s3.roas / R - 1 : null;
     const isMsg = camps.length > 0 && camps.every(c => msg.has(String(c.acc)));
@@ -6932,58 +7139,80 @@ function writeMetaCamps_() {
     const up = camps.filter(c => c.verdict.code === '🟢').sort((a, b) => mcStats_(b.w[3]).roas - mcStats_(a.w[3]).roas).slice(0, 3);
     const back = camps.filter(c => c.verdict.code === '🔁').slice(0, 2);
     g.set(r, 1, label, { b: 'bold' });
-    g.set(r, 2, state, { al: 'center', bg: isMsg ? MC.BG['💬'] : ch === null ? null : ch <= -0.1 ? '#f4cccc' : ch >= 0.1 ? '#d9ead3' : null });
+    g.merge(r, 1, 1, 3);
+    g.set(r, 4, state, { al: 'center', bg: isMsg ? MC.BG['💬'] : ch === null ? null : ch <= -0.1 ? '#f4cccc' : ch >= 0.1 ? '#d9ead3' : null });
     [S, s3.orders, s3.roas, s7.roas, s14.roas].forEach((v, i) => g.set(r, 7 + i, typeof v === 'number' ? (i < 2 ? Math.round(v) : round2_(v)) : '',
       { nf: i < 2 ? '#,##0' : '0.00', al: 'center' }));
     g.set(r, 12, ch === null ? '' : Math.round(ch * 1000) / 1000, { nf: '+0%;-0%;0%', al: 'center', fc: ch === null || isMsg ? '#000000' : ch < 0 ? '#cc0000' : '#38761d', b: 'bold' });
-    g.set(r, 13, isMsg ? 'كامبينات مسجات: مش بيتحكم عليها بـ Shopify ROAS' : drag.length ? drag.map(x => x.c.name + ' (' + (Math.round(x.v * 100) / 100) + ')').join('، ') : ch !== null && ch < 0 ? 'نزول خفيف في كذا كامبين' : '—');
-    g.merge(r, 13, 1, 2);
-    g.set(r, 15, up.map(c => c.name + ' (' + round2_(mcStats_(c.w[3]).roas) + ')').concat(back.map(c => '🔁 ' + c.name)).join('، ') || '—');
-    g.merge(r, 15, 1, 6);
+    // One campaign a line (a cell with a lot in it is never one long line), at most 3.
+    g.set(r, 13, isMsg ? 'كامبينات مسجات: مش بيتحكم عليها بـ Shopify ROAS' : drag.length ? drag.map(x => x.c.name + ' (' + (Math.round(x.v * 100) / 100) + ')').join('\n') : ch !== null && ch < 0 ? 'نزول خفيف في كذا كامبين' : '—', { wr: true, va: 'middle' });
+    g.merge(r, 13, 1, 7);
+    g.set(r, 20, up.map(c => c.name + ' (' + round2_(mcStats_(c.w[3]).roas) + ')').concat(back.map(c => '🔁 ' + c.name)).join('\n') || '—', { wr: true, va: 'middle' });
+    g.merge(r, 20, 1, 2);
     r++;
   };
-  if (Object.keys(byAcc).length > 1) card('كل الحسابات', tree.camps);
-  Object.keys(byAcc).sort((a, b) => accName(a).localeCompare(accName(b))).forEach(id => card(accName(id), byAcc[id]));
+  if (Object.keys(meta.byAcc).length > 1) card('كل حسابات Meta', tree.camps);
+  Object.keys(meta.byAcc).sort((a, b) => String(accName(a)).localeCompare(String(accName(b)))).forEach(id => card(accName(id), meta.byAcc[id]));
   if (!tree.camps.length) { g.set(r, 1, 'مفيش كامبينات Meta صرفت في آخر 17 يوم، أو لسه ماتقريتش من Meta', { fc: '#6b7280' }); r++; }
   r++;
 
-  // The table: campaigns, their ad sets under them, their ads under those.
-  MC.HEADERS.forEach((h, i) => g.set(r, 1 + i, h, { bg: '#fff200', b: 'bold', al: 'center' }));
-  const head = r, first = r + 1, ids = [], notes = [];
-  r++;
-  const fmt = (k, v) => (typeof v !== 'number' ? '—' : k === 'ctr' || k === 'cvr' ? (v * 100).toFixed(2) + '%' : k === 'hook' ? (v * 100).toFixed(1) + '%'
-    : k === 'freq' ? v.toFixed(2) : Math.round(v * 10) / 10);
-  const line = (n, depth) => {
-    const v = n.verdict, s3 = mcStats_(n.w[3]), s7 = mcStats_(n.w[7]), s14 = mcStats_(n.w[14]), base = s7.spend > 0 ? s7 : s14;
-    const st = depth === 0 ? { b: 'bold', bg: '#f9fafb' } : depth === 1 ? {} : { fc: '#4b5563' };
-    const name = (depth === 1 ? '↳ ' : depth === 2 ? '        • ' : '') + (n.name || n.id);
-    g.set(r, 1, v.code + ' ' + v.word, Object.assign({}, st, { bg: MC.BG[v.code], b: 'bold' }));
-    g.set(r, 2, name, st);
-    g.set(r, 3, depth === 0 ? accName(n.acc) : '', st);
-    g.set(r, 4, n.active ? 'شغالة' : 'واقفة', Object.assign({}, st, { al: 'center', fc: n.active ? '#38761d' : '#6b7280' }));
-    const b = n.budget > 0 ? Math.round(n.budget) : n.budget < 0 ? 'كل المدة ' + Math.round(-n.budget) : '';
-    g.set(r, 5, b, Object.assign({}, st, { nf: '#,##0', al: 'center' }, n.budgetSum ? { fc: '#6b7280' } : {}));
-    g.set(r, 6, n.product === APP.UNMAPPED ? '❌ مش معروف' : n.product === APP.MULTI ? 'صفحة فيها كذا منتج' : n.product || '', st);
-    g.set(r, 7, Math.round(s3.spend), Object.assign({}, st, { nf: '#,##0', al: 'center' }));
-    g.set(r, 8, s3.orders, Object.assign({}, st, { nf: '0', al: 'center' }));
-    [s3.roas, s7.roas, s14.roas].forEach((x, i) => g.set(r, 9 + i, typeof x === 'number' ? round2_(x) : '',
-      Object.assign({}, st, { nf: '0.00', al: 'center' }, i === 0 && typeof x === 'number' && n.target.v ? { bg: x >= n.target.v ? '#d9ead3' : '#f4cccc' } : {})));
-    g.set(r, 12, n.target.v ? round2_(n.target.v) : '', Object.assign({}, st, { nf: '0.00', al: 'center', fc: '#6b7280' }));
-    g.set(r, 13, v.metric, Object.assign({}, st, v.metric ? { bg: '#f4cccc', b: 'bold' } : {}, { al: 'center' }));
-    g.set(r, 14, v.reason, st);
-    const nr = [];
-    MC.METRICS.forEach((m, i) => {
-      const x = s3[m[0]], y = base[m[0]], worse = typeof x === 'number' && typeof y === 'number' && y > 0 ? (m[2] ? x / y - 1 : 1 - x / y) : 0;
-      const bg = worse >= MC.DROP ? '#f4cccc' : worse <= -MC.DROP ? '#d9ead3' : st.bg || null;
-      g.set(r, 15 + i, typeof x === 'number' ? Math.round(x * 10000) / 10000 : '', Object.assign({}, st, { nf: m[1], al: 'center', bg: bg }));
-      nr.push('الـ 7 أيام قبلها: ' + fmt(m[0], s7[m[0]]) + '\nالـ 14 يوم قبلها: ' + fmt(m[0], s14[m[0]]));
-    });
-    g.set(r, MC.ID_COL, n.id, { fc: '#9ca3af', nf: '@' });
-    notes.push(nr);
-    ids.push([n.id, depth, n.kids ? n.kids.length : 0]);
+  // The tables: a band, the header, the running campaigns with their ad sets and ads under them, then the stopped good ones.
+  const head = r - 1, first = r, ids = [], tasks = [];
+  const fx = (v, d) => (typeof v === 'number' && isFinite(v) ? Math.round(v * Math.pow(10, d)) / Math.pow(10, d) : '');
+  const ratio = (a, b, x) => (b > 0 ? a / b * (x || 1) : null);
+  const optOf = m => (/^CPM/.test(m) ? 'CPM' : /^CTR/.test(m) ? 'CTR' : /^التحويل/.test(m) ? 'التحويل' : /^متوسط الأوردر/.test(m) ? 'AOV' : /^صفر/.test(m) ? 'الأوردرات في اليوم' : 'Shopify ROAS');
+  const band = (text, bg) => { g.set(r, 1, text, { bg: bg, fc: '#ffffff', b: 'bold' }); g.fill(r, 2, W - 1, { bg: bg }); g.merge(r, 1, 1, W); ids.push(['#' + r, 0, 0]); r++; };
+  const header = () => { MCP.HEADERS.forEach((h, i) => g.set(r, 1 + i, h, { bg: '#fff200', b: 'bold', al: 'center', wr: true, va: 'middle' })); ids.push(['#' + r, 0, 0]); r++; };
+  const line = (n, depth, plat, camp) => {
+    const v = n.verdict, s = look.get(plat + '|' + n.level + '|' + n.id) || dupZero_(), x = plat === 'META' && pdata ? pdata.by[n.level.charAt(0) + '|' + n.id] : null;
+    const st = depth === 0 ? { b: 'bold', bg: '#f9fafb', va: 'middle' } : depth === 1 ? { va: 'middle' } : { fc: '#4b5563', va: 'middle' };
+    const num = (c, val, nf, extra) => g.set(r, c, val, Object.assign({}, st, { nf: nf, al: 'center' }, extra || {}));
+    const shop = s.utm + (plat === 'META' ? s.direct : 0), dupR = shop > 0 ? (s.pixel - shop) / shop : null;
+    const parts = String(v.reason || '').split(' ← '), why = parts[0], todo = parts.length > 1 ? parts.slice(1).join(' ← ') : v.word;
+    g.set(r, 1, depth === 0 ? accName(n.acc) : '', st);
+    g.set(r, 2, '', { bg: MC.BG[v.code] });
+    g.set(r, 3, n.active ? 'شغالة' : 'واقفة', Object.assign({}, st, { al: 'center', fc: n.active ? '#38761d' : '#6b7280' }));
+    g.set(r, 4, (depth === 1 ? '↳ ' : depth === 2 ? '        • ' : '') + (n.name || n.id), st);
+    g.set(r, 5, n.product === APP.UNMAPPED ? '❌ مش معروف' : n.product === APP.MULTI ? 'صفحة فيها كذا منتج' : n.product || '', st);
+    num(6, Math.round(s.spend), '#,##0');
+    num(7, s.pixel, '0');
+    num(8, s.utm, '0');
+    num(9, plat === 'META' ? fx(s.direct, 1) : '', '0.0');
+    if (dupR !== null) num(10, fx(dupR, 3), '+0%;-0%;0%', { b: 'bold', bg: dupR >= DUP.HIGH ? '#f4cccc' : dupR <= -DUP.HIGH ? '#fff2cc' : '#d9ead3' });
+    else num(10, s.pixel > 0 ? 'مفيش في شوبيفاي' : '', '@', s.pixel > 0 ? { bg: '#f4cccc' } : {});
+    const roas = ratio(s.rev, s.spend), T = n.target && n.target.v;
+    num(11, fx(roas, 2), '0.00', typeof roas === 'number' && T ? { bg: roas >= T ? '#d9ead3' : '#f4cccc' } : {});
+    num(12, fx(ratio(s.rev, s.utm), 0), '#,##0');
+    num(13, fx(ratio(s.utm, s.clicks), 4), '0.00%');
+    num(14, x ? fx(ratio(s.spend, x.cv), 2) : '', '#,##0.00');
+    num(15, fx(ratio(s.spend, s.imp, 1000), 1), '#,##0.0');
+    num(16, fx(ratio(s.clicks, s.imp), 4), '0.00%');
+    num(17, x ? fx(ratio(x.v3, x.imp), 4) : '', '0.0%');
+    num(18, x ? fx(ratio(x.imp, x.reach), 2) : '', '0.00');
+    g.set(r, 19, v.metric, Object.assign({}, st, { al: 'center', wr: true }, v.metric ? { bg: '#f4cccc', b: 'bold' } : {}));
+    g.set(r, 20, why, Object.assign({}, st, { wr: true }));
+    g.set(r, 21, todo, Object.assign({}, st, { wr: true, b: 'bold' }));
+    g.set(r, 22, false, { al: 'center', va: 'middle' });
+    g.set(r, MCP.ID_COL, n.id, { fc: '#9ca3af', nf: '@' });
+    tasks.push({ row: r, text: todo + '\n' + (n.name || n.id), pri: MCP.PRI[v.code] || 3, camp: camp, opt: optOf(v.metric), note: why });
+    ids.push([plat + '|' + n.level + '|' + n.id, depth, n.kids ? n.kids.length : 0]);
     r++;
   };
-  tree.camps.forEach(c => { line(c, 0); c.kids.forEach(s => { line(s, 1); s.kids.forEach(a => line(a, 2)); }); });
+  const table = (plat, label, camps, extra) => {
+    const run = camps.filter(c => c.active), good = camps.filter(c => !c.active && c.verdict.code === '🔁').concat(extra || []);
+    band(label + ' — الكامبينات الشغالة دلوقتي (' + run.length + ')', plat === 'META' ? '#1d4ed8' : '#111827');
+    header();
+    const draw = c => { line(c, 0, plat, c.name); c.kids.forEach(s => { line(s, 1, plat, c.name); s.kids.forEach(a => line(a, 2, plat, c.name)); }); };
+    run.sort((a, b) => (MC.ORDER[a.verdict.code] - MC.ORDER[b.verdict.code]) ||
+      ((look.get(plat + '|campaign|' + b.id) || dupZero_()).spend - (look.get(plat + '|campaign|' + a.id) || dupZero_()).spend)).forEach(draw);
+    if (!run.length) { g.set(r, 1, 'مفيش كامبينات ' + label + ' شغالة دلوقتي', { fc: '#6b7280' }); g.merge(r, 1, 1, W); ids.push(['#' + r, 0, 0]); r++; }
+    band('🔁 ' + label + ' — واقفة ورؤاسها كان كويس (آخر 7 أو 14 يوم' + (plat === 'META' ? ' أو طول عمرها' : '') + '): لو وقفتها بالغلط رجّعها (' + good.length + ')', '#0e7490');
+    good.forEach(draw);
+    if (!good.length) { g.set(r, 1, 'مفيش', { fc: '#6b7280' }); g.merge(r, 1, 1, W); ids.push(['#' + r, 0, 0]); r++; }
+    g.set(r, 1, ''); ids.push(['#' + r, 0, 0]); r++;
+  };
+  if (hasMeta) table('META', 'META', tree.camps, mcLifeGood_(tree.camps, prods));
+  if (hasTT) table('TIKTOK', 'TIKTOK', tt);
 
   // Draw: when the rows changed, or the + / − on the sheet aren't what was drawn last time, every row from the table down is
   // deleted (and every group with it) and the groups are made again from zero, so they can never pile up on old ones.
@@ -6995,12 +7224,9 @@ function writeMetaCamps_() {
   const open = new Set();
   if (!same) {
     if (old && sh.getLastRow() >= old.first && (ok || mcGroupsOk_(sh, old.first - 1, old.first, old.ids))) { // what was open, unless the groups were broken
-      let campOpen = false;
       old.ids.forEach((x, i) => {
-        if (x[1] === 0) campOpen = false;
-        if (x[2] > 0 && (x[1] === 0 || campOpen)) {
-          try { const grp = sh.getRowGroup(old.first + i + 1, x[1] + 1); if (grp && !grp.isCollapsed()) { open.add(x[0]); if (x[1] === 0) campOpen = true; } } catch (e) { /* مفيش جروب */ }
-        }
+        if (!x[2] || x[1] > 1) return;
+        try { const grp = sh.getRowGroup(old.first + i + 1, x[1] + 1); if (grp && !grp.isCollapsed()) open.add(x[0]); } catch (e) { /* مفيش جروب */ }
       });
     }
     mcUngroupAbove_(sh, first);
@@ -7009,7 +7235,9 @@ function writeMetaCamps_() {
     props.deleteProperty(MC.GROUPS);
     props.deleteProperty('GH_' + MC.TAB);
   }
+  propSetBig_(MCP.ROWS, JSON.stringify(tasks));
   const drew = writeGrid_(sh, g);
+  sh.getRange('B2').setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(MCP.PERIODS, true).setAllowInvalid(false).build());
   if (!drew && same) return;
   if (!same) {
     try { sh.setRowGroupControlPosition(SpreadsheetApp.GroupControlTogglePosition.BEFORE); } catch (e) { /* قديم */ }
@@ -7025,12 +7253,38 @@ function writeMetaCamps_() {
     }
     props.setProperty(MC.GROUPS, JSON.stringify({ sig: sig, first: first, ids: ids }));
   }
-  if (notes.length) sh.getRange(first, 15, notes.length, MC.METRICS.length).setNotes(notes);
-  sh.getRange(head, 1, 1, W).setWrap(true);
-  sh.setFrozenColumns(2);
-  [[1, 140], [2, 300], [3, 120], [4, 60], [5, 80], [6, 140], [7, 80], [8, 70], [9, 70], [10, 80], [11, 80], [12, 70], [13, 120], [14, 420],
-    [15, 65], [16, 65], [17, 60], [18, 70], [19, 65], [20, 75]].forEach(x => sh.setColumnWidth(x[0], x[1]));
-  sh.hideColumns(MC.ID_COL);
+  // The ➕ boxes, on every campaign / ad set / ad row.
+  if (sh.getMaxRows() >= first) sh.getRange(first, MCP.TASK_COL, sh.getMaxRows() - first + 1, 1).setDataValidation(null);
+  for (let i = 0; i < tasks.length;) {
+    let k = i + 1;
+    while (k < tasks.length && tasks[k].row === tasks[k - 1].row + 1) k++;
+    sh.getRange(tasks[i].row, MCP.TASK_COL, k - i, 1).insertCheckboxes();
+    i = k;
+  }
+  sh.getRange(3, 1, 1, W).setWrap(true);
+  sh.setFrozenColumns(MCP.NAME_COL);
+  MCP.WIDTHS.forEach((w, i) => sh.setColumnWidth(i + 1, w));
+  sh.hideColumns(MCP.ID_COL);
+}
+
+/*
+ * EXT.edit: the period in B2 draws the tab again at once (Hook rate, frequency and cost per content view of a new period
+ * come with the next update); ➕ next to a row makes it a task in Actions (what to do and the campaign, the campaign and
+ * the metric to optimize filled in).
+ */
+function mcEdit_(name, a1) {
+  if (name !== MC.TAB) return;
+  if (a1 === 'B2') { writeMetaCamps_(); return; }
+  const m = String(a1).match(/^([A-Z]+)(\d+)$/), col = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.charAt(MCP.TASK_COL - 1);
+  if (!m || m[1] !== col) return;
+  const sh = tab_(MC.TAB), row = Number(m[2]);
+  if (sh.getRange(row, MCP.TASK_COL).getValue() !== true) return;
+  let rows = [];
+  try { rows = JSON.parse(propGetBig_(MCP.ROWS) || '[]'); } catch (e) { rows = []; }
+  const t = rows.find(x => x.row === row);
+  if (!t) return;
+  anaAddTask_([t.text, ANA.PRI[t.pri] || ANA.PRI[3], ANA.STATUS[0], todayKey_(), t.note || '', t.camp || '', '', t.opt || '']);
+  sh.getRange(row, 4, 1, MCP.TASK_COL - 3).setBackground('#e5e7eb');
 }
 
 /* A row's group depth (how many + / − it's inside), 0 when it can't be read. */
@@ -7305,8 +7559,8 @@ function tiktokConnect() {
 
 /* ======== 37_duplication.gs ======== */
 /*
- * Tab "Duplication": the orders each platform says it brought (Meta pixel purchases, TikTok complete payments: Ads Raw)
- * against the store orders Shopify has for it, in a period chosen in B2 (today by default).
+ * Duplication: the orders each platform says it brought (Meta pixel purchases, TikTok complete payments: Ads Raw)
+ * against the store orders Shopify has for it, in a period (drawn in Meta Campaigns since 1.85; the tab of its own is gone).
  *  - Shopify for Meta = META TOTAL in Today: our Meta ads' orders by UTM + DIRECT (orders with no source, most likely ads).
  *    MANUAL (draft), BIO (link in bio) and GOOGLE (Google search), both sure organic, and the outside account's orders aren't in it. TikTok = TIKTOK TOTAL.
  *  - One table per platform: a summary line, then the campaigns running now (Meta: an ACTIVE ad now; TikTok: spent today
@@ -7320,22 +7574,10 @@ function tiktokConnect() {
  *    to every Meta ad that spent that day; when no Meta ad spent that day, it stays in a row of its own.
  * What's open stays open when the tab is drawn again. Everything is read from the sheet's own tabs: nothing from Meta here.
  */
-const DUP = {
-  TAB: 'Duplication', GROUPS: 'DUP_GROUPS', HIGH: 0.2,
-  PERIODS: ['النهارده', 'إمبارح', 'آخر 3 أيام', 'آخر 7 أيام', 'الشهر ده', 'الشهر اللي فات'],
-  HEADERS: ['الكامبين / الأد سيت / الإعلان', 'الحساب', 'الحالة', 'الصرف', 'أوردرات المنصة', 'أوردرات شوبيفاي (UTM)',
-    '+ من غير مصدر (تقديري)', 'أوردرات شوبيفاي (الإجمالي)', 'الفرق (المنصة − شوبيفاي)', 'نسبة الدوبليكيشن']
-};
+const DUP = { TAB: 'Duplication', HIGH: 0.2 };
 
-/* The period chosen in B2 → {from, to}. */
-function dupPeriod_(choice) {
-  const t = todayKey_(), m = t.slice(0, 8) + '01', y = shiftKey_(t, -1), e = shiftKey_(m, -1);
-  return choice === DUP.PERIODS[1] ? { from: y, to: y } : choice === DUP.PERIODS[2] ? { from: shiftKey_(t, -2), to: t }
-    : choice === DUP.PERIODS[3] ? { from: shiftKey_(t, -6), to: t } : choice === DUP.PERIODS[4] ? { from: m, to: t }
-      : choice === DUP.PERIODS[5] ? { from: e.slice(0, 8) + '01', to: e } : { from: t, to: t };
-}
-
-function dupZero_() { return { spend: 0, pixel: 0, utm: 0, direct: 0, rev: 0 }; } // rev: the UTM orders' sales (Today's offers table)
+/* rev: the UTM orders' sales (Today's offers table, ROAS in Meta Campaigns); imp and clicks for CPM / CTR / conversion. */
+function dupZero_() { return { spend: 0, pixel: 0, utm: 0, direct: 0, rev: 0, imp: 0, clicks: 0 }; }
 
 /*
  * Both platforms for the period: {META, TIKTOK}, each {camps: [campaign nodes], all: sums, utmLost, directLost}.
@@ -7377,7 +7619,7 @@ function dupData_(from, to) {
     const d = asKey_(a[0]), p = a[1], spend = num_(a[10]), pix = num_(a[13]);
     if (!P[p] || !a[8] || !a[4] || d < from || d > to || (!spend && !pix)) return;
     const n = ad(p, String(a[8]));
-    n.t.spend += spend; n.t.pixel += pix;
+    n.t.spend += spend; n.t.pixel += pix; n.t.imp += num_(a[11]); n.t.clicks += num_(a[12]);
     if (p !== 'META' || !(spend > 0)) return;
     const m = catAds.has('META|' + a[8]) ? { product: APP.CATALOG } : idx.get(adKey_('META', String(a[8]), a[5], a[7], a[9]));
     (dayAds[d] = dayAds[d] || []).push({ n: n, spend: spend, product: m ? m.product : '' });
@@ -7429,151 +7671,18 @@ function dupData_(from, to) {
   return out;
 }
 
-/* EXT.views and B2: draws the tab. */
-function writeDupTab_() {
-  const sh = ensureTab_(DUP.TAB), W = DUP.HEADERS.length, props = PropertiesService.getDocumentProperties();
-  let choice = String(sh.getRange('B2').getValue() || '').trim();
-  if (DUP.PERIODS.indexOf(choice) < 0) choice = DUP.PERIODS[0];
-  const per = dupPeriod_(choice), data = dupData_(per.from, per.to), accs = accounts_('META').concat(accounts_('TIKTOK'));
-  const accName = id => { const a = accs.find(x => String(x.id) === String(id)); return a ? a.name || a.id : id; };
-  const g = todayGrid_(), dark = { bg: '#1f2937', fc: '#ffffff', b: 'bold' };
-  g.width = W;
-  g.set(1, 1, 'DUPLICATION — أوردرات المنصة قدام أوردرات شوبيفاي', dark);
-  g.fill(1, 2, W - 1, { bg: '#1f2937' });
-  g.merge(1, 1, 1, W);
-  g.set(2, 1, 'الفترة', { bg: '#f3f4f6', b: 'bold' });
-  g.set(2, 2, choice, { bg: '#fff2cc', b: 'bold', al: 'center' });
-  g.set(2, 3, per.from === per.to ? per.from : 'من ' + per.from + ' لـ ' + per.to, { fc: '#374151' });
-  g.merge(2, 3, 1, 2);
-  g.set(3, 1, 'نسبة الدوبليكيشن = (أوردرات المنصة − أوردرات شوبيفاي) ÷ أوردرات شوبيفاي. 🔴 المنصة بتعد أكتر بـ 20% أو أكتر، 🟡 بتعد أقل بـ 20% أو أكتر. ' +
-    'أوردرات شوبيفاي لـ Meta = META TOTAL في Today (بالـ UTM + DIRECT اللي من غير مصدر)، و DIRECT متوزعة تقديري على الإعلانات اللي صرفت على نفس المنتج في نفس اليوم بنسبة صرفها. ' +
-    'اضغط + جنب الكامبين تشوف الأد سيتس، و + جنب الأد سيت تشوف الإعلانات.', { fc: '#374151' });
-  g.merge(3, 1, 1, W);
-
-  const fmt1 = v => Math.round(v * 10) / 10;
-  const cells = (r, s, st, tiktok) => {
-    const shop = s.utm + s.direct, gap = s.pixel - shop, dup = shop > 0 ? gap / shop : null;
-    const n = (c, v, nf, extra) => g.set(r, c, v, Object.assign({ nf: nf, al: 'center' }, st, extra || {}));
-    n(4, Math.round(s.spend), '#,##0');
-    n(5, s.pixel, '0');
-    n(6, s.utm, '0');
-    n(7, tiktok ? '' : fmt1(s.direct), '0.0');
-    n(8, fmt1(shop), '0.0', { b: 'bold' });
-    n(9, fmt1(gap), '+0.0;-0.0;0');
-    if (dup !== null) n(10, Math.round(dup * 1000) / 1000, '+0%;-0%;0%', { b: 'bold', bg: dup >= DUP.HIGH ? '#f4cccc' : dup <= -DUP.HIGH ? '#fff2cc' : '#d9ead3' });
-    else n(10, s.pixel > 0 ? 'مفيش في شوبيفاي' : '', '@', s.pixel > 0 ? { bg: '#f4cccc', b: 'bold' } : {});
-  };
-
-  let r = 5, head = 0, first = 0;
-  const info = {}; // row → [key, depth, rows under it] for the rows with a + (and the ones inside them)
-  const table = (p, label) => {
-    const x = data[p], tiktok = p === 'TIKTOK', shop = x.all.utm + x.all.direct;
-    g.set(r, 1, label + ' | ' + (per.from === per.to ? per.from : per.from + ' → ' + per.to), dark);
-    g.fill(r, 2, W - 1, { bg: '#1f2937' });
-    g.merge(r, 1, 1, W);
-    r++;
-    // The summary: the platform's orders next to Shopify's.
-    const sumHead = ['أوردرات ' + label + ' من المنصة', 'أوردرات ' + label + ' من شوبيفاي' + (tiktok ? '' : ' (شامل DIRECT)'), 'منها بالـ UTM',
-      tiktok ? '' : 'منها DIRECT (من غير مصدر)', 'الفرق (المنصة − شوبيفاي)', 'نسبة الدوبليكيشن'];
-    sumHead.forEach((h, i) => g.set(r, 1 + i, h, { bg: '#e8eefc', b: 'bold', al: 'center' }));
-    r++;
-    const gap = x.all.pixel - shop, dup = shop > 0 ? gap / shop : null;
-    [x.all.pixel, fmt1(shop), x.all.utm, tiktok ? '' : fmt1(x.all.direct), fmt1(gap)].forEach((v, i) =>
-      g.set(r, 1 + i, v, { nf: i === 4 ? '+0.0;-0.0;0' : i === 0 || i === 2 ? '0' : '0.0', al: 'center', b: 'bold' }));
-    g.set(r, 6, dup === null ? (x.all.pixel > 0 ? 'مفيش في شوبيفاي' : '') : Math.round(dup * 1000) / 1000, { nf: '+0%;-0%;0%', al: 'center', b: 'bold',
-      bg: dup === null ? null : dup >= DUP.HIGH ? '#f4cccc' : dup <= -DUP.HIGH ? '#fff2cc' : '#d9ead3' });
-    r += 2;
-    DUP.HEADERS.forEach((h, i) => g.set(r, 1 + i, h, { bg: '#fff200', b: 'bold', al: 'center' }));
-    if (!first) { head = r; first = r + 1; }
-    r++;
-    const line = (n, depth) => {
-      const st = n.level === 'campaign' ? { b: 'bold', bg: '#f9fafb' } : n.level === 'adset' ? {} : { fc: '#4b5563' };
-      const pre = n.level === 'adset' ? '↳ ' : n.level === 'ad' ? '        • ' : '';
-      g.set(r, 1, pre + (n.name || n.id), st);
-      g.set(r, 2, n.level === 'campaign' ? accName(n.acc) : '', st);
-      g.set(r, 3, n.on ? '🟢 شغال' : '⏸ واقف', Object.assign({}, st, { al: 'center', fc: n.on ? '#38761d' : '#6b7280' }));
-      cells(r, n.sum, st, tiktok);
-      info[r] = [p + '|' + n.key, depth, n.kids.length];
-      r++;
-      n.kids.forEach(k => line(k, depth + 1));
-    };
-    const running = x.camps.filter(c => c.on), stopped = x.camps.filter(c => !c.on);
-    running.forEach(c => line(c, 0));
-    if (!running.length) { g.set(r, 1, 'مفيش كامبينات شغالة دلوقتي صرفت أو جابت أوردرات في الفترة دي', { fc: '#6b7280' }); r++; }
-    if (stopped.length) {
-      const s = dupZero_(), st = { b: 'bold', bg: '#e5e7eb' };
-      stopped.forEach(c => Object.keys(s).forEach(f => { s[f] += c.sum[f]; }));
-      g.set(r, 1, '⏸ كامبينات واقفة دلوقتي (' + stopped.length + ')', st);
-      g.fill(r, 2, 2, st);
-      cells(r, s, st, tiktok);
-      info[r] = [p + '|stopped', 0, stopped.length];
-      r++;
-      stopped.forEach(c => line(c, 1));
-    }
-    const other = (text, s) => {
-      const st = { bg: '#f3f4f6' };
-      g.set(r, 1, text, st); g.fill(r, 2, 2, st);
-      cells(r, Object.assign(dupZero_(), s), st, tiktok);
-      r++;
-    };
-    if (x.utmLost) other('أوردرات ' + label + ' بالـ UTM من غير كامبين معروفة', { utm: x.utmLost });
-    if (x.directLost) other('DIRECT مااتوزعتش (مفيش إعلان Meta صرف في يومها)', { direct: x.directLost });
-    const tot = { bg: '#e8eefc', b: 'bold' };
-    g.set(r, 1, 'TOTAL', tot); g.fill(r, 2, 2, tot);
-    cells(r, x.all, tot, tiktok);
-    r++;
-  };
-  table('META', 'Meta');
-  r += 2;
-  table('TIKTOK', 'TikTok');
-  const ids = [];
-  for (let i = first; i < r; i++) ids.push(info[i] || ['', 0, 0]);
-
-  // Draw: when the rows changed, or the + / − on the sheet aren't what was drawn last time, every row from the first table
-  // row down is deleted (and every group with it) and the groups are made again from zero (like Meta Campaigns).
-  const sig = sha_(JSON.stringify([first, ids.map(x => x[0] + '/' + x[1])]));
-  let old = null;
-  try { old = JSON.parse(props.getProperty(DUP.GROUPS) || 'null'); } catch (e) { old = null; }
-  const ok = mcGroupsOk_(sh, head, first, ids);
-  const same = old && old.sig === sig && sh.getLastRow() > 0 && ok;
-  const open = new Set();
-  if (!same) {
-    if (old && sh.getLastRow() >= old.first && (ok || mcGroupsOk_(sh, old.first - 1, old.first, old.ids))) {
-      old.ids.forEach((x, i) => {
-        if (!x[2] || !x[0]) return;
-        try { const grp = sh.getRowGroup(old.first + i + 1, x[1] + 1); if (grp && !grp.isCollapsed()) open.add(x[0]); } catch (e) { /* مفيش جروب */ }
-      });
-    }
-    mcUngroupAbove_(sh, first);
-    if (sh.getMaxRows() >= first) sh.deleteRows(first, sh.getMaxRows() - first + 1);
-    sh.insertRowsAfter(first - 1, ids.length + 50);
-    props.deleteProperty(DUP.GROUPS);
-    props.deleteProperty('GH_' + DUP.TAB);
-  }
-  const drew = writeGrid_(sh, g);
-  sh.getRange('B2').setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(DUP.PERIODS, true).setAllowInvalid(false).build());
-  if (!drew && same) return;
-  if (!same) {
-    try { sh.setRowGroupControlPosition(SpreadsheetApp.GroupControlTogglePosition.BEFORE); } catch (e) { /* قديم */ }
-    ids.forEach((x, i) => {
-      if (!x[2]) return;
-      let k = i + 1;
-      while (k < ids.length && ids[k][1] > x[1]) k++;
-      if (k > i + 1) sh.getRange(first + i + 1, 1, k - i - 1, 1).shiftRowGroupDepth(1);
-    });
-    if (ids.some(x => x[1] > 0)) {
-      sh.collapseAllRowGroups();
-      ids.forEach((x, i) => { if (open.has(x[0]) && x[2]) { try { sh.getRowGroup(first + i + 1, x[1] + 1).expand(); } catch (e) { /* اتغير */ } } });
-    }
-    props.setProperty(DUP.GROUPS, JSON.stringify({ sig: sig, first: first, ids: ids }));
-  }
-  sh.getRange(3, 1, 1, W).setWrap(true);
-  sh.getRange(head, 1, 1, W).setWrap(true);
-  [[1, 380], [2, 140], [3, 90], [4, 90], [5, 110], [6, 120], [7, 130], [8, 130], [9, 130], [10, 120]].forEach(x => sh.setColumnWidth(x[0], x[1]));
+/*
+ * The tab "Duplication" of version 1.84 and before: its numbers are in Meta Campaigns now (the platform's orders, Shopify's
+ * by UTM and the estimate from DIRECT, and the duplication, for the period chosen there). Deleted once: it was all drawn.
+ */
+function dupDropTab_() {
+  const props = PropertiesService.getDocumentProperties();
+  if (props.getProperty('DUP_TAB_GONE')) return;
+  const sh = ss_().getSheetByName(DUP.TAB);
+  if (sh && ss_().getSheets().length > 1) ss_().deleteSheet(sh);
+  ['DUP_GROUPS', 'GH_' + DUP.TAB, 'GM_' + DUP.TAB].forEach(k => props.deleteProperty(k));
+  props.setProperty('DUP_TAB_GONE', '1');
 }
-
-/* EXT.edit: the period in B2. */
-function dupEdit_(name, a1) { if (name === DUP.TAB && a1 === 'B2') writeDupTab_(); }
 
 /* ======== 38_analysis.gs ======== */
 /*
@@ -8583,18 +8692,26 @@ function anaEdit_(name, a1) {
   done[f.id] = today;
   Object.keys(done).forEach(k => { if (done[k] < shiftKey_(today, -30)) delete done[k]; });
   props.setProperty(ANA.DONE_KEY, JSON.stringify(done));
-  const item = [f.task, ANA.PRI[f.pri] || ANA.PRI[3], ANA.STATUS[0], today, f.note || '', f.camp || '', '', f.opt || ''];
+  anaAddTask_([f.task, ANA.PRI[f.pri] || ANA.PRI[3], ANA.STATUS[0], today, f.note || '', f.camp || '', '', f.opt || '']);
+  sh.getRange(row, 3, 1, 3).setBackground('#e5e7eb'); // its campaign / product row (A–B may be merged with the rows next to it)
+}
+/*
+ * A new task (the first 8 columns of the tasks table: text, priority, status, added, note, campaign, metrics, optimized on)
+ * in the first free row of the tasks table in Actions; with no free row (or no tab yet), kept until the tab is drawn again.
+ */
+function anaAddTask_(item) {
+  const sh = ss_().getSheetByName(ANA.TAB), props = PropertiesService.getDocumentProperties(), first = ANA.TOP + 2;
+  const n = sh ? Number(props.getProperty(ANA.ROWS_KEY) || 0) : 0;
   const free = n ? sh.getRange(first, ANA.R, n, 1).getValues().findIndex(v => !String(v[0]).trim()) : -1;
   if (free >= 0) {
     sh.getRange(first + free, ANA.R + 3).setNumberFormat('@');
     sh.getRange(first + free, ANA.R, 1, item.length).setValues([item]);
-  } else {
-    let pend = [];
-    try { pend = JSON.parse(props.getProperty(ANA.PENDING_KEY) || '[]'); } catch (e) { pend = []; }
-    pend.push(item);
-    props.setProperty(ANA.PENDING_KEY, JSON.stringify(pend));
+    return;
   }
-  sh.getRange(row, 3, 1, 3).setBackground('#e5e7eb'); // its campaign / product row (A–B may be merged with the rows next to it)
+  let pend = [];
+  try { pend = JSON.parse(props.getProperty(ANA.PENDING_KEY) || '[]'); } catch (e) { pend = []; }
+  pend.push(item);
+  props.setProperty(ANA.PENDING_KEY, JSON.stringify(pend));
 }
 
 /*
@@ -9037,7 +9154,7 @@ function anaDrawAnalysis_(sh, F, P, M, ctx, errors) {
 }
 
 /*
- * Draws the tab with its + / − from row `first` (ids: [key, depth, has kids] per row), like the Duplication tab: when the
+ * Draws the tab with its + / − from row `first` (ids: [key, depth, has kids] per row), like Meta Campaigns: when the
  * rows changed or the groups on the sheet aren't what was drawn, every row from `first` down is deleted and the groups are
  * made again, closed, and the ones that were open opened again.
  */
@@ -9753,8 +9870,8 @@ function refreshProductsNow() {
  * live: after ads sync, before views (outside the lock, for reads). today: the same for ⚡ (Today's own reads).
  * menu: [label, functionName]. */
 const EXT = {
-  views: [slow => chanceViews_(slow), () => writeShopTab_(), () => writeMetaCamps_(), () => writeDupTab_(), () => time_('Actions & Analysis', () => writeAnalysisTab_())],
-  edit: [(name, a1) => chanceEdit_(name, a1), (name, a1) => campaignMapEdit_(name, a1), (name, a1) => dupEdit_(name, a1), (name, a1) => anaEdit_(name, a1)],
+  views: [slow => chanceViews_(slow), () => writeShopTab_(), () => writeMetaCamps_(), () => time_('Actions & Analysis', () => writeAnalysisTab_())],
+  edit: [(name, a1) => chanceEdit_(name, a1), (name, a1) => campaignMapEdit_(name, a1), (name, a1) => mcEdit_(name, a1), (name, a1) => anaEdit_(name, a1)],
   setup: [() => chanceSetup_()],
   live: [() => settingsAddMissing_(), () => syncShopifyStatus_(), () => fillGrossSales_(), () => fillOrderVariants_(), () => fillOrderBundles_(), () => checkShopifyOrders_(), () => syncShopifyStock_(false), () => syncShopifyCollections_(), () => refreshAccountNames_(), () => discoverAccounts_(), () => chanceLive_(), () => refreshTodayFunnel_(), () => refreshFunnel_(false),
     () => refreshShopTab_(false), () => refreshShopNet_(), () => refreshMetaCamps_(false), () => refreshTaskMeta_()],

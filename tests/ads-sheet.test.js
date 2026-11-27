@@ -34,6 +34,12 @@ function env(options) {
   const reply = url => {
     requests.push(url);
     const id = (url.match(/act_(\d+)/) || [])[1];
+    if (/\/insights\?/.test(url) && /date_preset=maximum/.test(url)) { // Meta Campaigns: صرف كل كامبين من أول ما بدأت
+      const by = {};
+      (ads[id] || []).forEach(r => { const x = by[r.campaign_id] = by[r.campaign_id] || { campaign_id: r.campaign_id, campaign_name: r.campaign_name, spend: 0 }; x.spend += Number(r.spend); });
+      Object.keys(opt.lifeSpend || {}).forEach(k => { if (by[k]) by[k].spend = opt.lifeSpend[k]; });
+      return { data: Object.keys(by).map(k => Object.assign({}, by[k], { spend: String(by[k].spend) })) };
+    }
     if (/\/insights\?/.test(url) && /reach/.test(url)) { // Meta Campaigns: كل مستوى لوحده في الفترة، صف لكل كامبين / أد سيت / إعلان
       const t = JSON.parse(decodeURIComponent(url.match(/time_range=([^&]+)/)[1])), level = url.match(/level=(\w+)/)[1], by = {};
       (ads[id] || []).filter(r => r.date_start >= t.since && r.date_start <= t.until).forEach(r => {
@@ -2020,10 +2026,14 @@ test('Meta Campaigns: الكامبين وتحتها الأد سيتس وتحته
     if (n >= 11) { rows.push(ad(n, 'C3', 'S3', '1200000000311', 100)); orders.push(flow(oid++, n, '1200000000311')); } // كانت كويسة ووقفت
   }
   rows.push(ad(3, 'C3', 'S3', '1200000000311', 100));
+  // C7: واقفة، وآخر مرة صرفت من غير أوردرات، بس طول عمرها رؤاسها كويس (أوردرات قديمة)
+  rows.push(ad(12, 'C7', 'S7', '1200000000711', 100));
+  [25, 26, 27].forEach(n => orders.push(flow(oid++, n, '1200000000711')));
   rows.push(ad(2, 'C2', 'S2', '1200000000212', 30, { clicks: 8, v3: 100 })); orders.push(flow(oid++, 2, '1200000000211'));
   const ads = { [A1]: rows, [A2]: [ad(1, 'C5', 'S5', '1200000000511', 50)] };
+  const active = { [A1]: ['1200000000111', '1200000000211', '1200000000212', '1200000000411'], [A2]: ['1200000000511'] };
   const e = env({ orderHead: FLOW_HEAD.slice(0, 17), ads, orders,
-    activeAds: { [A1]: ['1200000000111', '1200000000211', '1200000000212', '1200000000411'], [A2]: ['1200000000511'] }, budgets: { C1: { daily_budget: '50000' }, S4: { daily_budget: '20000' } },
+    activeAds: active, budgets: { C1: { daily_budget: '50000' }, S4: { daily_budget: '20000' } },
     stock: [['P1', 'V1', 'Lip Oil', 'Default Title', 'LO', 'lip-oil', 40, 300]] });
   e.c.setupAll();
   const st = e.ss.getSheetByName('Settings'), keys = st.getDataRange().getValues().map(r => r[0]);
@@ -2032,67 +2042,92 @@ test('Meta Campaigns: الكامبين وتحتها الأد سيتس وتحته
   const sh = e.ss.getSheetByName('Meta Campaigns');
   assert.ok(sh, 'التاب اتعمل');
   assert.equal(e.ss.getSheetByName('Meta Campaigns Raw').hidden, true, 'تاب الأرقام الخام مخفي');
-  const v = () => sh.getDataRange().getValues(), head = () => v().findIndex(r => r[0] === 'القرار');
-  const body = () => v().slice(head() + 1).filter(r => r[20] !== '');
-  assert.deepEqual(v()[head()].slice(0, 14), ['القرار', 'الكامبين / الأد سيت / الإعلان', 'الحساب', 'الحالة', 'الميزانية في اليوم', 'المنتج',
-    'صرف 3 أيام', 'أوردرات 3 أيام', 'رؤاس 3 أيام', 'رؤاس الـ 7 أيام قبلها', 'رؤاس الـ 14 يوم قبلها', 'رؤاس التعادل', 'المترك الواقع', 'السبب وتعمل إيه']);
-  // من بره الكامبينات بس، اللي محتاجة قرار الأول
-  const camps = body().filter(r => /^Camp /.test(r[1]));
-  assert.deepEqual(camps.map(r => [r[0], r[1], r[3], r[4], r[6], r[7], r[8], r[9], r[10], r[11], r[12]]), [
-    ['🔴 وقّفها', 'Camp C4', 'شغالة', 200, 600, 0, 0, 0, 0, 2, 'صفر أوردرات'],
-    ['🟠 وقعت', 'Camp C2', 'شغالة', '', 330, 1, 1.21, 4, 4, 2, 'CTR ↓60%'],
-    ['🔁 رجّعها', 'Camp C3', 'واقفة', '', 100, 0, 0, '', 4, 2, 'صفر أوردرات'],
-    ['🟢 زوّد الميزانية', 'Camp C1', 'شغالة', 500, 300, 3, 4, 4, 4, 2, ''],
-    ['⏳ لسه بدري', 'Camp C5', 'شغالة', '', 50, 0, 0, '', '', 2, '']]);
-  assert.match(camps[1][13], /كانت 4 ونزلت 1\.21 .*الكرياتيف تعب: الـ CTR نزل 60%، والـ Hook نزل 67% ← جرّب كرياتيف جديد/);
-  assert.match(camps[2][13], /كانت كويسة \(رؤاس 4 والتعادل 2\) ← رجّعها/);
-  assert.match(camps[0][13], /تحت التعادل .* ← وقّفها/);
+  const v = () => sh.getDataRange().getValues(), head = () => v().findIndex(r => r[0] === 'الحساب' && r[3] === 'الكامبين / الأد سيت / الإعلان');
+  const rowOf = name => v().findIndex((r, i) => i > head() && String(r[3]).trim().replace(/^[↳•]\s*/, '') === name) + 1;
+  const sig = name => sh.attr(rowOf(name), 2).bg;
+  // الترتيب: الحساب، المؤشر (لون بس)، الحالة، الكامبين، المنتج، الصرف، أوردرات المنصة وشوبيفاي والتقديري والدوبليكيشن، الرؤاس ...، والآخر المترك والسبب والقرار و ➕
+  assert.deepEqual(v()[head()].slice(0, 22), ['الحساب', 'المؤشر', 'الحالة', 'الكامبين / الأد سيت / الإعلان', 'المنتج', 'الصرف', 'أوردرات المنصة',
+    'أوردرات شوبيفاي (UTM)', '+ تقديري (من غير مصدر)', 'الدوبليكيشن', 'Shopify ROAS', 'AOV', 'التحويل', 'Cost / content view', 'CPM', 'CTR',
+    'Hook rate', 'الفريكونسي', 'المترك الواقع', 'السبب', 'القرار (تعمل إيه)', '➕ تاسك']);
+  assert.equal(v()[head() - 1][0], 'META — الكامبينات الشغالة دلوقتي (4)');
+  // الشغالة بس، اللي محتاجة قرار الأول، والمؤشر لون من غير كلام
+  const camps = () => v().filter((r, i) => i > head() && /^Camp /.test(String(r[3])));
+  assert.deepEqual(camps().slice(0, 4).map(r => [r[1], r[2], r[3]]), [['', 'شغالة', 'Camp C4'], ['', 'شغالة', 'Camp C2'], ['', 'شغالة', 'Camp C1'], ['', 'شغالة', 'Camp C5']]);
+  assert.deepEqual(['Camp C4', 'Camp C2', 'Camp C1', 'Camp C5'].map(sig), ['#f4cccc', '#fce5cd', '#d9ead3', '#f3f4f6'], 'أحمر وبرتقالي وأخضر ورمادي');
+  const C2 = v()[rowOf('Camp C2') - 1];
+  assert.deepEqual([C2[0], C2[18]], ['Chance 26', 'CTR ↓60%']);
+  assert.match(C2[19], /^كانت 4 ونزلت 1\.21 .*الكرياتيف تعب: الـ CTR نزل 60%، والـ Hook نزل 67%$/);
+  assert.equal(C2[20], 'جرّب كرياتيف جديد وابني على أحسن إعلان فيها');
+  assert.equal(v()[rowOf('Camp C4') - 1][20], 'وقّفها');
+  // الواقفة اللي رؤاسها كان كويس تحت لوحدها: C3 (آخر 14 يوم) و C7 (طول عمرها)
+  const stopBand = v().findIndex(r => /^🔁 META — واقفة ورؤاسها كان كويس/.test(String(r[0])));
+  assert.ok(stopBand > rowOf('Camp C5'));
+  assert.ok(rowOf('Camp C3') > stopBand && rowOf('Camp C7') > stopBand);
+  assert.deepEqual([sig('Camp C3'), sig('Camp C7')], ['#cfe2f3', '#cfe2f3']);
+  assert.match(v()[rowOf('Camp C3') - 1][19], /^كانت كويسة \(رؤاس 4 والتعادل 2\)$/);
+  assert.match(v()[rowOf('Camp C7') - 1][19], /^كانت كويسة على طول عمرها \(رؤاس 12 والتعادل 2، صرف 100 و 3 أوردر\)$/);
+  assert.equal(v()[rowOf('Camp C7') - 1][20], 'رجّعها بميزانية صغيرة وراقب يومين');
+  // أرقام الفترة: النهارده مفيش صرف، فـ آخر 14 يوم من B2
+  assert.equal(v()[1][1], 'النهارده');
+  sh.getRange('B2').setValue('آخر 14 يوم');
+  e.c.onEdit({ range: { getSheet: () => sh, getA1Notation: () => 'B2' } });
+  let C1 = v()[rowOf('Camp C1') - 1];
+  // 13 يوم × 100، و 13 أوردر بـ 400، والبيكسل 2 في اليوم: الدوبليكيشن 100%
+  assert.deepEqual(C1.slice(5, 13), [1300, 26, 13, 0, 1, 4, 400, 0.05]);
+  assert.deepEqual([C1[14], C1[15]], [100, 0.02], 'CPM و CTR من الشيت');
+  assert.deepEqual([C1[13], C1[16], C1[17]], ['', '', ''], 'Hook والفريكونسي لسه ماتقروش للفترة دي');
+  e.c.liveTick();
+  C1 = v()[rowOf('Camp C1') - 1];
+  assert.deepEqual([C1[16], C1[17]], [0.3, 2], 'Hook والفريكونسي من Meta للفترة');
   // تحت كل كامبين أد سيتسها وتحت كل أد سيت إعلاناته، مقفولين
-  const rowOf = name => head() + 2 + body().findIndex(r => r[1].trim().replace(/^[↳•]\s*/, '') === name);
   const c2 = rowOf('Camp C2');
-  assert.deepEqual(body().slice(body().findIndex(r => r[1] === 'Camp C2'), body().findIndex(r => r[1] === 'Camp C3')).map(r => r[1].trim()),
-    ['Camp C2', '↳ Set S2', '• Ad 1200000000211', '• Ad 1200000000212']);
-  assert.equal(body().find(r => r[1].trim() === '• Ad 1200000000211')[0], '🟠 وقع');
+  assert.deepEqual(v().slice(c2 - 1, c2 + 3).map(r => r[3].trim()), ['Camp C2', '↳ Set S2', '• Ad 1200000000211', '• Ad 1200000000212']);
   assert.equal(sh.depth[c2] || 0, 0); assert.equal(sh.depth[c2 + 1], 1); assert.equal(sh.depth[c2 + 2], 2);
   assert.equal(sh.getRowGroup(c2 + 1, 1).isCollapsed(), true, 'مقفولة');
-  assert.ok(String(sh.attr(c2, 16).note).indexOf('الـ 7 أيام قبلها: 2.00%') === 0, 'الـ CTR بتاع الـ 7 أيام في الملاحظة');
   // الكارت: مين موقّع الرؤس ومين تزوّد عليه
   const card = name => v().find(r => r[0] === name);
-  assert.ok(card('كل الحسابات') && card('Chance 26'));
+  assert.ok(card('كل حسابات Meta') && card('Chance 26'));
   assert.match(String(card('Chance 26')[12]), /^Camp C4 \(/);
-  assert.match(String(card('Chance 26')[14]), /Camp C1 \(4\).*🔁 Camp C3/);
-  // تاب Analysis & Actions بياخد قرارات الكامبينات: وقّف (عاجل)، ووقعت (مهم)، وزوّد ورجّع (فرصة)
+  assert.match(String(card('Chance 26')[19]), /Camp C1 \(4\)\n🔁 Camp C3/);
+  // ➕ جنب كامبين: بتبقى تاسك في Actions (تعمل إيه واسم الكامبين، والكامبين والأوبتيمايز على متكتبين)
+  e.c.withLock_(() => e.c.writeAnalysisTab_());
+  const c4 = rowOf('Camp C4');
+  sh.getRange(c4, 22).setValue(true);
+  e.c.onEdit({ range: { getSheet: () => sh, getA1Notation: () => 'V' + c4 } });
+  const tasks = e.ss.getSheetByName('Actions').getDataRange().getValues().map(r => r.slice(6, 14)).filter(r => /^وقّفها\nCamp C4$/.test(r[0]));
+  assert.equal(tasks.length, 1);
+  assert.deepEqual([tasks[0][1], tasks[0][2], tasks[0][5], tasks[0][7]], ['🔴 عاجل', 'لسه', 'Camp C4', 'الأوردرات في اليوم']);
+  // تاب Actions بياخد قرارات الكامبينات: وقّف (عاجل)، ووقعت (مهم)، وزوّد ورجّع (فرصة)
   // كل أكشن: تعمل إيه (B)، والكامبين في خانة لوحدها (C)، وليه بالأرقام (D)
   const an = e.ss.getSheetByName('Actions').getDataRange().getValues(), act = (re, camp) => an.find(r => re.test(String(r[1])) && camp.test(String(r[2])));
   assert.doesNotMatch(String(an[1][0]), /⚠️/, 'كل الأجزاء اتحسبت');
-  // الجملة العربي في سطر، واسم الكامبين في سطر لوحده تحتها (مايتلخبطش مع العربي)
-  assert.equal(act(/^وقّف الكامبين دي:$/, /^Camp C4 \(Chance 26\)$/)[0], '🔴 عاجل');
   const drop = an.find(r => r[2] === 'Camp C2 (Chance 26)' && /^كامبين كانت كويسة ونزلت تحت التعادل \(CTR ↓60%\)\n• /.test(String(r[3])));
   assert.equal(drop[0], '🟠 مهم', 'Camp C2 وقعت');
   assert.equal(act(/^زوّد ميزانيتها 20% وراقب يومين:/, /^Camp C1 /)[0], '🟢 فرصة');
-  assert.equal(act(/^رجّعها بميزانية صغيرة وراقب يومين:/, /^Camp C3 /)[0], '🟢 فرصة');
+  // C3 و C7 واقفين وكانوا كويسين: أكشن واحد متجمع، كل كامبين في صف لوحده
+  const back = an.findIndex(r => /^2 كامبينات واقفة وكانت كويسة\nرجّع بميزانية صغيرة$/.test(String(r[1])));
+  assert.equal(an[back][0], '🟢 فرصة');
+  assert.deepEqual(an.slice(back, back + 2).map(r => r[2]).sort(), ['Camp C3 (Chance 26)', 'Camp C7 (Chance 26)']);
   // تفتح الكامبين، وكامبين جديدة تيجي: اللي فتحته يفضل مفتوح
   sh.getRowGroup(c2 + 1, 1).expand();
-  ads[A1].push(ad(1, 'C6', 'S6', '1200000000611', 40));
+  ads[A1].push(ad(1, 'C6', 'S6', '1200000000611', 40)); active[A1].push('1200000000611'); // كامبين جديدة شغالة
   e.doc.MCAMP_AT = '0';
   e.c.liveTick();
   const c2b = rowOf('Camp C2'), c1 = rowOf('Camp C1');
-  assert.ok(body().some(r => r[1] === 'Camp C6'));
+  assert.ok(rowOf('Camp C6') > 0);
   assert.equal(sh.getRowGroup(c2b + 1, 1).isCollapsed(), false, 'C2 لسه مفتوحة');
   assert.equal(sh.getRowGroup(c1 + 1, 1).isCollapsed(), true, 'C1 مقفولة');
   assert.equal(sh.getRowGroup(c2b + 2, 2).isCollapsed(), true, 'إعلانات الأد سيت مقفولة');
-  // الجروبات اتكومت فوق بعض (8 مستويات من أول الجدول لآخره، وجروب فوق الجدول كمان) والكامبينات زي ما هي: بتتعمل من الأول
-  const h = head() + 1, n = body().length;
-  for (let r = h - 1; r <= h + n + 30; r++) sh.depth[r] = 8;
+  // الجروبات اتكومت فوق بعض (8 مستويات من أول الجدول لآخره، وجروب فوق الجدول كمان): بتتعمل من الأول
+  const h = head() + 1, n = v().length;
+  for (let r = h - 3; r <= n + 30; r++) sh.depth[r] = 8;
   e.c.liveTick();
   const c2c = rowOf('Camp C2');
-  assert.equal(sh.getRowGroupDepth(h - 1), 0, 'مفيش جروب فوق الجدول');
-  assert.equal(sh.getRowGroupDepth(h), 0, 'الهيدر برا الجروبات');
+  assert.equal(sh.getRowGroupDepth(head() - 1), 0, 'مفيش جروب فوق الجدول');
+  assert.equal(sh.getRowGroupDepth(head() + 1), 0, 'الهيدر برا الجروبات');
   assert.equal(sh.getRowGroupDepth(c2c), 0); assert.equal(sh.getRowGroupDepth(c2c + 1), 1); assert.equal(sh.getRowGroupDepth(c2c + 2), 2);
-  assert.equal(sh.getRowGroupDepth(h + body().length + 1), 0, 'مفيش جروب تحت الجدول');
   assert.equal(Math.max(...Array.from(sh.depth, x => x || 0)), 2, 'أقصى عمق 2');
-  assert.equal(body().length, n, 'نفس الصفوف');
-  assert.ok(body().filter(r => /^Camp /.test(r[1])).every(r => sh.getRowGroupDepth(rowOf(r[1])) === 0), 'كل الكامبينات باينة من بره');
+  assert.ok(camps().every(r => sh.getRowGroupDepth(rowOf(r[3])) === 0), 'كل الكامبينات باينة من بره');
   assert.equal(sh.getRowGroup(c2c + 1, 1).isCollapsed(), true, 'بعد التصليح كله مقفول');
   // وتحديث تاني من غير تغيير مابيلمسش الجروبات
   const before = sh.depth.slice();
@@ -2206,7 +2241,7 @@ test('رصيد TikTok في Today تحت Meta: الرصيد المتاح ويكف
   assert.match(String(row()[1]), /^✗ TikTok code 40001: No permission/);
 });
 
-test('Duplication: أوردرات المنصة قدام أوردرات شوبيفاي لكل كامبين وأد سيت وإعلان، و DIRECT متوزعة تقديري، والكامبينات الواقفة تحت + لوحدها', () => {
+test('Meta Campaigns فيه الدوبليكيشن: أوردرات المنصة قدام شوبيفاي بالـ UTM و DIRECT متوزعة تقديري، لكل كامبين وأد سيت وإعلان، و TikTok تحت Meta، وتاب Duplication القديم اتشال', () => {
   const probe = env(), today = probe.c.todayKey_(), yest = probe.c.shiftKey_(today, -1), B = '(blank)';
   const flow = (id, day, products, x) => {
     const r = ['gid://shopify/Order/' + id, ' #' + id, ' N', B, 500, ' ' + day + 'T10:00:00+03:00', B, B, B, B, B, B, B, B, B, products, '4655075', B, B];
@@ -2227,43 +2262,28 @@ test('Duplication: أوردرات المنصة قدام أوردرات شوبي�
   fakeTikTok(e, { rows: [{ day: today, ad: '9001', spend: 150, buys: 3 }] });
   e.c.setupAll();
   e.c.liveTick(); e.c.liveTick();
-  const sh = e.ss.getSheetByName('Duplication'), v = () => sh.getDataRange().getValues();
-  assert.ok(sh, 'التاب اتعمل');
-  assert.deepEqual(v()[1].slice(0, 3), ['الفترة', 'النهارده', today]);
-  const at = (from, label) => v().findIndex((r, i) => i >= from && r[0] === label);
-  const mi = v().findIndex(r => /^Meta \| /.test(String(r[0]))), ti = v().findIndex(r => /^TikTok \| /.test(String(r[0])));
-  // الملخص: البيكسل 6 (3 إعلانات × 2)، وشوبيفاي 5 = 3 بالـ UTM + 2 DIRECT (من غير المانيول والبايو وأوردر إمبارح) زي META TOTAL في Today
-  assert.deepEqual(v()[mi + 2].slice(0, 6), [6, 5, 3, 2, 1, 0.2]);
-  assert.equal(e.ss.getSheetByName('Today').getDataRange().getValues().find(r => r[0] === 'META TOTAL')[3], 5, 'نفس رقم Today');
-  assert.equal(sh.attr(mi + 3, 6).bg, '#f4cccc', 'المنصة بتعد أكتر بـ 20%');
-  const an = e.ss.getSheetByName('Actions').getDataRange().getValues();
-  assert.doesNotMatch(String(an[1][0]), /⚠️/, 'كل الأجزاء في Actions اتحسبت');
+  assert.equal(e.ss.getSheetByName('Duplication'), null, 'تاب Duplication اتشال: أرقامه في Meta Campaigns');
+  const sh = e.ss.getSheetByName('Meta Campaigns'), v = () => sh.getDataRange().getValues();
+  assert.deepEqual([v()[1][0], v()[1][1], v()[1][4]], ['الفترة', 'النهارده', today + ' (لحد دلوقتي)']);
+  const mi = v().findIndex(r => /^META — الكامبينات الشغالة/.test(String(r[0]))), ti = v().findIndex(r => /^TIKTOK — الكامبينات الشغالة/.test(String(r[0])));
+  assert.ok(mi > 0 && ti > mi, 'TikTok تحت Meta');
+  const at = (from, name) => v().findIndex((r, i) => i > from && String(r[3]).trim() === name);
+  assert.equal(e.ss.getSheetByName('Today').getDataRange().getValues().find(r => r[0] === 'META TOTAL')[3], 5, 'META TOTAL: 3 بالـ UTM + 2 DIRECT');
   // الكامبين الشغالة: DIRECT بتاع Lip Oil على 111 و 222 بالصرف (0.6 و 0.4)، و Mask مفيش إعلان عليه فعلى كل اللي صرفوا النهارده (1000 من 1100)
+  // الصرف، أوردرات المنصة، شوبيفاي بالـ UTM، التقديري، الدوبليكيشن = (4 − 3.9) ÷ 3.9
   const c1 = at(mi, 'Camp');
-  assert.deepEqual(v()[c1].slice(0, 10), ['Camp', 'Chance 26', '🟢 شغال', 1000, 4, 2, 1.9, 3.9, 0.1, 0.023]);
-  assert.deepEqual(v()[c1 + 1].slice(0, 3), ['↳ Set', '', '🟢 شغال']);
-  assert.deepEqual([v()[c1 + 2].slice(0, 8), v()[c1 + 3].slice(0, 8)], [
-    ['        • Ad 111', '', '🟢 شغال', 600, 2, 1, 1.1, 2.1], ['        • Ad 222', '', '⏸ واقف', 400, 2, 1, 0.8, 1.8]]);
-  // الواقفة تحت + لوحدها، والأوردر اللي الـ UTM فيه اسم الكامبين بس اتحسب عليها
-  const stop = at(mi, '⏸ كامبينات واقفة دلوقتي (1)');
-  assert.deepEqual(v()[stop + 1].slice(0, 9), ['Camp 2', 'Chance 26', '⏸ واقف', 100, 2, 1, 0.1, 1.1, 0.9]);
-  assert.deepEqual(v()[at(mi, 'TOTAL')].slice(3, 10), [1100, 6, 3, 2, 5, 1, 0.2]);
-  // + جنب الكامبين بيفتح الأد سيتس، و + جنب الأد سيت بيفتح الإعلانات؛ كله مقفول في الأول
-  const R = i => i + 1;
-  assert.deepEqual([sh.getRowGroupDepth(R(c1)), sh.getRowGroupDepth(R(c1 + 1)), sh.getRowGroupDepth(R(c1 + 2)), sh.getRowGroupDepth(R(stop)),
-    sh.getRowGroupDepth(R(stop + 1)), sh.getRowGroupDepth(R(stop + 3))], [0, 1, 2, 0, 1, 3]);
-  assert.equal(sh.getRowGroup(R(c1 + 1), 1).isCollapsed(), true);
-  // TikTok: 3 من المنصة، وأوردر واحد من شوبيفاي اتربط بالكامبين من اسمها في الـ UTM
-  assert.deepEqual(v()[ti + 2].slice(0, 6), [3, 1, 1, '', 2, 2]);
-  assert.deepEqual(v()[at(ti, 'TT Camp')].slice(0, 10), ['TT Camp', 'TikTok', '🟢 شغال', 150, 3, 1, '', 1, 2, 2]);
-  // اللي اتفتح بيفضل مفتوح لما الصفوف تتغير
-  sh.getRowGroup(R(c1 + 1), 1).expand();
-  e.c.withLock_(() => e.c.writeDupTab_());
-  assert.equal(sh.getRowGroup(R(c1 + 1), 1).isCollapsed(), false);
+  assert.deepEqual(v()[c1].slice(5, 10), [1000, 4, 2, 1.9, 0.023]);
+  assert.deepEqual([v()[c1][0], v()[c1][2]], ['Chance 26', 'شغالة']);
+  assert.deepEqual([v()[at(mi, '• Ad 111')].slice(5, 9), v()[at(mi, '• Ad 222')].slice(5, 9)], [[600, 2, 1, 1.1], [400, 2, 1, 0.8]]);
+  assert.equal(at(mi, 'Camp 2'), -1, 'Camp 2 واقفة ومالهاش رؤاس كويس: مش هنا');
+  // TikTok: 3 من المنصة، وأوردر واحد من شوبيفاي اتربط بالكامبين من اسمها في الـ UTM، ومن غير تقديري
+  const tt = at(ti, 'TT Camp');
+  assert.deepEqual(v()[tt].slice(5, 10), [150, 3, 1, '', 2]);
+  assert.equal(sh.attr(tt + 1, 10).bg, '#f4cccc', 'المنصة بتعد أكتر بـ 20%');
   // الفترة من القايمة في B2
   sh.getRange('B2').setValue('آخر 7 أيام');
-  e.c.writeDupTab_();
-  assert.deepEqual(v()[mi + 2].slice(0, 3), [8, 6, 4], 'إمبارح داخل: إعلان 111 (2) وأوردر 8');
+  e.c.onEdit({ range: { getSheet: () => sh, getA1Notation: () => 'B2' } });
+  assert.deepEqual(v()[at(mi, 'Camp')].slice(5, 8), [1300, 6, 3], 'إمبارح داخل: إعلان 111 (2) وأوردر 8');
 });
 
 test('Actions و Analysis: المهم بس في Actions بالأولوية، والتاسكات بقبل وبعد، والجداول الصغيرة فوق في Analysis والتفاصيل تحت + (والستوك + على كل منتج)', () => {
@@ -2507,13 +2527,13 @@ test('حساب المسجات (Chance 26، accounts.messages_only): مش بيط�
   e.c.refreshFunnelNow();
 
   // Meta Campaigns: 💬 مسجات بدل وقّفها، وكارت كل الحسابات من غيره
-  const mc = e.ss.getSheetByName('Meta Campaigns').getDataRange().getValues();
-  const camp = name => mc.find(r => r[1] === name);
-  assert.equal(camp('Camp M1')[0], '💬 مسجات');
-  assert.match(camp('Camp M1')[13], /حساب مسجات/);
-  assert.match(camp('Camp W1')[0], /^🟢/);
-  assert.ok(mc.some(r => r[0] === 'كل الحسابات'), 'كارت كل الحسابات زي ما هو، بالحسابين');
-  assert.equal(mc.find(r => r[0] === 'Chance 26')[1], '💬 مسجات');
+  const mcTab = e.ss.getSheetByName('Meta Campaigns'), mc = mcTab.getDataRange().getValues();
+  const camp = name => mc.findIndex(r => r[3] === name);
+  assert.equal(mcTab.attr(camp('Camp M1') + 1, 2).bg, '#e8eefc', 'المؤشر لون المسجات');
+  assert.match(mc[camp('Camp M1')][19], /حساب مسجات/);
+  assert.equal(mcTab.attr(camp('Camp W1') + 1, 2).bg, '#d9ead3', 'W1 كسبانة: أخضر');
+  assert.ok(mc.some(r => r[0] === 'كل حسابات Meta'), 'كارت كل الحسابات زي ما هو، بالحسابين');
+  assert.equal(mc.find(r => r[0] === 'Chance 26')[3], '💬 مسجات');
 
   // Actions و Analysis: مفيش أي حاجة عن الكامبين ولا الحساب
   const acts = e.ss.getSheetByName('Actions').getDataRange().getValues().map(r => r.join(' ')).join('\n');
