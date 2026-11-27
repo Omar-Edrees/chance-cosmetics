@@ -107,6 +107,10 @@ function env(options) {
     SpreadsheetApp: {
       getActive: () => active, openById: id => { if (id !== ORDERS_ID) throw new Error('not found ' + id); return source; },
       newDataValidation: builder, newConditionalFormatRule: builder, ProtectionType: { SHEET: 'SHEET', RANGE: 'RANGE' },
+      BorderStyle: { SOLID_THICK: 'SOLID_THICK' },
+      newTextStyle: () => { const st = {}, b = { build: () => st }; ['Bold', 'FontSize', 'ForegroundColor', 'Underline'].forEach(k => { b['set' + k] = v => { st[k] = v; return b; }; }); return b; },
+      newRichTextValue: () => { const rt = { text: '', runs: [], link: null }, b = { build: () => rt, setText: t => { rt.text = t; return b; },
+        setTextStyle: (from, to, st) => { rt.runs.push({ from, to, st }); return b; }, setLinkUrl: (from, to, url) => { rt.link = url; return b; } }; return b; },
       GroupControlTogglePosition: { BEFORE: 'BEFORE', AFTER: 'AFTER' },
       getUi: () => ({ alert: m => { alerts.push(m); } }),
     },
@@ -2043,14 +2047,15 @@ test('Meta Campaigns: الكامبين وتحتها الأد سيتس وتحته
   assert.match(String(card('Chance 26')[12]), /^Camp C4 \(/);
   assert.match(String(card('Chance 26')[14]), /Camp C1 \(4\).*🔁 Camp C3/);
   // تاب Analysis & Actions بياخد قرارات الكامبينات: وقّف (عاجل)، ووقعت (مهم)، وزوّد ورجّع (فرصة)
-  const an = e.ss.getSheetByName('Actions').getDataRange().getValues(), act = re => an.find(r => re.test(String(r[1])));
+  // كل أكشن: تعمل إيه (B)، والكامبين في خانة لوحدها (C)، وليه بالأرقام (D)
+  const an = e.ss.getSheetByName('Actions').getDataRange().getValues(), act = (re, camp) => an.find(r => re.test(String(r[1])) && camp.test(String(r[2])));
   assert.doesNotMatch(String(an[1][0]), /⚠️/, 'كل الأجزاء اتحسبت');
   // الجملة العربي في سطر، واسم الكامبين في سطر لوحده تحتها (مايتلخبطش مع العربي)
-  assert.equal(act(/^وقّف الكامبين دي:\nCamp C4 \(Chance 26\)$/)[0], '🔴 عاجل');
-  const drop = an.find(r => /^كامبين كانت كويسة ونزلت تحت التعادل \(CTR ↓60%\):\nCamp C2 \(Chance 26\)\n• /.test(String(r[2])));
+  assert.equal(act(/^وقّف الكامبين دي:$/, /^Camp C4 \(Chance 26\)$/)[0], '🔴 عاجل');
+  const drop = an.find(r => r[2] === 'Camp C2 (Chance 26)' && /^كامبين كانت كويسة ونزلت تحت التعادل \(CTR ↓60%\)\n• /.test(String(r[3])));
   assert.equal(drop[0], '🟠 مهم', 'Camp C2 وقعت');
-  assert.equal(act(/^زوّد ميزانيتها 20% وراقب يومين:\nCamp C1 /)[0], '🟢 فرصة');
-  assert.equal(act(/^رجّعها بميزانية صغيرة وراقب يومين:\nCamp C3 /)[0], '🟢 فرصة');
+  assert.equal(act(/^زوّد ميزانيتها 20% وراقب يومين:/, /^Camp C1 /)[0], '🟢 فرصة');
+  assert.equal(act(/^رجّعها بميزانية صغيرة وراقب يومين:/, /^Camp C3 /)[0], '🟢 فرصة');
   // تفتح الكامبين، وكامبين جديدة تيجي: اللي فتحته يفضل مفتوح
   sh.getRowGroup(c2 + 1, 1).expand();
   ads[A1].push(ad(1, 'C6', 'S6', '1200000000611', 40));
@@ -2273,17 +2278,24 @@ test('Actions و Analysis: المهم بس في Actions بالأولوية، و�
   const v = () => sh.getDataRange().getValues(), find = (col, re) => v().findIndex(r => re.test(String(r[col])));
   // Actions: الأكشنز (A) والتاسكات (G) جنب بعض، والمهم بس
   assert.deepEqual([v()[3][0], v()[3][6]].map(x => x.split(' — ')[0].split(' (')[0]), ['الأكشنز', 'التاسكات']);
-  assert.deepEqual(v()[4].slice(0, 20), ['الأولوية', 'الأكشن', 'ليه (بالأرقام)', 'القسم', '➕ تاسك', '', 'التاسك', 'الأولوية', 'الحالة', 'اتضافت يوم', 'ملاحظات',
+  assert.deepEqual(v()[4].slice(0, 20), ['الأولوية', 'المشكلة وتعمل إيه', 'الكامبين / المنتج', 'ليه (بالأرقام)', '➕ تاسك', '', 'التاسك', 'الأولوية', 'الحالة', 'اتضافت يوم', 'ملاحظات',
     'الكامبين', 'المتريكس اللي تظهر', 'الأوبتيمايز على', 'اتعملت يوم', 'قبل: آخر 3 أيام', 'قبل: آخر 7 أيام', 'بعد: 3 أيام', 'بعد: 7 أيام', 'النتيجة']);
+  // أقسام بنفس ترتيب كروت Today، وكل قسم عنوانه بعدد مشاكله
+  const bands = v().map((r, i) => [i, String(r[0])]).filter(x => /\(\d+ (مشكلة|فرصة)|^📝/.test(x[1]));
+  assert.deepEqual(bands.map(x => x[1].split('   ')[0]), ['الستوك والمنتجات', 'الكامبينات والدوبليكيشن', 'الحسابات والـ 3 ساعات', 'الفانل والموقع',
+    'الإلغاء والمحافظات', '🟢 Scaling', '📝 تاسكاتك اللي لسه']);
+  assert.equal(bands[0][1], 'الستوك والمنتجات   (1 مشكلة، منهم 1 عاجل)');
+  assert.equal(v()[bands[1][0] + 1][0], 'مفيش مشاكل هنا دلوقتي ✅', 'قسم فاضي بيقول كده');
   // الستوك: Lip Oil عليه إعلان، Nude خلص و Red يكفي يومين، وكانوا بيتباعوا 12 قطعة في الشهر: عاجل
-  // الكلام الكتير نقط تحت بعض
-  // الجملة العربي، وتحتها اسم المنتج في سطر لوحده، وتحته النقط
-  assert.deepEqual(v()[5].slice(0, 2), ['🔴 عاجل', 'اطلب ستوك بالترتيب ده:\nLip Oil\n• Nude: 30 قطعة\n• Red: 28 قطعة\nولحد ما يوصل، شيل الألوان الخلصانة من الإعلانات']);
-  assert.equal(v()[5][2], '1 لون خلص و 1 لون قرّب يخلص، وعليه 1 إعلان شغال:\nLip Oil\n• Nude: نفد، اتباع 12 في 30 يوم\n• Red: يكفي 2 يوم، اتباع 12 في 30 يوم');
-  assert.equal(v()[5][4], false, 'خانة ➕');
+  // تعمل إيه (B)، والمنتج في خانة لوحده (C)، وليه بالأرقام نقط تحت بعض (D)
+  const s0 = bands[0][0] + 1;
+  assert.deepEqual(v()[s0].slice(0, 5), ['🔴 عاجل', 'اطلب ستوك بالترتيب ده:\n• Nude: 30 قطعة\n• Red: 28 قطعة\nولحد ما يوصل، شيل الألوان الخلصانة من الإعلانات', 'Lip Oil',
+    '1 لون خلص و 1 لون قرّب يخلص، وعليه 1 إعلان شغال\n• Nude: نفد، اتباع 12 في 30 يوم\n• Red: يكفي 2 يوم، اتباع 12 في 30 يوم', false]);
   // الفانل (CPM غلي) راقب بس: مش في الأكشنز، في تاب Analysis
-  assert.equal(v()[6][0], '🟡 1 حاجة تتراقب بس (من غير أكشن دلوقتي): في تاب Analysis');
+  assert.ok(v().some(r => r[0] === '🟡 1 حاجة تتراقب بس (من غير أكشن دلوقتي): في تاب Analysis'));
   assert.equal(find(1, /CPM/), -1);
+  // كارت الستوك في Today بيودّي على القسم ده في Actions
+  assert.equal(e.c.todayProblems_().rows.stock, s0);
   // Analysis: الجداول الصغيرة فوق جنب بعض
   const a = () => an.getDataRange().getValues(), at = (col, re) => a().findIndex(r => re.test(String(r[col])));
   assert.deepEqual([a()[3][0], a()[3][6], a()[3][12]].map(x => x.split(' (')[0]), ['النهارده بسرعة', 'الحسابات — Shopify ROAS', 'المشاكل المهمة']);
@@ -2309,27 +2321,38 @@ test('Actions و Analysis: المهم بس في Actions بالأولوية، و�
   assert.equal(a()[roas - 1][2], 'Chance 26');
   assert.equal(a()[roas + 1][0], e.c.anaDay_(today) + ' (لحد دلوقتي)');
 
-  // تاسك مكتوب بإيدي بأولوية عاجل على الكامبين: بيدخل في الأكشنز، وتاريخ إضافته بيتكتب لوحده
+  // تاسك مكتوب بإيدي بأولوية عاجل على الكامبين: بيدخل في الأكشنز (قسم التاسكات)، وتاريخ إضافته بيتكتب لوحده
   const day = k => Number(k.slice(8, 10)) + '/' + Number(k.slice(5, 7));
   sh.getRange('G6').setValue('اعمل كرييتيف جديد لـ Lip Oil');
   sh.getRange('H6').setValue('🔴 عاجل');
   sh.getRange('L6:N6').setValues([['Camp', 'الصرف، CPM', 'CTR']]);
   e.c.withLock_(() => e.c.writeAnalysisTab_());
   const task = find(1, /^اعمل كرييتيف جديد لـ Lip Oil$/);
-  assert.deepEqual(v()[task].slice(0, 4), ['🔴 عاجل', 'اعمل كرييتيف جديد لـ Lip Oil', 'مكتوبة بإيدك يوم ' + today, 'تاسك']);
+  assert.deepEqual(v()[task].slice(0, 4), ['🔴 عاجل', 'اعمل كرييتيف جديد لـ Lip Oil', 'Camp', 'مكتوبة بإيدك يوم ' + today]);
+  assert.ok(task > find(0, /^📝 تاسكاتك اللي لسه/), 'تحت عنوان التاسكات');
   assert.deepEqual(v()[5].slice(6, 10), ['اعمل كرييتيف جديد لـ Lip Oil', '🔴 عاجل', 'لسه', today]);
   // قبل (الحالة لسه): آخر 3 أيام كاملة (900 في اليوم، 1000 ظهور و 20 كليك في اليوم) وآخر 7، والمتريكس اللي اخترتها + اللي بنعمل عليه أوبتيمايز
   assert.equal(v()[5][15], day(d(3)) + ' → ' + day(d(1)) + '\nالصرف في اليوم: 900\nCPM: 900\nCTR: 2.00%');
   assert.equal(v()[5][16], day(d(7)) + ' → ' + day(d(1)) + '\nالصرف في اليوم: 429\nCPM: 750\nCTR: 2.00%');
   assert.deepEqual(v()[5].slice(17, 20), ['لما الحالة تبقى خلصت', 'لما الحالة تبقى خلصت', '']);
-  // الحالة خلصت: "اتعملت يوم" النهارده، والبعد بيبدأ لايف من النهارده
+  assert.notEqual(sh.attr(6, 7).bg, '#dc2626', 'لسه متضاف النهارده: مش أحمر');
+  // الحالة خلصت: "اتعملت يوم" النهارده، والتاسك بيروح تاب Completed Tasks، والبعد بيبدأ لايف من النهارده
   sh.getRange('I6').setValue('خلصت');
   e.c.onEdit({ range: { getSheet: () => sh, getA1Notation: () => 'I6' } });
   assert.equal(sh.getRange('O6').getValue(), today);
   e.c.withLock_(() => e.c.writeAnalysisTab_());
   assert.equal(find(1, /^اعمل كرييتيف جديد/), -1, 'خلصت: خرجت من الأكشنز');
-  assert.match(String(v()[5][17]), new RegExp('^' + day(today) + ' → النهارده \\(يوم 1 من 3\\)\\nالصرف في اليوم: '));
-  assert.equal(v()[5][19], 'CTR\n3 أيام: 0% زي ما هو (لسه)\n7 أيام: 0% زي ما هو (لسه)');
+  assert.equal(find(6, /^اعمل كرييتيف جديد/), -1, 'وخرجت من جدول التاسكات');
+  const doneTab = e.ss.getSheetByName('Completed Tasks'), dv = () => doneTab.getDataRange().getValues();
+  assert.match(String(dv()[0][0]), /^COMPLETED TASKS — التاسكات اللي خلصت \(1\)/);
+  assert.deepEqual(dv()[2].slice(0, 4), ['اعمل كرييتيف جديد لـ Lip Oil', '🔴 عاجل', 'خلصت', today]);
+  assert.match(String(dv()[2][11]), new RegExp('^' + day(today) + ' → النهارده \\(يوم 1 من 3\\)\\nالصرف في اليوم: '));
+  assert.equal(dv()[2][13], 'CTR\n3 أيام: 0% زي ما هو (لسه)\n7 أيام: 0% زي ما هو (لسه)');
+  // ترجع لسه من تاب Completed Tasks: ترجع جدول التاسكات
+  doneTab.getRange('C3').setValue('لسه');
+  e.c.withLock_(() => e.c.writeAnalysisTab_());
+  assert.equal(v()[5][6], 'اعمل كرييتيف جديد لـ Lip Oil');
+  assert.equal(dv()[2][0], 'لسه مفيش تاسكات خلصت');
   // ➕ على أكشن الستوك: بيبقى تاسك (اسمه الأكشن واسم المنتج) في أول صف فاضي، ويستخبى من الأكشنز
   const stock = find(1, /^اطلب ستوك بالترتيب/);
   sh.getRange(stock + 1, 5).setValue(true);
@@ -2338,23 +2361,27 @@ test('Actions و Analysis: المهم بس في Actions بالأولوية، و�
   assert.equal(v()[6][10], 'Nude: 30\nRed: 28', 'الملاحظة: كل حاجة في سطر');
   e.c.withLock_(() => e.c.writeAnalysisTab_());
   assert.equal(find(1, /^اطلب ستوك بالترتيب/), -1, 'استخبى من الأكشنز');
-  assert.equal(v()[find(1, /^اطلب ستوك\nLip Oil$/)][3], 'تاسك', 'وبقى تاسك');
-  assert.equal(v()[5][6], 'اطلب ستوك\nLip Oil', 'اللي لسه فوق، واللي خلصت تحت');
+  assert.ok(find(1, /^اطلب ستوك\nLip Oil$/) > find(0, /^📝 تاسكاتك اللي لسه/), 'وبقى تاسك');
+  // تاسك بقاله أكتر من يوم ولسه: الصف كله أحمر والكلام أبيض
+  sh.getRange('J7').setValue(d(3));
+  e.c.withLock_(() => e.c.writeAnalysisTab_());
+  const old3 = v().findIndex(r => r[9] === d(3)) + 1;
+  assert.deepEqual([sh.attr(old3, 7).bg, sh.attr(old3, 7).fc, sh.attr(old3, 12).bg], ['#dc2626', '#ffffff', '#dc2626']);
   // التاب القديم (Analysis & Actions) بيتغير اسمه لـ Actions واللي مكتوب فيه بيفضل
   sh.setName('Analysis & Actions');
   e.c.withLock_(() => e.c.writeAnalysisTab_());
   assert.equal(e.ss.getSheetByName('Analysis & Actions'), null);
-  assert.equal(e.ss.getSheetByName('Actions').getRange('G6').getValue(), 'اطلب ستوك\nLip Oil');
-  // التاب بتاع 1.79: المهام في G:K وقبل وبعد في L:O. المهام بتفضل، وكل صف في قبل وبعد بيبقى تاسك خلصت يومها
+  assert.ok(e.ss.getSheetByName('Actions').getRange('G6:G7').getValues().some(r => r[0] === 'اطلب ستوك\nLip Oil'));
+  // التاب بتاع 1.79: المهام في G:K وقبل وبعد في L:O. المهام بتفضل، وكل صف في قبل وبعد بيبقى تاسك خلصت يومها (في Completed Tasks)
   delete e.doc.ANA_LAYOUT;
   sh.getRange(6, 7, Number(e.doc.ANA_ROWS), 14).clearContent();
   sh.getRange('G6:K6').setValues([['تاسك قديم', '🟠 مهم', 'لسه', d(2), '']]);
   sh.getRange('L6:O6').setValues([['وقفت الكامبين الخسرانة', d(3), 'الصرف في اليوم', 'Camp']]);
   e.c.withLock_(() => e.c.writeAnalysisTab_());
-  const old = v().find(r => r[6] === 'وقفت الكامبين الخسرانة');
-  assert.deepEqual(old.slice(6, 15), ['وقفت الكامبين الخسرانة', '🟡 راقب', 'خلصت', d(3), 'من جدول قبل وبعد القديم', 'Camp', '', 'الصرف في اليوم', d(3)]);
+  const old = dv().find(r => r[0] === 'وقفت الكامبين الخسرانة');
+  assert.deepEqual(old.slice(0, 9), ['وقفت الكامبين الخسرانة', '🟡 راقب', 'خلصت', d(3), 'من جدول قبل وبعد القديم', 'Camp', '', 'الصرف في اليوم', d(3)]);
   // قبل: 300 في 3 أيام (100 في اليوم)، بعد: 900 في اليوم، و 3 أيام خلصوا
-  assert.match(String(old[19]), /^الصرف في اليوم\n3 أيام: \+800% زاد\n7 أيام: .* \(لسه\)$/);
+  assert.match(String(old[13]), /^الصرف في اليوم\n3 أيام: \+800% زاد\n7 أيام: .* \(لسه\)$/);
   assert.ok(v().some(r => r[6] === 'تاسك قديم' && r[7] === '🟠 مهم'));
 });
 
@@ -2392,8 +2419,8 @@ test('Analysis: كل 3 ساعات لوحدها قدام نفس الوقت في �
     'في المشاكل المهمة');
   const act = e.ss.getSheetByName('Actions').getDataRange().getValues().find(r => /^راجع الكامبين دي في الوقت ده/.test(String(r[1])));
   assert.equal(act[0], '🟠 مهم');
-  assert.match(act[1], /:\nCamp$/, 'اسم الكامبين في سطر لوحده');
-  assert.match(act[2], /\n• صرف 1,000 وجاب 1 أوردر\nأكتر كامبينات صرفت:\n• Camp\n     صرف 800 وجاب 1 أوردر/);
+  assert.equal(act[2], 'Camp', 'اسم الكامبين في خانة لوحده');
+  assert.match(act[3], /\n• صرف 1,000 وجاب 1 أوردر\nأكتر كامبينات صرفت:\n• Camp\n     صرف 800 وجاب 1 أوردر/);
   // لقطة الكامبينات بتتاخد مع لقطة Today: صرف كل كامبين لحد الساعة دي
   e.c.takeIntraAds_();
   const got = snaps.getDataRange().getValues().slice(1).filter(r => r[0] === today && r[1] !== '9:00' && r[1] !== '12:00');
@@ -2521,7 +2548,7 @@ test('حساب المسجات (Chance 26، accounts.messages_only): مش بيط�
   assert.equal(e.c.msgAccounts_().size, 0);
 });
 
-test('Today: كروت المشاكل فوق (C2:G3): عدد المشاكل من تاب Actions لكل نوع بالأحمر الباهت، والفاضي رمادي، و Scaling بالأخضر', () => {
+test('Today: 6 كروت مشاكل فوق (C2:F4، 2 في الصف): عدد المشاكل من تاب Actions لكل نوع بالأحمر الباهت، والفاضي رمادي، و Scaling بالأخضر، والكارت لينك لقسمه في Actions', () => {
   const probe = env(), today = probe.c.todayKey_(), d = n => probe.c.shiftKey_(today, -n), B = '(blank)';
   const ad = (n, camp, adId, spend) => Object.assign(adRow(d(n), adId, spend), { campaign_id: camp, campaign_name: 'Camp ' + camp,
     adset_id: 'S' + camp, adset_name: 'Set ' + camp, ad_name: 'Ad ' + adId, impressions: '1000', inline_link_clicks: '20', v3: 300 });
@@ -2536,66 +2563,45 @@ test('Today: كروت المشاكل فوق (C2:G3): عدد المشاكل من 
     stock: [['P1', 'V1', 'Lip Oil', 'Default Title', 'LO', 'lip-oil', 40, 300]] });
   fakeShopify(e, [], {});
   Object.assign(e.user, { SHOPIFY_TOKEN: 'TOKEN1', SHOPIFY_TOKEN_EXP: String(Date.now() + 3600000) });
-  const api = [];
-  let chartId = 900;
-  e.c.Sheets = { Spreadsheets: { batchUpdate: body => {
-    api.push(body.requests);
-    const t = e.ss.getSheetByName('Today');
-    return { replies: body.requests.map(r => {
-      if (!r.addChart) return {};
-      const ch = { getChartId: () => ch.id, id: ++chartId, spec: r.addChart.chart.spec, pos: r.addChart.chart.position };
-      (t.charts = t.charts || []).push(ch);
-      return { addChart: { chart: { chartId: ch.id } } };
-    }) };
-  } } };
   e.c.setupAll();
   const st = e.ss.getSheetByName('Settings'), keys = st.getDataRange().getValues().map(r => r[0]);
   st.getRange(keys.indexOf('be.roas') + 1, 2).setValue(2);
+  // الكروت القديمة (10 رسومات scorecard لحد 1.80) بتتشال مرة واحدة
+  const t0 = e.ss.getSheetByName('Today'), oldChart = { getChartId: () => 501 }, otherChart = { getChartId: () => 777 };
+  t0.charts = [oldChart, otherChart];
+  e.doc.TODAY_PROBLEM_CHARTS = JSON.stringify({ camps: 501 });
   e.c.liveTick(); e.c.liveTick();
+  assert.deepEqual(t0.charts, [otherChart], 'الرسمة القديمة اتشالت، والباقي زي ما هو');
+  assert.equal(e.doc.TODAY_PROBLEM_CHARTS, undefined);
 
   const saved = e.c.todayProblems_();
   assert.ok(saved, 'العدد اتحسب مع تاب Actions');
   const acts = e.ss.getSheetByName('Actions').getDataRange().getValues();
-  const campRows = acts.filter(r => r[3] === 'الكامبينات' && /^(🔴|🟠)/.test(String(r[0])));
+  const at = saved.rows.camps, campRows = [];
+  for (let i = at; i < acts.length && !/^الحسابات والـ 3 ساعات/.test(String(acts[i][0])); i++) if (acts[i][4] === false) campRows.push(acts[i]);
+  assert.match(String(acts[at - 1][0]), /^الكامبينات والدوبليكيشن   \(\d+ مشكلة/, 'الكارت بيودّي على عنوان قسمه في Actions');
   assert.ok(campRows.length >= 1, 'فيه كامبين توقفها في Actions');
-  assert.equal(saved.cards.camps.n, campRows.length, 'كارت الكامبينات = مشاكل الكامبينات اللي في Actions');
+  assert.equal(saved.cards.camps.n, campRows.length, 'كارت الكامبينات = مشاكل الكامبينات والدوبليكيشن اللي في Actions');
   assert.ok(saved.cards.camps.urgent >= 1);
   assert.ok(saved.cards.scale.n >= 1, 'C1 كسبانة: فرصة');
-  // الأرقام في الخلايا تحت الكروت: C2:G2 و C2:G3، أبيض على أبيض
-  const tv = e.ss.getSheetByName('Today').getDataRange().getValues();
-  const keysOrder = ['camps', 'acc', 'hours', 'funnel', 'stock', 'cancel', 'dup', 'prod', 'site', 'scale'];
-  assert.deepEqual(tv[1].slice(2, 7).concat(tv[2].slice(2, 7)), keysOrder.map(k => saved.cards[k].n));
-  assert.equal(e.ss.getSheetByName('Today').attr(2, 3).fc, '#ffffff');
-  // الكروت: 10 scorecards فوق، 5 في الصف، من C2
-  const charts = e.ss.getSheetByName('Today').charts.filter(ch => ch.spec.backgroundColorStyle);
-  assert.equal(charts.length, 10);
-  const plain = t => String(t).replace(/[\u200f\u202b\u202c]/g, ''); // العنوان جوه RLM + RLE … PDF عشان العربي مايتلخبطش
-  assert.ok(charts.every(ch => /^\u200f\u202b.*\u202c$/.test(ch.spec.title)));
-  assert.deepEqual(charts.map(ch => ch.spec.titleTextFormat.fontSize).concat(charts[0].spec.scorecardChart.keyValueFormat.textFormat.fontSize), Array(10).fill(12).concat(13),
-    'العنوان كبير والرقم أصغر منه شوية');
-  assert.deepEqual(Array.from(charts.map(ch => plain(ch.spec.title))), ['الكامبينات', 'الحسابات', 'الـ 3 ساعات', 'الفانل والبنشمارك', 'الستوك',
-    'الإلغاء والمحافظات', 'الدوبليكيشن', 'المنتجات والكتالوج', 'الموقع (شوبيفاي)', '🟢 Scaling']);
-  const pos = charts.map(ch => ch.pos.overlayPosition);
-  assert.deepEqual([pos[0].anchorCell.rowIndex, pos[0].anchorCell.columnIndex, pos[4].offsetXPixels, pos[5].offsetXPixels, pos[5].offsetYPixels > pos[0].offsetYPixels],
-    [1, 2, 4 * (124 + 5), 0, true]);
-  const src = charts[0].spec.scorecardChart.keyValueData.sourceRange.sources[0];
-  assert.deepEqual([src.startRowIndex, src.startColumnIndex], [1, 2], 'كارت الكامبينات بيقرا C2');
-  const last = api[api.length - 1], spec = k => last.map(r => (r.updateChartSpec || {}).spec || (r.addChart || {}).chart && r.addChart.chart.spec)
-    .filter(Boolean).find(s => plain(s.title) === k || plain(s.title) === '🟢 ' + k);
-  const bg = s => s.backgroundColorStyle.rgbColor;
-  assert.deepEqual(bg(spec('الكامبينات')), e.c.shopTabRgb_('#fde2e2'), 'فيه مشاكل: أحمر باهت');
-  assert.match(spec('الكامبينات').subtitle, /عاجل/);
-  assert.deepEqual(bg(spec('Scaling')), e.c.shopTabRgb_('#c9ecd2'), 'Scaling أخضر');
-  const zero = keysOrder.findIndex(k => k !== 'scale' && saved.cards[k].n === 0), zt = plain(charts[zero].spec.title);
+  // 6 كروت: كل كارت خانتين جنب بعض (C:D و E:F)، 2 في الصف، من C2 لـ F4
+  const t = e.ss.getSheetByName('Today'), tv = t.getDataRange().getValues();
+  const keysOrder = ['stock', 'camps', 'acc', 'funnel', 'cancel', 'scale'];
+  const cell = i => [2 + Math.floor(i / 2), 3 + (i % 2) * 2];
+  const titles = keysOrder.map((k, i) => String(tv[cell(i)[0] - 1][cell(i)[1] - 1]).split('\n')[0]);
+  assert.deepEqual(titles, ['الستوك والمنتجات', 'الكامبينات والدوبليكيشن', 'الحسابات والـ 3 ساعات', 'الفانل والموقع', 'الإلغاء والمحافظات', '🟢 Scaling']);
+  const camps = t.attr(2, 5);
+  assert.equal(tv[1][4], 'الكامبينات والدوبليكيشن\n' + saved.cards.camps.n + ' مشكلة، منهم ' + saved.cards.camps.urgent + ' عاجل');
+  assert.equal(camps.bg, '#fde2e2', 'فيه مشاكل: أحمر باهت');
+  // العنوان أكبر من السطر اللي تحته، والكارت كله لينك لقسمه في Actions
+  const rt = camps.rich;
+  assert.deepEqual(rt.runs.map(x => x.st.FontSize), [14, 11]);
+  assert.equal(rt.link, '#gid=' + e.ss.getSheetByName('Actions').getSheetId() + '&range=A' + saved.rows.camps);
+  assert.equal(t.attr(4, 5).bg, '#c9ecd2', 'Scaling أخضر');
+  const zero = keysOrder.findIndex(k => k !== 'scale' && saved.cards[k].n === 0);
   assert.ok(zero >= 0, 'فيه نوع من غير مشاكل');
-  assert.deepEqual(bg(spec(zt)), e.c.shopTabRgb_('#f3f4f6'), 'مفيش مشاكل: رمادي');
-  assert.match(spec(zt).subtitle, /مفيش/);
-  const red = keysOrder.filter(k => k !== 'scale' && saved.cards[k].n > 0).map(k => plain(charts[keysOrder.indexOf(k)].spec.title));
-  red.forEach(t => assert.deepEqual(bg(spec(t)), e.c.shopTabRgb_('#fde2e2'), t + ': أحمر باهت'));
-  // التحديث الجاي: الكروت بتتحدث بس، مابتتعملش تاني
-  const n = e.ss.getSheetByName('Today').charts.length;
-  e.c.liveTick();
-  assert.equal(e.ss.getSheetByName('Today').charts.length, n);
+  assert.equal(t.attr(cell(zero)[0], cell(zero)[1]).bg, '#f3f4f6', 'مفيش مشاكل: رمادي');
+  assert.match(String(tv[cell(zero)[0] - 1][cell(zero)[1] - 1]), /\nمفيش ✅$/);
 });
 
 /* تاب Shopify Stock زي اللي الأبليكيشن بيكتبه: [handle, title, price] لكل منتج (منتجات حقيقية من متجر Chance) */

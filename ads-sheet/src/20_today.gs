@@ -529,17 +529,18 @@ function writeToday_() {
   const orders = todayOrders_(today.slice(0, 8) + '01', true), bundles = orderBundlesMap_();
   r = todayProducts_(g, r, 'PRODUCT PERFORMANCE — TODAY | ' + shown, today, today, rows, orders, bundles) + 1;
   todayProducts_(g, r, 'PRODUCT PERFORMANCE — THIS MONTH | ' + month, today.slice(0, 8) + '01', today, rows, orders, bundles);
-  if (cards) todayProblemCells_(g); // the problem cards' numbers, top right of Closing Date (40_today_problems.gs)
+  todayProblemCells_(g); // the problem cards, top right of Closing Date (40_today_problems.gs)
   todayMakeRoom_(g);
   const drew = writeGrid_(sh, g);
   try { todayStockGroups_(sh, g); } catch (e) { console.error('today groups: ' + errText_(e)); }
-  if (!drew) return;
+  if (!drew) { try { todayProblemLinks_(sh, false); } catch (e) { setStatus_('TODAY_CARDS', '✗ كروت المشاكل: ' + errText_(e)); } return; }
   sh.setFrozenRows(0);
   [[1, 150], [2, 210], [3, 120], [4, 130], [5, 130], [6, 130], [7, 130], [8, 24], [9, 300], [10, 260]].forEach(w => sh.setColumnWidth(w[0], w[1]));
   for (let col = 11; col <= TODAY.WIDTH; col++) sh.setColumnWidth(col, 125);
   sh.setColumnWidth(TODAY.RIGHT_COL + 7, 380); sh.setColumnWidth(TODAY.RIGHT_COL + 8, 240); // BOUGHT WITH and BUNDLE in the product tables
   sh.getRange(8 + gap, 1, 1, 7).setWrap(true);
   sh.getRange(1, 1, 6, 9).setFontSize(10); // the cards were cells here before (1.45): back to normal
-  if (cards) todayProblemRows_(sh); else [2, 3].forEach(row => sh.setRowHeight(row, 21));
-  if (cards) { todayCardModeRule_(sh); todayCardCharts_(sh, view); todayProblemCharts_(sh); }
+  todayProblemRows_(sh);
+  try { todayProblemLinks_(sh, true); } catch (e) { setStatus_('TODAY_CARDS', '✗ كروت المشاكل: ' + errText_(e)); }
+  if (cards) { todayCardModeRule_(sh); todayCardCharts_(sh, view); }
 }

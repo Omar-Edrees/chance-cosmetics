@@ -11,7 +11,7 @@
  * Ad accounts and stores are read-only from here: no writes to Meta, TikTok or order sources.
  */
 const APP = {
-  VERSION: '1.81.0',
+  VERSION: '1.82.0',
   T: {
     SETTINGS: 'Settings', ACCOUNTS: 'Accounts', PRODUCTS: 'Products', ADMAP: 'Ad Map',
     ADS: 'Ads Raw', ACC_RAW: 'Account Raw', ORDERS: 'Orders Raw', DAILY: 'Daily Log',
@@ -3592,19 +3592,20 @@ function writeToday_() {
   const orders = todayOrders_(today.slice(0, 8) + '01', true), bundles = orderBundlesMap_();
   r = todayProducts_(g, r, 'PRODUCT PERFORMANCE — TODAY | ' + shown, today, today, rows, orders, bundles) + 1;
   todayProducts_(g, r, 'PRODUCT PERFORMANCE — THIS MONTH | ' + month, today.slice(0, 8) + '01', today, rows, orders, bundles);
-  if (cards) todayProblemCells_(g); // the problem cards' numbers, top right of Closing Date (40_today_problems.gs)
+  todayProblemCells_(g); // the problem cards, top right of Closing Date (40_today_problems.gs)
   todayMakeRoom_(g);
   const drew = writeGrid_(sh, g);
   try { todayStockGroups_(sh, g); } catch (e) { console.error('today groups: ' + errText_(e)); }
-  if (!drew) return;
+  if (!drew) { try { todayProblemLinks_(sh, false); } catch (e) { setStatus_('TODAY_CARDS', '✗ كروت المشاكل: ' + errText_(e)); } return; }
   sh.setFrozenRows(0);
   [[1, 150], [2, 210], [3, 120], [4, 130], [5, 130], [6, 130], [7, 130], [8, 24], [9, 300], [10, 260]].forEach(w => sh.setColumnWidth(w[0], w[1]));
   for (let col = 11; col <= TODAY.WIDTH; col++) sh.setColumnWidth(col, 125);
   sh.setColumnWidth(TODAY.RIGHT_COL + 7, 380); sh.setColumnWidth(TODAY.RIGHT_COL + 8, 240); // BOUGHT WITH and BUNDLE in the product tables
   sh.getRange(8 + gap, 1, 1, 7).setWrap(true);
   sh.getRange(1, 1, 6, 9).setFontSize(10); // the cards were cells here before (1.45): back to normal
-  if (cards) todayProblemRows_(sh); else [2, 3].forEach(row => sh.setRowHeight(row, 21));
-  if (cards) { todayCardModeRule_(sh); todayCardCharts_(sh, view); todayProblemCharts_(sh); }
+  todayProblemRows_(sh);
+  try { todayProblemLinks_(sh, true); } catch (e) { setStatus_('TODAY_CARDS', '✗ كروت المشاكل: ' + errText_(e)); }
+  if (cards) { todayCardModeRule_(sh); todayCardCharts_(sh, view); }
 }
 
 /* ======== 21_actual.gs ======== */
@@ -7576,6 +7577,8 @@ const ANA = {
   TASK_COLS: [['التاسك', 'text'], ['الأولوية', 'pri'], ['الحالة', 'status'], ['اتضافت يوم', 'added'], ['ملاحظات', 'note'], ['الكامبين', 'camp'],
     ['المتريكس اللي تظهر', 'metrics'], ['الأوبتيمايز على', 'opt'], ['اتعملت يوم', 'doneAt'], ['قبل: آخر 3 أيام', 'b3'], ['قبل: آخر 7 أيام', 'b7'],
     ['بعد: 3 أيام', 'a3'], ['بعد: 7 أيام', 'a7'], ['النتيجة', 'res']],
+  // Tasks set to خلصت move to their own tab; an open task added more than LATE_DAYS days ago is all red (LATE_BG, white text).
+  DONE_TAB: 'Completed Tasks', DONE_ROWS_KEY: 'ANA_DONE_ROWS', LATE_DAYS: 1, LATE_BG: '#dc2626',
   LAYOUT_KEY: 'ANA_LAYOUT', TASK_FROZEN_KEY: 'ANA_TASK_FROZEN', TASK_META_KEY: 'ANA_TASK_META',
   FUNNEL_KEY: 'ANA_FUNNEL', DONE_KEY: 'ANA_DONE', ROWS_KEY: 'ANA_ROWS', FIND_KEY: 'ANA_FINDS', PENDING_KEY: 'ANA_PENDING', DONE_DAYS: 7,
   AT_KEY: 'ANA_AT', STALE_MIN: 14,
@@ -7598,7 +7601,7 @@ const ANA = {
   DEFAULT_METRICS: ['الصرف في اليوم', 'الأوردرات في اليوم', 'CPP', 'Shopify ROAS'],
   METRIC_SETS: ['الصرف، الأوردرات، CPP، Shopify ROAS', 'CPM، CTR، CPC، Hook rate', 'CTR، Hook rate، الفريكونسي', 'Shopify ROAS، AOV، التحويل'],
   BIZ: 'البيزنس كله',
-  WIDTHS: [95, 400, 440, 95, 70, 16, 240, 90, 90, 95, 150, 220, 170, 120, 95, 160, 160, 160, 160, 190],
+  WIDTHS: [95, 300, 330, 420, 70, 16, 240, 90, 90, 95, 150, 220, 170, 120, 95, 160, 160, 160, 160, 190],
   DARK: '#1f2937', LABEL: '#f3f4f6', INPUT: '#fffbe6', GREEN: '#d9ead3', RED: '#f4cccc', AMBER: '#fff2cc', GREY: '#6b7280', BLUE: '#e8eefc',
   MONEY: '#,##0', RATIO: '0.00', PCT: '0.0%', COUNT: '0',
   /* What to do when a metric is worse, by its name in Today's benchmark or the Daily Account Funnel. */
@@ -8495,7 +8498,7 @@ function anaJson_(key, big) {
  */
 function anaReadManual_(sh, today) {
   const props = PropertiesService.getDocumentProperties(), n = Number(props.getProperty(ANA.ROWS_KEY) || 0), out = { tasks: [], n: n };
-  const old = props.getProperty(ANA.LAYOUT_KEY) !== '2';
+  const old = ['2', '3'].indexOf(props.getProperty(ANA.LAYOUT_KEY)) < 0;
   if (n > 0 && sh.getLastRow() >= ANA.TOP + 2) {
     sh.getRange(ANA.TOP + 2, ANA.R, n, old ? 12 : ANA.TCOLS).getValues().forEach(v => {
       if (!old) { if (String(v[0]).trim()) out.tasks.push(anaTaskOf_(v, today)); return; }
@@ -8507,11 +8510,17 @@ function anaReadManual_(sh, today) {
       }
     });
   }
+  anaDoneRows_().forEach(v => { if (String(v[0]).trim()) out.tasks.push(anaTaskOf_(v, today)); });
   let pend = [];
   try { pend = JSON.parse(props.getProperty(ANA.PENDING_KEY) || '[]'); } catch (e) { pend = []; }
   pend.forEach(p => { if (Array.isArray(p) && !out.tasks.some(x => x.text === String(p[0]).trim())) out.tasks.push(anaTaskOf_(p, today)); });
   props.deleteProperty(ANA.PENDING_KEY);
   return out;
+}
+/* The rows of the tab "Completed Tasks" (as typed / drawn: the 14 columns of the tasks table). */
+function anaDoneRows_() {
+  const sh = ss_().getSheetByName(ANA.DONE_TAB), n = Number(PropertiesService.getDocumentProperties().getProperty(ANA.DONE_ROWS_KEY) || 0);
+  return sh && n > 0 && sh.getLastRow() >= 3 ? sh.getRange(3, 1, n, ANA.TCOLS).getValues() : [];
 }
 function anaDone_() {
   try { return JSON.parse(PropertiesService.getDocumentProperties().getProperty(ANA.DONE_KEY) || '{}'); } catch (e) { return {}; }
@@ -8555,7 +8564,7 @@ function anaEdit_(name, a1) {
     pend.push(item);
     props.setProperty(ANA.PENDING_KEY, JSON.stringify(pend));
   }
-  sh.getRange(row, 1, 1, 5).setBackground('#e5e7eb');
+  sh.getRange(row, 3, 1, 3).setBackground('#e5e7eb'); // its campaign / product row (A–B may be merged with the rows next to it)
 }
 
 /*
@@ -8565,9 +8574,9 @@ function anaEdit_(name, a1) {
  */
 function refreshTaskMeta_() {
   const props = PropertiesService.getDocumentProperties(), sh = ss_().getSheetByName(ANA.TAB), n = Number(props.getProperty(ANA.ROWS_KEY) || 0);
-  if (!sh || !n || props.getProperty(ANA.LAYOUT_KEY) !== '2' || !accounts_('META').length || !timeLeft_()) return;
+  if (!sh || !n || ['2', '3'].indexOf(props.getProperty(ANA.LAYOUT_KEY)) < 0 || !accounts_('META').length || !timeLeft_()) return;
   const today = todayKey_(), frozen = anaJson_(ANA.TASK_FROZEN_KEY, true), cache = anaJson_(ANA.TASK_META_KEY, true), keep = {}, reqs = [], what = [];
-  const tasks = sh.getRange(ANA.TOP + 2, ANA.R, n, ANA.TCOLS).getValues().map(r => anaTaskOf_(r, today))
+  const tasks = sh.getRange(ANA.TOP + 2, ANA.R, n, ANA.TCOLS).getValues().concat(anaDoneRows_()).map(r => anaTaskOf_(r, today))
     .filter(t => t.text && t.camp && !frozen[anaTaskKey_(t)] && anaTaskMetrics_(t.metrics, t.opt).some(x => x === 'Hook rate' || x === 'الفريكونسي'));
   if (!tasks.length) { propSetBig_(ANA.TASK_META_KEY, '{}'); return; }
   const ids = {};
@@ -8623,8 +8632,8 @@ function writeAnalysisTab_() {
   finds = anaMerge_(finds.filter(f => !seen[f.id] && (seen[f.id] = true)).filter(f => !hidden(f))).filter(f => !hidden(f));
   const M = { bad: finds.filter(f => f.kind === 'bad' && f.pri <= 2), good: finds.filter(f => f.kind === 'good'), watch: finds.filter(f => f.pri === 3) };
   if (errors.length) console.error('Analysis: ' + errors.join(' | '));
-  anaDrawActions_(sh, today, manual, F, M, errors, frozen);
-  try { todayProblemsRefresh_(M); } catch (e) { setStatus_('TODAY_CARDS', '✗ كروت المشاكل: ' + errText_(e)); } // the cards in Today
+  const sections = anaDrawActions_(sh, today, manual, F, M, errors, frozen);
+  try { todayProblemsRefresh_(M, sections); } catch (e) { setStatus_('TODAY_CARDS', '✗ كروت المشاكل: ' + errText_(e)); } // the cards in Today
   anaDrawAnalysis_(ensureTab_(ANA.TAB2), F, P, M, ctx, errors);
   PropertiesService.getDocumentProperties().setProperty(ANA.AT_KEY, String(Date.now()));
   return true;
@@ -8666,98 +8675,103 @@ function anaFindRow_(row, f, verb) {
 }
 
 /*
- * Tab Actions: the urgent and important actions, the best opportunities and your open tasks, with ➕ to make an action a
- * task (a merged action: a title row, then a row with ➕ for each campaign or product in it); and the tasks table, where
- * each task can follow a campaign's metrics before and after it was done.
+ * Tab Actions, A–E: the urgent and important actions and the opportunities, in a section for each card at the top of Today
+ * (TPROB.CARDS: الستوك والمنتجات، الكامبينات والدوبليكيشن ...; the card is a link to its section), then your open tasks.
+ * An action of many campaigns or products: its title once, merged down its rows, and each campaign / product on a row of
+ * its own with its numbers and its own ➕ (it becomes a task). G–T: the open tasks, each able to follow a campaign's
+ * metrics before and after it was done; one added more than a day ago and still open is all red. A task set to خلصت moves
+ * to the tab "Completed Tasks" (ANA.DONE_TAB), with its numbers before and after. Returns {card key: its section's row}.
  */
 function anaDrawActions_(sh, today, manual, F, M, errors, frozen) {
-  const props = PropertiesService.getDocumentProperties(), order = (a, b) => (a.pri - b.pri) || (b.impact - a.impact);
-  const tasks = manual.tasks.slice().sort((a, b) => ((a.status === ANA.STATUS[2]) - (b.status === ANA.STATUS[2])) || (a.pri - b.pri));
+  const props = PropertiesService.getDocumentProperties(), order = (a, b) => (a.pri - b.pri) || (b.impact - a.impact), done = t => t.status === ANA.STATUS[2];
+  const tasks = manual.tasks.filter(t => !done(t)).sort((a, b) => (a.pri - b.pri) || (a.added < b.added ? -1 : a.added > b.added ? 1 : 0));
   const N = Math.max(ANA.MIN_ROWS, tasks.length + ANA.SPARE), first = ANA.TOP + 2;
-  const actions = M.bad.concat(M.good.slice(0, ANA.ACT_GOOD), tasks.map(t => ({ id: 'task|' + sha_(t.text).slice(0, 12), kind: 'task', pri: t.pri,
-    area: 'تاسك', title: t.note || 'مكتوبة بإيدك يوم ' + t.added, action: t.text, impact: 0, status: t.status })).filter(t => t.status !== ANA.STATUS[2])).sort(order);
   const g = todayGrid_(), W = ANA.WIDTH, R = ANA.R, C = ANA.TCOLS, dark = { bg: ANA.DARK, fc: '#ffffff', b: 'bold' };
   g.width = W;
-  g.set(1, 1, 'ACTIONS — تعمل إيه النهارده بالترتيب' + (anaBe_(F) ? '' : ' | مفيش رؤاس تعادل: اكتب be.roas في Settings'), dark);
+  g.set(1, 1, 'ACTIONS — المشاكل مقسمة زي الكروت اللي فوق في Today' + (anaBe_(F) ? '' : ' | مفيش رؤاس تعادل: اكتب be.roas في Settings'), dark);
   g.fill(1, 2, W - 1, { bg: ANA.DARK });
   g.merge(1, 1, 1, W);
-  g.set(2, 1, 'هنا المهم بس: 🔴 عاجل (بيخسرك دلوقتي) و 🟠 مهم، وأحسن ' + ANA.ACT_GOOD + ' فرص 🟢، والتاسكات اللي لسه. ' +
-    'علّم ➕ جنب أي أكشن (أو أي كامبين أو منتج جواه) يبقى تاسك في جدول التاسكات، ويستخبى من هنا ' + ANA.DONE_DAYS + ' أيام. ' +
-    'في التاسك اختار الكامبين والمتريكس والأوبتيمايز على إيه، ولما الحالة تبقى خلصت الشيت يقارن قبل وبعد. اللي محتاج تراقبه بس (🟡) والأرقام كلها في تاب ' + ANA.TAB2 + '.' +
+  g.set(2, 1, 'هنا المهم بس: 🔴 عاجل (بيخسرك دلوقتي) و 🟠 مهم، والفرص 🟢، والتاسكات اللي لسه، كل نوع تحت عنوانه (الكارت بتاعه في Today بيوديك هنا). ' +
+    'علّم ➕ جنب أي كامبين أو منتج يبقى تاسك في جدول التاسكات، ويستخبى من هنا ' + ANA.DONE_DAYS + ' أيام. ' +
+    'التاسك اللي لسه بقاله أكتر من يوم بيبقى أحمر، ولما حالته تبقى خلصت بيروح تاب ' + ANA.DONE_TAB + ' بأرقامه قبل وبعد. اللي محتاج تراقبه بس (🟡) والأرقام كلها في تاب ' + ANA.TAB2 + '.' +
     (errors.length ? '   ⚠️ أجزاء ماتحسبتش: ' + errors.join(' | ') : ''), { fc: '#374151' });
   g.merge(2, 1, 1, W);
   g.set(3, 1, 'آخر تحديث ' + nowText_(), { fc: ANA.GREY });
   g.merge(3, 1, 1, 3);
-  const count = actions.reduce((t, f) => t + (f.n || 1), 0);
-  let r = todayHead_(g, ANA.TOP, 1, 5, 'الأكشنز (' + count + ')', ['الأولوية', 'الأكشن', 'ليه (بالأرقام)', 'القسم', '➕ تاسك']);
-  const findRows = [], pri = f => g.set(r, 1, ANA.PRI[f.pri], { bg: ANA.PRI_BG[f.pri], b: 'bold', al: 'center' });
-  if (!actions.length) { g.set(r, 1, 'مفيش حاجة عاجلة دلوقتي ✅', { fc: ANA.GREY }); g.merge(r, 1, 1, 5); r++; }
-  actions.forEach(f => {
-    if (f.kind === 'task') {
-      pri(f);
-      g.set(r, 2, f.action, { b: 'bold' }); g.set(r, 3, f.title, {}); g.set(r, 4, f.area, { al: 'center', fc: ANA.GREY });
-      r++;
-      return;
-    }
-    if (!f.subs) {
-      pri(f);
-      g.set(r, 2, anaDo_(f), { b: 'bold' }); g.set(r, 3, anaWhy_(f), {}); g.set(r, 4, f.area, { al: 'center', fc: ANA.GREY });
-      g.set(r, 5, false, { al: 'center' });
-      findRows.push(anaFindRow_(r, f));
-      r++;
-      return;
-    }
-    // A merged action: its title, then each campaign / product on its own row with its own ➕.
-    g.set(r, 1, '', { bg: ANA.PRI_BG[f.pri] });
-    g.set(r, 2, f.head + ':', { b: 'bold', bg: ANA.LABEL }); g.set(r, 3, '', { bg: ANA.LABEL }); g.set(r, 4, '', { bg: ANA.LABEL }); g.set(r, 5, '', { bg: ANA.LABEL });
+  const sections = TPROB.CARDS.map(c => ({ key: c[0], title: c[1], list: todayProblemList_(c, M).slice().sort(order) }));
+  sections.push({ key: 'tasks', title: '📝 تاسكاتك اللي لسه', list: tasks.map(t => ({ kind: 'task', pri: t.pri, title: t.note || 'مكتوبة بإيدك يوم ' + t.added,
+    action: t.text, camp: t.camp })) });
+  const count = sections.reduce((t, x) => t + x.list.reduce((s, f) => s + (f.n || 1), 0), 0);
+  let r = todayHead_(g, ANA.TOP, 1, 5, 'الأكشنز (' + count + ')', ['الأولوية', 'المشكلة وتعمل إيه', 'الكامبين / المنتج', 'ليه (بالأرقام)', '➕ تاسك']);
+  const findRows = [], rows = {}, bands = [], mid = { va: 'middle', wr: true };
+  // Priority (A) and the action (B) once, merged down the rows of its campaigns / products.
+  const block = (f, n, what) => {
+    g.set(r, 1, ANA.PRI[f.pri], { bg: ANA.PRI_BG[f.pri], b: 'bold', al: 'center', va: 'middle' });
+    g.set(r, 2, what, { b: 'bold', va: 'middle', wr: true });
+    for (let i = 1; i < n; i++) { g.set(r + i, 1, '', { bg: ANA.PRI_BG[f.pri] }); g.set(r + i, 2, ''); }
+    if (n > 1) { g.merge(r, 1, n, 1); g.merge(r, 2, n, 1); }
+  };
+  sections.forEach(x => {
+    const n = x.list.reduce((s, f) => s + (f.n || 1), 0), urgent = x.list.filter(f => f.pri === 1).reduce((s, f) => s + (f.n || 1), 0);
+    rows[x.key] = r;
+    g.set(r, 1, x.title + (x.key === 'scale' ? '   (' + n + ' فرصة)' : x.key === 'tasks' ? '   (' + n + ')' : '   (' + n + ' مشكلة' + (urgent ? '، منهم ' + urgent + ' عاجل' : '') + ')'),
+      { bg: x.key === 'scale' ? '#166534' : x.key === 'tasks' ? '#374151' : n ? '#7f1d1d' : '#6b7280', fc: '#ffffff', b: 'bold', va: 'middle' });
+    g.fill(r, 2, 4, { bg: g.cell(r, 1).bg });
+    g.merge(r, 1, 1, 5);
+    bands.push(r);
     r++;
-    f.subs.slice(0, ANA.ACT_ITEMS).forEach(x => {
-      pri(f);
-      g.set(r, 2, f.verb + '\n' + x.label, { b: 'bold' }); g.set(r, 3, anaWhy_(x), {}); g.set(r, 4, x.area, { al: 'center', fc: ANA.GREY });
-      g.set(r, 5, false, { al: 'center' });
-      findRows.push(anaFindRow_(r, x, f.verb));
-      r++;
+    if (!x.list.length) { g.set(r, 1, x.key === 'scale' ? 'مفيش فرص دلوقتي' : x.key === 'tasks' ? 'مفيش تاسكات لسه' : 'مفيش مشاكل هنا دلوقتي ✅', { fc: ANA.GREY }); g.merge(r, 1, 1, 5); r++; return; }
+    x.list.forEach(f => {
+      if (f.kind === 'task') {
+        block(f, 1, f.action);
+        g.set(r, 3, f.camp || '', mid); g.set(r, 4, f.title, mid);
+        r++;
+        return;
+      }
+      if (!f.subs) {
+        block(f, 1, f.action + (f.more ? '\n' + f.more : ''));
+        g.set(r, 3, f.item || (f.scope && f.scope !== ANA.BIZ ? f.scope : ''), mid);
+        g.set(r, 4, String(f.title || '').replace(/:$/, '') + (f.detail ? '\n' + f.detail : ''), mid);
+        g.set(r, 5, false, { al: 'center', va: 'middle' });
+        findRows.push(anaFindRow_(r, f));
+        r++;
+        return;
+      }
+      const subs = f.subs.slice(0, ANA.ACT_ITEMS), more = f.subs.length - subs.length;
+      block(f, subs.length + (more > 0 ? 1 : 0), f.head + '\n' + f.verb);
+      subs.forEach(y => {
+        g.set(r, 3, y.label, Object.assign({ b: 'bold' }, mid));
+        g.set(r, 4, y.detail || String(y.title || '').replace(/:$/, ''), mid);
+        g.set(r, 5, false, { al: 'center', va: 'middle' });
+        findRows.push(anaFindRow_(r, y, f.verb));
+        r++;
+      });
+      if (more > 0) { g.set(r, 3, 'و ' + more + ' كمان في تاب ' + ANA.TAB2, { fc: ANA.GREY, va: 'middle' }); r++; }
     });
-    if (f.subs.length > ANA.ACT_ITEMS) { g.set(r, 2, 'و ' + (f.subs.length - ANA.ACT_ITEMS) + ' كمان في تاب ' + ANA.TAB2, { fc: ANA.GREY }); r++; }
   });
   if (M.watch.length) { g.set(r, 1, '🟡 ' + M.watch.length + ' حاجة تتراقب بس (من غير أكشن دلوقتي): في تاب ' + ANA.TAB2, { fc: ANA.GREY }); g.merge(r, 1, 1, 5); }
 
   todayHead_(g, ANA.TOP, R, C, 'التاسكات — اكتب التاسك هنا، أو علّم ➕ جنب أي أكشن', ANA.TASK_COLS.map(x => x[0]));
-  const H = Number(Utilities.formatDate(new Date(), tz_(), 'H')), Mi = Number(Utilities.formatDate(new Date(), tz_(), 'm')), dayPart = (H + Mi / 60) / 24;
-  const meta = anaJson_(ANA.TASK_META_KEY, true), keepFrozen = {};
-  const metaOf = (camp, w) => { const p = camp.split('|'); return p[0] === 'META' ? meta[p[1] + '|' + w.from + '|' + w.to] || null : null; };
+  const nums = anaTaskNumbers_(F, frozen, today), late = shiftKey_(today, -ANA.LATE_DAYS);
   for (let i = 0; i < N; i++) {
-    const t = tasks[i], row = first + i, inp = { bg: ANA.INPUT, va: 'middle' }, mid = { va: 'middle' };
-    if (t) {
-      const closed = t.status === ANA.STATUS[2], st = closed ? { bg: '#e5e7eb', fc: ANA.GREY, va: 'middle' } : inp, key = anaTaskKey_(t);
-      let v = frozen[key];
-      if (!v) { v = anaTaskNums_(F, t, metaOf, dayPart); if (v.full) keepFrozen[key] = v; } else keepFrozen[key] = v;
-      g.set(row, R, t.text, Object.assign({ b: closed ? 'normal' : 'bold', wr: true }, st));
-      g.set(row, R + 1, ANA.PRI[t.pri], Object.assign({ al: 'center' }, closed ? st : { bg: ANA.PRI_BG[t.pri], va: 'middle' }));
-      g.set(row, R + 2, t.status, Object.assign({ al: 'center' }, st));
-      g.set(row, R + 3, t.added, Object.assign({ al: 'center' }, st));
-      g.set(row, R + 4, t.note, Object.assign({ wr: true }, st));
-      g.set(row, R + 5, t.camp, Object.assign({ wr: true }, inp));
-      g.set(row, R + 6, t.metrics, Object.assign({ wr: true }, inp));
-      g.set(row, R + 7, t.opt, Object.assign({ al: 'center' }, inp));
-      g.set(row, R + 8, t.doneAt, Object.assign({ al: 'center' }, inp));
-      ['b3', 'b7', 'a3', 'a7'].forEach((k, j) => g.set(row, R + 9 + j, v[k], Object.assign({ wr: true, fc: /^(اختار|مش لاقي|لما)/.test(v[k]) ? ANA.GREY : '#000000' }, mid)));
-      g.set(row, R + 13, v.res, { wr: true, b: 'bold', va: 'middle', bg: v.good === true ? ANA.GREEN : v.good === false ? ANA.RED : null });
-    } else { g.fill(row, R, 9, inp); g.fill(row, R + 9, 5, mid); }
+    const t = tasks[i], row = first + i, inp = { bg: ANA.INPUT, va: 'middle' };
+    if (t) anaTaskRow_(g, row, R, t, nums(t), t.added < late ? { bg: ANA.LATE_BG, fc: '#ffffff', va: 'middle' } : null);
+    else { g.fill(row, R, 9, inp); g.fill(row, R + 9, 5, { va: 'middle' }); }
     g.cell(row, R + 3).nf = '@'; // dates stay as typed text (2026-11-21)
     g.cell(row, R + 8).nf = '@';
   }
-  propSetBig_(ANA.TASK_FROZEN_KEY, JSON.stringify(keepFrozen));
   g.live = [[3, 1]];
   anaRtl_(g);
   const oldN = Number(props.getProperty(ANA.ROWS_KEY) || 0);
   let oldFinds = [];
   try { oldFinds = JSON.parse(propGetBig_(ANA.FIND_KEY) || '[]'); } catch (e) { oldFinds = []; }
-  const drew = writeGrid_(sh, g), relaid = props.getProperty(ANA.LAYOUT_KEY) !== '2';
+  const drew = writeGrid_(sh, g), relaid = props.getProperty(ANA.LAYOUT_KEY) !== '3';
   props.setProperty(ANA.ROWS_KEY, String(N));
-  props.setProperty(ANA.LAYOUT_KEY, '2');
+  props.setProperty(ANA.LAYOUT_KEY, '3');
   propSetBig_(ANA.FIND_KEY, JSON.stringify(findRows));
-  if (!drew && !relaid) return;
+  anaDrawDone_(manual.tasks.filter(done), nums);
+  propSetBig_(ANA.TASK_FROZEN_KEY, JSON.stringify(nums.keep));
+  if (!drew && !relaid) return rows;
   // The ➕ boxes and the lists to choose from, where the rows are now.
   const lastOld = Math.max(oldFinds.length ? oldFinds[oldFinds.length - 1].row : 0, sh.getLastRow());
   if (lastOld >= ANA.TOP) sh.getRange(ANA.TOP, 5, lastOld - ANA.TOP + 1, 1).setDataValidation(null);
@@ -8768,20 +8782,92 @@ function anaDrawActions_(sh, today, manual, F, M, errors, frozen) {
     i = k;
   }
   sh.getRange(first, R, Math.max(N, oldN), C).setDataValidation(null);
+  anaTaskLists_(sh, first, R, N, F, today);
+  ANA.WIDTHS.forEach((w, i) => sh.setColumnWidth(i + 1, w));
+  sh.getRange(1, 2, sh.getMaxRows(), 2).setWrap(true);
+  anaLook_(sh, g, W);
+  sh.getRange(ANA.TOP + 2, 1, Math.max(r - ANA.TOP - 2, 1), 5).setVerticalAlignment('middle');
+  bands.forEach(b => sh.getRange(b, 1, 1, 5).setFontSize(13)); // the sections' titles bigger than the rows under them
+  sh.getRange(first, R, N, C).setVerticalAlignment('middle');
+  return rows;
+}
+
+/* The lists to choose from in a tasks table (rows first … first + N − 1, from column c): priority, status, campaign, metrics. */
+function anaTaskLists_(sh, first, c, N, F, today) {
   const list = (vals, bad) => SpreadsheetApp.newDataValidation().requireValueInList(vals.slice(0, 500), true).setAllowInvalid(!!bad).build();
   const spent = k => anaSum_(F.camp[k], shiftKey_(today, -14), today).spend;
   const scopes = Object.keys(F.campName).filter(k => spent(k) > 0).sort((a, b) => spent(b) - spent(a)).map(k => F.campName[k])
     .concat([ANA.BIZ], Object.keys(F.accName).map(id => F.accName[id]),
       Object.keys(F.items).filter(n => anaSum_(F.items[n], shiftKey_(today, -30), today).orders >= 3).sort());
-  sh.getRange(first, R + 1, N, 1).setDataValidation(list([1, 2, 3, 4].map(k => ANA.PRI[k])));
-  sh.getRange(first, R + 2, N, 1).setDataValidation(list(ANA.STATUS));
-  sh.getRange(first, R + 5, N, 1).setDataValidation(list(Array.from(new Set(scopes)), true));
-  sh.getRange(first, R + 6, N, 1).setDataValidation(list(ANA.METRIC_SETS.concat([ANA.ALL_METRICS], ANA.TMETRICS.map(x => x[0])), true));
-  sh.getRange(first, R + 7, N, 1).setDataValidation(list(ANA.TMETRICS.map(x => x[0])));
-  ANA.WIDTHS.forEach((w, i) => sh.setColumnWidth(i + 1, w));
-  sh.getRange(1, 2, sh.getMaxRows(), 2).setWrap(true);
-  anaLook_(sh, g, W);
-  sh.getRange(first, R, N, C).setVerticalAlignment('middle');
+  sh.getRange(first, c + 1, N, 1).setDataValidation(list([1, 2, 3, 4].map(k => ANA.PRI[k])));
+  sh.getRange(first, c + 2, N, 1).setDataValidation(list(ANA.STATUS));
+  sh.getRange(first, c + 5, N, 1).setDataValidation(list(Array.from(new Set(scopes)), true));
+  sh.getRange(first, c + 6, N, 1).setDataValidation(list(ANA.METRIC_SETS.concat([ANA.ALL_METRICS], ANA.TMETRICS.map(x => x[0])), true));
+  sh.getRange(first, c + 7, N, 1).setDataValidation(list(ANA.TMETRICS.map(x => x[0])));
+}
+
+/*
+ * A task's numbers before / after (anaTaskNums_), kept for good once its 7 days after are over: nums(t) for each task drawn,
+ * and nums.keep = what to keep (ANA.TASK_FROZEN_KEY).
+ */
+function anaTaskNumbers_(F, frozen, today) {
+  const H = Number(Utilities.formatDate(new Date(), tz_(), 'H')), Mi = Number(Utilities.formatDate(new Date(), tz_(), 'm')), dayPart = (H + Mi / 60) / 24;
+  const meta = anaJson_(ANA.TASK_META_KEY, true), keep = {};
+  const metaOf = (camp, w) => { const p = camp.split('|'); return p[0] === 'META' ? meta[p[1] + '|' + w.from + '|' + w.to] || null : null; };
+  const nums = t => {
+    const key = anaTaskKey_(t);
+    let v = frozen[key];
+    if (!v) { v = anaTaskNums_(F, t, metaOf, dayPart); if (v.full) keep[key] = v; } else keep[key] = v;
+    return v;
+  };
+  nums.keep = keep;
+  return nums;
+}
+/* One task on row `row` from column c (the 14 columns of ANA.TASK_COLS). paint: the whole row's colors (a late task), or null. */
+function anaTaskRow_(g, row, c, t, v, paint) {
+  const closed = t.status === ANA.STATUS[2], inp = { bg: ANA.INPUT, va: 'middle' }, mid = { va: 'middle' };
+  const st = paint || (closed ? { bg: '#e5e7eb', fc: ANA.GREY, va: 'middle' } : inp), box = paint || inp;
+  g.set(row, c, t.text, Object.assign({ b: closed ? 'normal' : 'bold', wr: true }, st));
+  g.set(row, c + 1, ANA.PRI[t.pri], Object.assign({ al: 'center' }, paint || (closed ? st : { bg: ANA.PRI_BG[t.pri], va: 'middle' })));
+  g.set(row, c + 2, t.status, Object.assign({ al: 'center' }, st));
+  g.set(row, c + 3, t.added, Object.assign({ al: 'center' }, st));
+  g.set(row, c + 4, t.note, Object.assign({ wr: true }, st));
+  g.set(row, c + 5, t.camp, Object.assign({ wr: true }, box));
+  g.set(row, c + 6, t.metrics, Object.assign({ wr: true }, box));
+  g.set(row, c + 7, t.opt, Object.assign({ al: 'center' }, box));
+  g.set(row, c + 8, t.doneAt, Object.assign({ al: 'center' }, box));
+  ['b3', 'b7', 'a3', 'a7'].forEach((k, j) => g.set(row, c + 9 + j, v[k],
+    Object.assign({ wr: true, fc: paint ? '#ffffff' : /^(اختار|مش لاقي|لما)/.test(v[k]) ? ANA.GREY : '#000000' }, paint || mid)));
+  g.set(row, c + 13, v.res, Object.assign({ wr: true, b: 'bold', va: 'middle', bg: v.good === true ? ANA.GREEN : v.good === false ? ANA.RED : null },
+    paint && v.good !== true && v.good !== false ? paint : {}));
+}
+
+/*
+ * Tab "Completed Tasks": every task set to خلصت, the newest done first, with its numbers before and after (the after keeps
+ * filling for 7 days, then stays). The same columns as the tasks table: what's typed here is read back, so setting a task's
+ * status back to لسه or شغال فيها brings it back to Actions.
+ */
+function anaDrawDone_(list, nums) {
+  const sh = ensureTab_(ANA.DONE_TAB), C = ANA.TCOLS, props = PropertiesService.getDocumentProperties();
+  const tasks = list.slice().sort((a, b) => (a.doneAt < b.doneAt ? 1 : a.doneAt > b.doneAt ? -1 : 0));
+  const g = todayGrid_(), N = Math.max(tasks.length, 1);
+  g.width = C;
+  todayHead_(g, 1, 1, C, 'COMPLETED TASKS — التاسكات اللي خلصت (' + tasks.length + ')، بأرقامها قبل وبعد. غيّر الحالة لـ لسه ترجع لتاب Actions', ANA.TASK_COLS.map(x => x[0]));
+  if (!tasks.length) { g.set(3, 1, 'لسه مفيش تاسكات خلصت', { fc: ANA.GREY }); g.merge(3, 1, 1, C); }
+  tasks.forEach((t, i) => {
+    anaTaskRow_(g, 3 + i, 1, t, nums(t), null);
+    g.cell(3 + i, 4).nf = '@'; g.cell(3 + i, 9).nf = '@';
+  });
+  anaRtl_(g);
+  const oldN = Number(props.getProperty(ANA.DONE_ROWS_KEY) || 0);
+  const drew = writeGrid_(sh, g);
+  props.setProperty(ANA.DONE_ROWS_KEY, String(tasks.length));
+  if (!drew) return;
+  sh.getRange(3, 1, Math.max(N, oldN), C).setDataValidation(null);
+  if (tasks.length) sh.getRange(3, 3, tasks.length, 1).setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(ANA.STATUS, true).build());
+  ANA.WIDTHS.slice(ANA.R - 1).forEach((w, i) => sh.setColumnWidth(i + 1, w));
+  anaLook_(sh, g, C);
+  sh.getRange(3, 1, N, C).setVerticalAlignment('middle');
 }
 
 /*
@@ -9338,44 +9424,45 @@ function refreshAnalysisNow() {
 
 /* ======== 40_today_problems.gs ======== */
 /*
- * Today: small cards in the empty space at the top (rows 2–6, columns C–G, right of Closing Date ... Orders Source), like the
- * Shopify cards but smaller. One card per kind of problem with how many problems of that kind the Actions tab has now (🔴 عاجل
- * and 🟠 مهم; a merged action "4 منتجات ..." counts 4), pale red, or grey when there are none; and a green Scaling card with
- * the opportunities (🟢). So a glance at Today says where the problems are, and the Actions tab says what they are and
- * what to do.
- * The numbers are counted when the Actions tab is drawn (writeAnalysisTab_), saved in TPROB.KEY, and written in the cells
- * under the cards (white on white: a scorecard reads cells), both then and every time Today is drawn. The cards are
- * scorecard charts (the Sheets API, like the Shopify cards): made once, after that only their colors and subtitle change,
- * so a card moved or sized by hand stays so. Without the Sheets API service there are no cards (Today says so already).
+ * Today: 6 cards at the top (rows 2–4, columns C–F, right of Closing Date ... Orders Source), 2 a row, each a wide colored
+ * cell: the kind of problem big and bold, and under it how many problems of that kind the Actions tab has now (🔴 عاجل and
+ * 🟠 مهم; a merged action "4 منتجات ..." counts 4) and how many are urgent. Pale red with problems, grey without, and the
+ * Scaling card green with the opportunities (🟢). The whole card is a link to its section in the Actions tab, so one click
+ * on the card (then on the link) shows those problems with what to do.
+ * The counts and the section rows are saved when the Actions tab is drawn (writeAnalysisTab_) in TPROB.KEY, and written in
+ * the cards both then and every time Today is drawn. Plain cells (no Sheets API): until 1.81 the cards were 10 scorecard
+ * charts, which can't be clicked; those are removed once (TPROB.OLD_CHARTS).
  */
 const TPROB = {
-  KEY: 'TODAY_PROBLEMS', CHART_KEY: 'TODAY_PROBLEM_CHARTS',
-  /* The cards' cells: rows ROW and ROW + 1, columns COL.. COL + PER_ROW − 1 (C–G), under the cards. */
-  ROW: 2, COL: 3, PER_ROW: 5, ROWS: [2, 3, 4, 5, 6], ROW_H: 28, W: 124, H: 66, GAP: 5,
-  RED: '#fde2e2', NONE: '#f3f4f6', GREEN: '#c9ecd2', RED_FC: '#991b1b', GREEN_FC: '#166534', GREY_FC: '#6b7280',
-  /* [key, title, the Analysis areas it counts] — the order of the cards. 'scale' = every opportunity (🟢). */
+  KEY: 'TODAY_PROBLEMS', OLD_CHARTS: 'TODAY_PROBLEM_CHARTS', SIG: 'TODAY_PROBLEM_SIG',
+  /* Card i: row ROW + ⌊i / PER_ROW⌋, columns COL + (i % PER_ROW) × SPAN, SPAN columns wide (C:D and E:F). */
+  ROW: 2, COL: 3, PER_ROW: 2, SPAN: 2, ROW_H: 54, PLAIN_H: 21, LAST_ROW: 6, TITLE_PT: 14, SUB_PT: 11,
+  RED: '#fde2e2', NONE: '#f3f4f6', GREEN: '#c9ecd2', RED_FC: '#991b1b', GREEN_FC: '#166534', GREY_FC: '#6b7280', TITLE_FC: '#111827',
+  /* [key, title, the Analysis areas it counts] — the order of the cards and of the sections in Actions. 'scale' = every opportunity (🟢). */
   CARDS: [
-    ['camps', 'الكامبينات', ['الكامبينات']],
-    ['acc', 'الحسابات', ['الحسابات']],
-    ['hours', 'الـ 3 ساعات', ['الـ 3 ساعات']],
-    ['funnel', 'الفانل والبنشمارك', ['الفانل', 'البنشمارك']],
-    ['stock', 'الستوك', ['الستوك']],
+    ['stock', 'الستوك والمنتجات', ['الستوك', 'المنتجات', 'الكتالوج']],
+    ['camps', 'الكامبينات والدوبليكيشن', ['الكامبينات', 'الدوبليكيشن']],
+    ['acc', 'الحسابات والـ 3 ساعات', ['الحسابات', 'الـ 3 ساعات']],
+    ['funnel', 'الفانل والموقع', ['الفانل', 'البنشمارك', 'شوبيفاي']],
     ['cancel', 'الإلغاء والمحافظات', ['الإلغاء', 'المحافظات']],
-    ['dup', 'الدوبليكيشن', ['الدوبليكيشن']],
-    ['prod', 'المنتجات والكتالوج', ['المنتجات', 'الكتالوج']],
-    ['site', 'الموقع (شوبيفاي)', ['شوبيفاي']],
-    ['scale', 'Scaling', null]
+    ['scale', '🟢 Scaling', null]
   ]
 };
 
-/* From the Actions tab's findings (M of writeAnalysisTab_): {day, at, cards: {key: {n, urgent}}}, saved for Today. */
-function todayProblemsSave_(M) {
+/* The findings of card c (M of writeAnalysisTab_). */
+function todayProblemList_(c, M) { return c[2] ? M.bad.filter(f => c[2].indexOf(f.area) >= 0) : M.good; }
+/*
+ * From the Actions tab's findings: {day, at, cards: {key: {n, urgent}}, rows: {key: its section's row in Actions}, gid},
+ * saved for Today.
+ */
+function todayProblemsSave_(M, rows) {
   const cards = {}, n = f => f.n || 1;
   TPROB.CARDS.forEach(c => {
-    const list = c[2] ? M.bad.filter(f => c[2].indexOf(f.area) >= 0) : M.good;
+    const list = todayProblemList_(c, M);
     cards[c[0]] = { n: list.reduce((s, f) => s + n(f), 0), urgent: list.filter(f => f.pri === 1).reduce((s, f) => s + n(f), 0) };
   });
-  const out = { day: todayKey_(), at: nowText_(), cards: cards };
+  const tab = ss_().getSheetByName(ANA.TAB);
+  const out = { day: todayKey_(), at: nowText_(), cards: cards, rows: rows || {}, gid: tab ? tab.getSheetId() : null };
   PropertiesService.getDocumentProperties().setProperty(TPROB.KEY, JSON.stringify(out));
   return out;
 }
@@ -9384,67 +9471,77 @@ function todayProblems_() {
   try { const x = JSON.parse(PropertiesService.getDocumentProperties().getProperty(TPROB.KEY) || 'null'); return x && x.day === todayKey_() ? x : null; }
   catch (e) { return null; }
 }
-/* Card i's cell (row, column) under the cards. */
-function todayProblemCell_(i) { return [TPROB.ROW + Math.floor(i / TPROB.PER_ROW), TPROB.COL + (i % TPROB.PER_ROW)]; }
-/* The numbers in the cells, white on white (in Today's page g). */
-function todayProblemCells_(g) {
-  const x = todayProblems_(), hide = { fc: '#ffffff', bg: '#ffffff', nf: '0', al: 'center' };
-  TPROB.CARDS.forEach((c, i) => { const at = todayProblemCell_(i); g.set(at[0], at[1], x ? x.cards[c[0]].n : '', hide); });
+/* Card i's top-left cell (row, column). */
+function todayProblemCell_(i) { return [TPROB.ROW + Math.floor(i / TPROB.PER_ROW), TPROB.COL + (i % TPROB.PER_ROW) * TPROB.SPAN]; }
+/* Card c as {title, sub, text (both lines), bg, fc, link}. x = the saved counts (or null). */
+function todayProblemCard_(c, x) {
+  const T = TPROB, v = x ? x.cards[c[0]] : null, scale = !c[2];
+  const bg = !v ? T.NONE : scale ? (v.n ? T.GREEN : T.NONE) : v.n > 0 ? T.RED : T.NONE, fc = !v || !v.n ? T.GREY_FC : scale ? T.GREEN_FC : T.RED_FC;
+  const sub = !v ? 'لسه بيتحسب' : scale ? (v.n ? v.n + ' فرصة تزوّد عليها' : 'مفيش دلوقتي')
+    : !v.n ? 'مفيش ✅' : v.n + ' مشكلة' + (v.urgent ? '، منهم ' + v.urgent + ' عاجل' : '');
+  const row = x && x.rows ? x.rows[c[0]] : null, link = x && x.gid !== null && x.gid !== undefined && row ? '#gid=' + x.gid + '&range=A' + row : '';
+  return { title: c[1], sub: sub, text: c[1] + '\n' + sub, bg: bg, fc: fc, link: link };
 }
-/* A card's chart spec: the title, the count from its cell, red / grey / green, and what the count means under it. */
-function todayProblemSpec_(c, i, sheetId, x) {
-  const T = TPROB, at = todayProblemCell_(i), v = x ? x.cards[c[0]] : null, scale = !c[2];
-  const bg = !v ? T.NONE : scale ? T.GREEN : v.n > 0 ? T.RED : T.NONE, fc = !v || !v.n ? T.GREY_FC : scale ? T.GREEN_FC : T.RED_FC;
-  // RLM + RLE … PDF: the chart writes left to right, and without them the Arabic and the numbers come out jumbled.
-  const sub = !v ? 'لسه بيتحسب' : scale ? (v.n ? 'فرص تزوّد عليها' : 'مفيش دلوقتي') : !v.n ? 'مفيش ✅' : v.urgent ? v.urgent + ' عاجل' : 'مهم';
-  return { title: '‏‫' + (scale ? '🟢 ' : '') + c[1] + '‬', subtitle: '‏‫' + sub + '‬', fontName: 'Arial',
-    backgroundColorStyle: { rgbColor: shopTabRgb_(bg) },
-    // The title big and clear (where the problem is), the count smaller under it.
-    titleTextFormat: { bold: true, fontSize: 12, foregroundColor: shopTabRgb_('#111827') }, titleTextPosition: { horizontalAlignment: 'CENTER' },
-    subtitleTextFormat: { bold: true, fontSize: 9, foregroundColor: shopTabRgb_(fc) }, subtitleTextPosition: { horizontalAlignment: 'CENTER' },
-    scorecardChart: { keyValueData: { sourceRange: { sources: [{ sheetId: sheetId, startRowIndex: at[0] - 1, endRowIndex: at[0], startColumnIndex: at[1] - 1,
-      endColumnIndex: at[1] }] } }, numberFormatSource: 'FROM_DATA',
-      keyValueFormat: { textFormat: { bold: true, fontSize: 13, foregroundColor: shopTabRgb_(fc) }, position: { horizontalAlignment: 'CENTER' } } } };
-}
-/* Makes the missing cards and updates the others (after Today is written). Errors go to Health with the other cards. */
-function todayProblemCharts_(sh) {
-  if (!todayCardsReady_()) return;
-  const T = TPROB, props = PropertiesService.getDocumentProperties(), sheetId = sh.getSheetId(), x = todayProblems_();
-  let ids = {};
-  try { ids = JSON.parse(props.getProperty(T.CHART_KEY) || '{}'); } catch (e) { ids = {}; }
-  const have = new Set(sh.getCharts().map(c => String(c.getChartId()))), reqs = [], made = [];
-  T.CARDS.forEach((c, i) => {
-    const spec = todayProblemSpec_(c, i, sheetId, x), id = ids[c[0]];
-    if (id !== undefined && have.has(String(id))) { reqs.push({ updateChartSpec: { chartId: id, spec: spec } }); return; }
-    made.push([reqs.length, c[0]]);
-    reqs.push({ addChart: { chart: { spec: spec, position: { overlayPosition: {
-      anchorCell: { sheetId: sheetId, rowIndex: T.ROW - 1, columnIndex: T.COL - 1 },
-      offsetXPixels: (i % T.PER_ROW) * (T.W + T.GAP), offsetYPixels: 2 + Math.floor(i / T.PER_ROW) * (T.H + T.GAP),
-      widthPixels: T.W, heightPixels: T.H } } } } });
-  });
-  const sig = sha_(JSON.stringify(reqs));
-  if (!made.length && props.getProperty(T.CHART_KEY + '_SIG') === sig) return;
-  try {
-    const res = Sheets.Spreadsheets.batchUpdate({ requests: reqs }, ss_().getId());
-    made.forEach(m => { const r = (res.replies || [])[m[0]] || {}; if (r.addChart) ids[m[1]] = r.addChart.chart.chartId; });
-    props.setProperty(T.CHART_KEY, JSON.stringify(ids));
-    props.setProperty(T.CHART_KEY + '_SIG', sig);
-  } catch (e) { setStatus_('TODAY_CARDS', '✗ كروت المشاكل: ' + errText_(e)); }
-}
-/* Today's rows under the cards, tall enough for two rows of them (after Today is redrawn). */
-function todayProblemRows_(sh) { TPROB.ROWS.forEach(r => sh.setRowHeight(r, TPROB.ROW_H)); }
 /*
- * After the Actions tab is drawn: the counts saved, written in Today's cells and the cards updated at once (not on the next
- * update). Today's own drawing writes the same numbers from what's saved.
+ * The cards' place in Today's page g: merged cells only. What's on them (text, colors, link) is written by
+ * todayProblemLinks_, so a new count changes those cells only and never redraws the whole of Today.
  */
-function todayProblemsRefresh_(M) {
-  todayProblemsSave_(M);
+function todayProblemCells_(g) {
+  TPROB.CARDS.forEach((c, i) => {
+    const at = todayProblemCell_(i);
+    g.set(at[0], at[1], '', { al: 'center', va: 'middle', wr: true });
+    g.fill(at[0], at[1] + 1, TPROB.SPAN - 1, { va: 'middle' });
+    g.merge(at[0], at[1], 1, TPROB.SPAN);
+  });
+}
+/*
+ * The cards' look that a page can't hold: the title bigger than the count under it, the whole card a link to its section
+ * in Actions, and white borders between the cards. Written when Today was redrawn (it writes the plain text) or when
+ * anything on the cards changed.
+ */
+function todayProblemLinks_(sh, redrawn) {
+  const T = TPROB, x = todayProblems_(), props = PropertiesService.getDocumentProperties();
+  const cards = T.CARDS.map(c => todayProblemCard_(c, x)), sig = sha_(JSON.stringify(cards));
+  todayProblemOldCharts_(sh);
+  if (!redrawn && props.getProperty(T.SIG) === sig) return;
+  const thick = (SpreadsheetApp.BorderStyle || {}).SOLID_THICK;
+  cards.forEach((k, i) => {
+    const at = todayProblemCell_(i), cell = sh.getRange(at[0], at[1], 1, T.SPAN);
+    const style = (size, color) => SpreadsheetApp.newTextStyle().setBold(true).setFontSize(size).setForegroundColor(color).setUnderline(false).build();
+    let b = SpreadsheetApp.newRichTextValue().setText(k.text)
+      .setTextStyle(0, k.title.length, style(T.TITLE_PT, T.TITLE_FC)).setTextStyle(k.title.length + 1, k.text.length, style(T.SUB_PT, k.fc));
+    if (k.link) b = b.setLinkUrl(0, k.text.length, k.link);
+    sh.getRange(at[0], at[1]).setRichTextValue(b.build());
+    cell.setBackground(k.bg).setHorizontalAlignment('center').setVerticalAlignment('middle').setWrap(true)
+      .setBorder(true, true, true, true, null, null, '#ffffff', thick);
+  });
+  props.setProperty(T.SIG, sig);
+}
+/* The 10 scorecard charts of version 1.80 and before: removed once. */
+function todayProblemOldCharts_(sh) {
+  const props = PropertiesService.getDocumentProperties(), raw = props.getProperty(TPROB.OLD_CHARTS);
+  if (!raw) return;
+  let ids = {};
+  try { ids = JSON.parse(raw) || {}; } catch (e) { ids = {}; }
+  const gone = new Set(Object.keys(ids).map(k => String(ids[k])));
+  sh.getCharts().forEach(ch => { if (gone.has(String(ch.getChartId()))) sh.removeChart(ch); });
+  props.deleteProperty(TPROB.OLD_CHARTS);
+  props.deleteProperty(TPROB.OLD_CHARTS + '_SIG');
+}
+/* The cards' rows tall enough for a big title and a line under it; the rest down to Orders Source normal. */
+function todayProblemRows_(sh) {
+  const T = TPROB, last = T.ROW + Math.ceil(T.CARDS.length / T.PER_ROW) - 1;
+  for (let r = T.ROW; r <= T.LAST_ROW; r++) sh.setRowHeight(r, r <= last ? T.ROW_H : T.PLAIN_H);
+}
+/*
+ * After the Actions tab is drawn: the counts and section rows saved, and the cards in Today updated at once (not on the next
+ * update). Today's own drawing writes the same from what's saved.
+ */
+function todayProblemsRefresh_(M, rows) {
+  todayProblemsSave_(M, rows);
   const sh = ss_().getSheetByName(APP.T.TODAY);
-  if (!sh || !todayCardsReady_() || !todayCardRows_()) return;
-  const x = todayProblems_(), first = todayProblemCell_(0);
-  const vals = [0, 1].map(r => TPROB.CARDS.slice(r * TPROB.PER_ROW, (r + 1) * TPROB.PER_ROW).map(c => x.cards[c[0]].n));
-  sh.getRange(first[0], first[1], 2, TPROB.PER_ROW).setValues(vals);
-  todayProblemCharts_(sh);
+  if (!sh || sh.getLastRow() < TPROB.ROW) return;
+  todayProblemLinks_(sh, false); // only when something on the cards changed
 }
 
 /* ======== 41_campaign_names.gs ======== */

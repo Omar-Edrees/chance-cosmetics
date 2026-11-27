@@ -29,6 +29,8 @@ const ANA = {
   TASK_COLS: [['التاسك', 'text'], ['الأولوية', 'pri'], ['الحالة', 'status'], ['اتضافت يوم', 'added'], ['ملاحظات', 'note'], ['الكامبين', 'camp'],
     ['المتريكس اللي تظهر', 'metrics'], ['الأوبتيمايز على', 'opt'], ['اتعملت يوم', 'doneAt'], ['قبل: آخر 3 أيام', 'b3'], ['قبل: آخر 7 أيام', 'b7'],
     ['بعد: 3 أيام', 'a3'], ['بعد: 7 أيام', 'a7'], ['النتيجة', 'res']],
+  // Tasks set to خلصت move to their own tab; an open task added more than LATE_DAYS days ago is all red (LATE_BG, white text).
+  DONE_TAB: 'Completed Tasks', DONE_ROWS_KEY: 'ANA_DONE_ROWS', LATE_DAYS: 1, LATE_BG: '#dc2626',
   LAYOUT_KEY: 'ANA_LAYOUT', TASK_FROZEN_KEY: 'ANA_TASK_FROZEN', TASK_META_KEY: 'ANA_TASK_META',
   FUNNEL_KEY: 'ANA_FUNNEL', DONE_KEY: 'ANA_DONE', ROWS_KEY: 'ANA_ROWS', FIND_KEY: 'ANA_FINDS', PENDING_KEY: 'ANA_PENDING', DONE_DAYS: 7,
   AT_KEY: 'ANA_AT', STALE_MIN: 14,
@@ -51,7 +53,7 @@ const ANA = {
   DEFAULT_METRICS: ['الصرف في اليوم', 'الأوردرات في اليوم', 'CPP', 'Shopify ROAS'],
   METRIC_SETS: ['الصرف، الأوردرات، CPP، Shopify ROAS', 'CPM، CTR، CPC، Hook rate', 'CTR، Hook rate، الفريكونسي', 'Shopify ROAS، AOV، التحويل'],
   BIZ: 'البيزنس كله',
-  WIDTHS: [95, 400, 440, 95, 70, 16, 240, 90, 90, 95, 150, 220, 170, 120, 95, 160, 160, 160, 160, 190],
+  WIDTHS: [95, 300, 330, 420, 70, 16, 240, 90, 90, 95, 150, 220, 170, 120, 95, 160, 160, 160, 160, 190],
   DARK: '#1f2937', LABEL: '#f3f4f6', INPUT: '#fffbe6', GREEN: '#d9ead3', RED: '#f4cccc', AMBER: '#fff2cc', GREY: '#6b7280', BLUE: '#e8eefc',
   MONEY: '#,##0', RATIO: '0.00', PCT: '0.0%', COUNT: '0',
   /* What to do when a metric is worse, by its name in Today's benchmark or the Daily Account Funnel. */

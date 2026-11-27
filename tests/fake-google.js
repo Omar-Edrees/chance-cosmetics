@@ -44,6 +44,8 @@ class FakeRange {
   }
   setValue(v) { for (let r = 0; r < this.rows; r++) for (let c = 0; c < this.cols; c++) this.sheet.put(this.row + r, this.col + c, v, ''); return this; }
   insertCheckboxes() { return this.setValue(false); }
+  /* نص بتنسيقات (SpreadsheetApp.newRichTextValue): النص في الخانة، واللينك والتنسيقات في rich */
+  setRichTextValue(rt) { this.sheet.put(this.row, this.col, rt.text, ''); this.sheet.attr(this.row, this.col).rich = rt; return this; }
   each(fn) { this.sheet.calls = (this.sheet.calls || 0) + 1; for (let r = 0; r < this.rows; r++) for (let c = 0; c < this.cols; c++) fn(this.row + r, this.col + c, r, c); return this; }
   setFormula(f) { return this.each((r, c) => this.sheet.put(r, c, '', f)); }
   setFormulas(rows) { return this.each((r, c, i, j) => this.sheet.put(r, c, '', rows[i][j])); }
