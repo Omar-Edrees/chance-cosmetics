@@ -5,7 +5,7 @@
  * Ad accounts and stores are read-only from here: no writes to Meta, TikTok or order sources.
  */
 const APP = {
-  VERSION: '1.82.0',
+  VERSION: '1.83.0',
   T: {
     SETTINGS: 'Settings', ACCOUNTS: 'Accounts', PRODUCTS: 'Products', ADMAP: 'Ad Map',
     ADS: 'Ads Raw', ACC_RAW: 'Account Raw', ORDERS: 'Orders Raw', DAILY: 'Daily Log',
@@ -59,6 +59,7 @@ const SETTINGS_SPEC = [
   ['attribution.other_utm_platform', 'META', 'UTM موجود بس مش معروف: META | UNKNOWN'],
   ['attribution.manual_account', '1354948596094660', 'الأكاونت اللي أوردرات المانيول (المسيجات) بتتحسب عليه في Daily Account Funnel و Actual ROAS'],
   ['accounts.messages_only', '1354948596094660', 'حسابات Meta اللي شغالة على كامبينات مسجات بس (Chance 26)، مفصولة بفاصلة، و - = مفيش: مفيش عنها أي مشكلة ولا أكشن (فانل ولا رؤاس ولا بنشمارك)، ومكانها 💬، ومفيش أوردرات مانيول ولا DIRECT عليها لحد ما أوردرات المسجات تتتبع. باقي الأرقام زي ما هي'],
+  ['offers.keywords', 'flash sale, bundle, offer', 'جدول OFFERS في Today: كلمات في اسم الكامبين معناها إن عليها عرض (فلاش سيل، باندل، أوفر ...)، مفصولة بفاصلة. كل كلمة صف لوحدها لو فيه كامبين في اسمها الكلمة دي صرفت النهارده، ومفيش = الجدول فاضي. الكلمة بتمسك الجمع كمان (bundle = Bundles)'],
   ['meta.api_version', 'v26.0', 'نسخة Graph API'],
   ['meta.purchase_actions', 'offsite_conversion.fb_pixel_purchase,purchase,omni_purchase', 'أول نوع موجود بس بيتحسب'],
   ['tiktok.method', 'none', 'none | connector_tab | csv_tab — لو TikTok متربط من المنيو (الإعدادات ← ربط TikTok) بيتقري من الـ API ومش بيبص على ده'],

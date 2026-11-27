@@ -11,7 +11,7 @@
  * Ad accounts and stores are read-only from here: no writes to Meta, TikTok or order sources.
  */
 const APP = {
-  VERSION: '1.82.0',
+  VERSION: '1.83.0',
   T: {
     SETTINGS: 'Settings', ACCOUNTS: 'Accounts', PRODUCTS: 'Products', ADMAP: 'Ad Map',
     ADS: 'Ads Raw', ACC_RAW: 'Account Raw', ORDERS: 'Orders Raw', DAILY: 'Daily Log',
@@ -65,6 +65,7 @@ const SETTINGS_SPEC = [
   ['attribution.other_utm_platform', 'META', 'UTM موجود بس مش معروف: META | UNKNOWN'],
   ['attribution.manual_account', '1354948596094660', 'الأكاونت اللي أوردرات المانيول (المسيجات) بتتحسب عليه في Daily Account Funnel و Actual ROAS'],
   ['accounts.messages_only', '1354948596094660', 'حسابات Meta اللي شغالة على كامبينات مسجات بس (Chance 26)، مفصولة بفاصلة، و - = مفيش: مفيش عنها أي مشكلة ولا أكشن (فانل ولا رؤاس ولا بنشمارك)، ومكانها 💬، ومفيش أوردرات مانيول ولا DIRECT عليها لحد ما أوردرات المسجات تتتبع. باقي الأرقام زي ما هي'],
+  ['offers.keywords', 'flash sale, bundle, offer', 'جدول OFFERS في Today: كلمات في اسم الكامبين معناها إن عليها عرض (فلاش سيل، باندل، أوفر ...)، مفصولة بفاصلة. كل كلمة صف لوحدها لو فيه كامبين في اسمها الكلمة دي صرفت النهارده، ومفيش = الجدول فاضي. الكلمة بتمسك الجمع كمان (bundle = Bundles)'],
   ['meta.api_version', 'v26.0', 'نسخة Graph API'],
   ['meta.purchase_actions', 'offsite_conversion.fb_pixel_purchase,purchase,omni_purchase', 'أول نوع موجود بس بيتحسب'],
   ['tiktok.method', 'none', 'none | connector_tab | csv_tab — لو TikTok متربط من المنيو (الإعدادات ← ربط TikTok) بيتقري من الـ API ومش بيبص على ده'],
@@ -1662,6 +1663,18 @@ function onEdit(e) {
 
 /* ======== 07_setup.gs ======== */
 /* Setup (never clears existing data), sync entry points, triggers, menu. */
+
+/* Settings keys a newer version added (SETTINGS_SPEC): appended to the Settings tab once per version, with their default. */
+function settingsAddMissing_() {
+  const props = PropertiesService.getDocumentProperties(), st = ss_().getSheetByName(APP.T.SETTINGS);
+  if (!st || props.getProperty('SETTINGS_V') === APP.VERSION) return;
+  const have = new Set(readRows_(st, 1).map(r => String(r[0]).trim())), add = SETTINGS_SPEC.filter(s => !have.has(s[0])).map(s => [s[0], s[1], s[2]]);
+  if (add.length) {
+    st.getRange(st.getLastRow() + 1, 2, add.length, 1).setNumberFormat('@').setBackground('#fff2cc');
+    st.getRange(st.getLastRow() + 1, 1, add.length, 3).setValues(add);
+  }
+  props.setProperty('SETTINGS_V', APP.VERSION);
+}
 
 function setupAll() {
   try {
@@ -3330,23 +3343,29 @@ function todayClosing_(g, today, sum, rows, gap) {
 /*
  * Under the accounts: the campaigns to follow closely, from their names in every Meta and TikTok account (the messages
  * account's left out: its orders aren't tracked).
- *  - Offers, every campaign of a kind together: FLASH SALE (flash sale / فلاش) and BUNDLES (bundle / باندل).
+ *  - OFFERS: a row for each word of offers.keywords in Settings (flash sale, bundle, offer ...) that some campaign which
+ *    spent in the period has in its name, every such campaign together (a campaign with two of the words: the first). No
+ *    such campaign = the part says so and stays empty.
  *  - NEW TESTING: campaigns with "new testing" or "new product" (new test, new products ...) in the name, one row per
  *    product (the product in the campaign's name, else the name itself), so a product on test is followed on its own.
  * Spend from Ads Raw, orders and sales = the Shopify orders whose UTM is the campaign's (like Duplication; DIRECT isn't
  * shared out here), CPP = spend ÷ orders, Shopify ROAS = sales ÷ spend, AOV = sales ÷ orders. Returns the last row.
  */
 const TODAY_OFFERS = {
-  GROUPS: [['FLASH SALE', /flash[\s_-]*sales?|فلاش/i], ['BUNDLES', /bundles?|باندل|بندل/i]],
   TEST_RX: /new[\s_-]*test(ing)?|new[\s_-]*products?/i, OFFER: '#fde68a', TEST: '#c7d2fe'
 };
+/* [label, regex] for each word of offers.keywords: spaces / _ / - in between are the same, and so is a plural (bundle = Bundles). */
+function todayOfferWords_() {
+  return cfgList_('offers.keywords').map(w => [w.toUpperCase(),
+    new RegExp(w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/[\s_-]+/g, '[\\s_-]*'), 'i')]);
+}
 function todayOffers_(g, r, title, from, to) {
   const S = TODAY, d = dupData_(from, to), msg = msgAccounts_(), camps = [];
   ['META', 'TIKTOK'].forEach(p => d[p].camps.forEach(c => { if (c.name && !msg.has(String(c.acc)) && (c.sum.spend > 0 || c.sum.utm > 0)) camps.push(c); }));
   const zero = () => ({ spend: 0, orders: 0, rev: 0, n: 0 }), add = (t, c) => { t.spend += c.sum.spend; t.orders += c.sum.utm; t.rev += c.sum.rev; t.n++; };
-  const offers = TODAY_OFFERS.GROUPS.map(x => ({ name: x[0], t: zero() })), tests = new Map();
+  const groups = todayOfferWords_(), offers = groups.map(x => ({ name: x[0], t: zero() })), tests = new Map();
   camps.forEach(c => {
-    const i = TODAY_OFFERS.GROUPS.findIndex(x => x[1].test(c.name));
+    const i = groups.findIndex(x => x[1].test(c.name));
     if (i >= 0) { add(offers[i].t, c); return; }
     if (!TODAY_OFFERS.TEST_RX.test(c.name)) return;
     const target = campaignTarget_(c.name), name = target.kind === 'PRODUCT' ? target.title
@@ -3378,7 +3397,8 @@ function todayOffers_(g, r, title, from, to) {
     for (let i = first + 1; i < r; i++) g.cell(i, 1).bg = color;
     if (r - first > 1) g.merge(first, 1, r - first, 1);
   };
-  block('OFFERS', TODAY_OFFERS.OFFER, offers, '');
+  block('OFFERS', TODAY_OFFERS.OFFER, offers.filter(x => x.t.n > 0).sort((a, b) => b.t.spend - a.t.spend),
+    'مفيش كامبين عليها عرض صرفت في الفترة دي (الكلمات في Settings: offers.keywords)');
   const testList = Array.from(tests.keys()).map(k => ({ name: k, t: tests.get(k) })).sort((a, b) => b.t.spend - a.t.spend);
   block('NEW TESTING', TODAY_OFFERS.TEST, testList, 'مفيش كامبين في اسمها new testing أو new product صرفت في الفترة دي');
   return r - 1;
@@ -9726,7 +9746,7 @@ const EXT = {
   views: [slow => chanceViews_(slow), () => writeShopTab_(), () => writeMetaCamps_(), () => writeDupTab_(), () => time_('Actions & Analysis', () => writeAnalysisTab_())],
   edit: [(name, a1) => chanceEdit_(name, a1), (name, a1) => campaignMapEdit_(name, a1), (name, a1) => dupEdit_(name, a1), (name, a1) => anaEdit_(name, a1)],
   setup: [() => chanceSetup_()],
-  live: [() => syncShopifyStatus_(), () => fillGrossSales_(), () => fillOrderVariants_(), () => fillOrderBundles_(), () => checkShopifyOrders_(), () => syncShopifyStock_(false), () => syncShopifyCollections_(), () => refreshAccountNames_(), () => discoverAccounts_(), () => chanceLive_(), () => refreshTodayFunnel_(), () => refreshFunnel_(false),
+  live: [() => settingsAddMissing_(), () => syncShopifyStatus_(), () => fillGrossSales_(), () => fillOrderVariants_(), () => fillOrderBundles_(), () => checkShopifyOrders_(), () => syncShopifyStock_(false), () => syncShopifyCollections_(), () => refreshAccountNames_(), () => discoverAccounts_(), () => chanceLive_(), () => refreshTodayFunnel_(), () => refreshFunnel_(false),
     () => refreshShopTab_(false), () => refreshShopNet_(), () => refreshMetaCamps_(false), () => refreshTaskMeta_()],
   today: [() => refreshTodayFunnel_(), () => refreshBalances_(), () => refreshShopCards_(), () => refreshShopNet_()],
   menu: [['📦 تحديث المنتجات والستوك وتوب 100', 'refreshProductsNow'], ['📈 تحديث Daily Account Funnel و Actual ROAS', 'refreshFunnelNow'], ['📊 تحديث Meta Campaigns', 'refreshMetaCampsNow'],

@@ -2811,7 +2811,7 @@ test('PRODUCT PERFORMANCE: بيتطلب مع إيه أكتر، ولو في با�
   assert.deepEqual(row('Blush'), ['• Glass Gloss: 2\n• True Stain Liner: 1\nلوحده في 0 من 2 أوردر', ''], 'Blush مش في الباندل');
 });
 
-test('Today: صف Chance 26 (حساب المسجات) الصرف بس، وتحت الحسابات جدول العروض (الفلاش سيل والباندلز متجمعين) و NEW TESTING (كل منتج لوحده)', () => {
+test('Today: صف Chance 26 (حساب المسجات) الصرف بس، وتحت الحسابات جدول العروض (صف لكل كلمة من offers.keywords فيها كامبين) و NEW TESTING (كل منتج لوحده)', () => {
   const probe = env(), today = probe.c.todayKey_(), B = '(blank)';
   const ad = (acc, camp, name, adId, spend) => Object.assign(adRow(today, adId, spend), { campaign_id: camp, campaign_name: name, adset_id: 'S' + camp, adset_name: 'Set ' + camp, ad_name: 'Ad ' + adId });
   const flow = (id, adId, total) => ['gid://shopify/Order/' + id, ' #' + id, ' N', B, total, ' ' + today + 'T10:00:00+03:00', B, B, B, B, B, 'facebook', 'x', adId, 'Facebook', 'Lip Oil x1', '4655075'];
@@ -2831,8 +2831,37 @@ test('Today: صف Chance 26 (حساب المسجات) الصرف بس، وتحت
   assert.ok(at > v.findIndex(r => r[0] === 'GRAND TOTAL'), 'تحت جدول الحسابات');
   assert.deepEqual(v[at + 1].slice(0, 7), ['GROUP', 'CAMPAIGNS', 'AMOUNT SPENT', 'ORDERS (SHOPIFY UTM)', 'CPP', 'SHOPIFY ROAS', 'AOV']);
   assert.deepEqual(v[at + 2].slice(0, 7), ['OFFERS', 'FLASH SALE (2 CAMPAIGNS)', 400, 2, 200, 2.5, 500]);
-  assert.deepEqual(v[at + 3].slice(1, 7), ['BUNDLES (1 CAMPAIGN)', 200, 0, '', 0, '']);
+  assert.deepEqual(v[at + 3].slice(1, 7), ['BUNDLE (1 CAMPAIGN)', 200, 0, '', 0, ''], 'كلمة bundle بتمسك Bundles، والكامبين اللي فيها كلمتين على الأولى');
   // NEW TESTING: كل منتج لوحده، بالأكتر صرفًا
   assert.deepEqual(v[at + 4].slice(0, 7), ['NEW TESTING', 'Lip Oil (2 CAMPAIGNS)', 200, 1, 200, 2.5, 500]);
   assert.deepEqual(v[at + 5].slice(1, 4), ['Blush (1 CAMPAIGN)', 80, 0]);
+  // الكلمات من Settings (offers.keywords): كلمة مفيش كامبين بيها مابتظهرش، ومفيش ولا كامبين = فاضي ومكتوب كده
+  const st = e.ss.getSheetByName('Settings'), keys = () => st.getDataRange().getValues().map(r => r[0]);
+  assert.ok(keys().includes('offers.keywords'), 'المفتاح في Settings');
+  st.getRange(keys().indexOf('offers.keywords') + 1, 2).setValue('bundle, mega deal');
+  e.c.resetCaches_(); e.c.withLock_(() => e.c.writeToday_());
+  const v2 = e.ss.getSheetByName('Today').getDataRange().getValues(), at2 = v2.findIndex(r => /^OFFERS & NEW TESTING — TODAY/.test(String(r[0])));
+  assert.deepEqual(v2[at2 + 2].slice(0, 3), ['OFFERS', 'BUNDLE (1 CAMPAIGN)', 200]);
+  assert.equal(v2[at2 + 3][0], 'NEW TESTING');
+  st.getRange(keys().indexOf('offers.keywords') + 1, 2).setValue('mega deal');
+  e.c.resetCaches_(); e.c.withLock_(() => e.c.writeToday_());
+  const v3 = e.ss.getSheetByName('Today').getDataRange().getValues(), at3 = v3.findIndex(r => /^OFFERS & NEW TESTING — TODAY/.test(String(r[0])));
+  assert.deepEqual(v3[at3 + 2].slice(0, 2), ['OFFERS', 'مفيش كامبين عليها عرض صرفت في الفترة دي (الكلمات في Settings: offers.keywords)']);
+});
+
+test('Settings: المفاتيح الجديدة بتتضاف لوحدها في أول تحديث بعد نسخة جديدة، من غير ما تلمس اللي مكتوب', () => {
+  const e = env();
+  e.c.setupAll();
+  const st = e.ss.getSheetByName('Settings'), rows = () => st.getDataRange().getValues();
+  const i = rows().findIndex(r => r[0] === 'offers.keywords');
+  st.getRange(i + 1, 1, 1, 3).setValues([['', '', '']]); // شيت قديم مافيهوش المفتاح
+  const roas = rows().findIndex(r => r[0] === 'be.roas');
+  st.getRange(roas + 1, 2).setValue(3);
+  delete e.doc.SETTINGS_V;
+  e.c.settingsAddMissing_();
+  assert.deepEqual(rows().find(r => r[0] === 'offers.keywords').slice(0, 2), ['offers.keywords', 'flash sale, bundle, offer']);
+  assert.equal(rows()[roas][1], 3, 'اللي مكتوب بيفضل');
+  const n = rows().length;
+  e.c.settingsAddMissing_();
+  assert.equal(rows().length, n, 'مرة واحدة');
 });

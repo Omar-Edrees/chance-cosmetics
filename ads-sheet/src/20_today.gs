@@ -267,23 +267,29 @@ function todayClosing_(g, today, sum, rows, gap) {
 /*
  * Under the accounts: the campaigns to follow closely, from their names in every Meta and TikTok account (the messages
  * account's left out: its orders aren't tracked).
- *  - Offers, every campaign of a kind together: FLASH SALE (flash sale / فلاش) and BUNDLES (bundle / باندل).
+ *  - OFFERS: a row for each word of offers.keywords in Settings (flash sale, bundle, offer ...) that some campaign which
+ *    spent in the period has in its name, every such campaign together (a campaign with two of the words: the first). No
+ *    such campaign = the part says so and stays empty.
  *  - NEW TESTING: campaigns with "new testing" or "new product" (new test, new products ...) in the name, one row per
  *    product (the product in the campaign's name, else the name itself), so a product on test is followed on its own.
  * Spend from Ads Raw, orders and sales = the Shopify orders whose UTM is the campaign's (like Duplication; DIRECT isn't
  * shared out here), CPP = spend ÷ orders, Shopify ROAS = sales ÷ spend, AOV = sales ÷ orders. Returns the last row.
  */
 const TODAY_OFFERS = {
-  GROUPS: [['FLASH SALE', /flash[\s_-]*sales?|فلاش/i], ['BUNDLES', /bundles?|باندل|بندل/i]],
   TEST_RX: /new[\s_-]*test(ing)?|new[\s_-]*products?/i, OFFER: '#fde68a', TEST: '#c7d2fe'
 };
+/* [label, regex] for each word of offers.keywords: spaces / _ / - in between are the same, and so is a plural (bundle = Bundles). */
+function todayOfferWords_() {
+  return cfgList_('offers.keywords').map(w => [w.toUpperCase(),
+    new RegExp(w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/[\s_-]+/g, '[\\s_-]*'), 'i')]);
+}
 function todayOffers_(g, r, title, from, to) {
   const S = TODAY, d = dupData_(from, to), msg = msgAccounts_(), camps = [];
   ['META', 'TIKTOK'].forEach(p => d[p].camps.forEach(c => { if (c.name && !msg.has(String(c.acc)) && (c.sum.spend > 0 || c.sum.utm > 0)) camps.push(c); }));
   const zero = () => ({ spend: 0, orders: 0, rev: 0, n: 0 }), add = (t, c) => { t.spend += c.sum.spend; t.orders += c.sum.utm; t.rev += c.sum.rev; t.n++; };
-  const offers = TODAY_OFFERS.GROUPS.map(x => ({ name: x[0], t: zero() })), tests = new Map();
+  const groups = todayOfferWords_(), offers = groups.map(x => ({ name: x[0], t: zero() })), tests = new Map();
   camps.forEach(c => {
-    const i = TODAY_OFFERS.GROUPS.findIndex(x => x[1].test(c.name));
+    const i = groups.findIndex(x => x[1].test(c.name));
     if (i >= 0) { add(offers[i].t, c); return; }
     if (!TODAY_OFFERS.TEST_RX.test(c.name)) return;
     const target = campaignTarget_(c.name), name = target.kind === 'PRODUCT' ? target.title
@@ -315,7 +321,8 @@ function todayOffers_(g, r, title, from, to) {
     for (let i = first + 1; i < r; i++) g.cell(i, 1).bg = color;
     if (r - first > 1) g.merge(first, 1, r - first, 1);
   };
-  block('OFFERS', TODAY_OFFERS.OFFER, offers, '');
+  block('OFFERS', TODAY_OFFERS.OFFER, offers.filter(x => x.t.n > 0).sort((a, b) => b.t.spend - a.t.spend),
+    'مفيش كامبين عليها عرض صرفت في الفترة دي (الكلمات في Settings: offers.keywords)');
   const testList = Array.from(tests.keys()).map(k => ({ name: k, t: tests.get(k) })).sort((a, b) => b.t.spend - a.t.spend);
   block('NEW TESTING', TODAY_OFFERS.TEST, testList, 'مفيش كامبين في اسمها new testing أو new product صرفت في الفترة دي');
   return r - 1;

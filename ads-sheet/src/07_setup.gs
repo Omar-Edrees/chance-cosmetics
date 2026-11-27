@@ -1,5 +1,17 @@
 /* Setup (never clears existing data), sync entry points, triggers, menu. */
 
+/* Settings keys a newer version added (SETTINGS_SPEC): appended to the Settings tab once per version, with their default. */
+function settingsAddMissing_() {
+  const props = PropertiesService.getDocumentProperties(), st = ss_().getSheetByName(APP.T.SETTINGS);
+  if (!st || props.getProperty('SETTINGS_V') === APP.VERSION) return;
+  const have = new Set(readRows_(st, 1).map(r => String(r[0]).trim())), add = SETTINGS_SPEC.filter(s => !have.has(s[0])).map(s => [s[0], s[1], s[2]]);
+  if (add.length) {
+    st.getRange(st.getLastRow() + 1, 2, add.length, 1).setNumberFormat('@').setBackground('#fff2cc');
+    st.getRange(st.getLastRow() + 1, 1, add.length, 3).setValues(add);
+  }
+  props.setProperty('SETTINGS_V', APP.VERSION);
+}
+
 function setupAll() {
   try {
     withLock_(() => {
